@@ -10,6 +10,8 @@
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FPawnDeathDelegate);
 
 class AShooterWeapon;
+class UQuestDefinition;
+class UQuestGiverComponent;
 
 /**
  *  A simple AI-controlled shooter game NPC
@@ -22,10 +24,16 @@ class PRODUCTIONGAME_API AShooterNPC : public AProductionGameCharacter, public I
 	GENERATED_BODY()
 
 public:
+	/** Constructor */
+	AShooterNPC();
 
 	/** Current HP for this character. It dies if it reaches zero through damage */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Damage")
 	float CurrentHP = 100.0f;
+
+	/** Reusable quest offering component. Configure its Available Quests array in the NPC Blueprint. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Quest", meta=(AllowPrivateAccess="true"))
+	TObjectPtr<UQuestGiverComponent> QuestGiverComponent;
 
 protected:
 
@@ -105,6 +113,18 @@ public:
 
 	/** Handle incoming damage */
 	virtual float TakeDamage(float Damage, struct FDamageEvent const& DamageEvent, AController* EventInstigator, AActor* DamageCauser) override;
+
+	/** Return the quest definitions this NPC can offer. */
+	UFUNCTION(BlueprintPure, Category="Quest", meta=(DisplayName="Get Available Quests"))
+	TArray<UQuestDefinition*> GetAvailableQuests() const;
+
+	/** Returns true when this NPC offers the supplied quest. */
+	UFUNCTION(BlueprintPure, Category="Quest", meta=(DisplayName="Has Quest"))
+	bool HasQuest(const UQuestDefinition* QuestDefinition) const;
+
+	/** Start one of this NPC's assigned quests through UQuestSubsystem. */
+	UFUNCTION(BlueprintCallable, Category="Quest", meta=(DisplayName="Start Quest"))
+	bool StartQuest(UQuestDefinition* QuestDefinition);
 
 public:
 

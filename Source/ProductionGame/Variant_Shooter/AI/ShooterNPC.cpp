@@ -3,6 +3,8 @@
 
 #include "Variant_Shooter/AI/ShooterNPC.h"
 #include "ShooterWeapon.h"
+#include "Quest/QuestDefinition.h"
+#include "Quest/QuestGiverComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Camera/CameraComponent.h"
 #include "Kismet/KismetMathLibrary.h"
@@ -11,6 +13,26 @@
 #include "Components/CapsuleComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "TimerManager.h"
+
+AShooterNPC::AShooterNPC()
+{
+	QuestGiverComponent = CreateDefaultSubobject<UQuestGiverComponent>(TEXT("Quest Giver"));
+}
+
+TArray<UQuestDefinition*> AShooterNPC::GetAvailableQuests() const
+{
+	return QuestGiverComponent ? QuestGiverComponent->GetAvailableQuests() : TArray<UQuestDefinition*>();
+}
+
+bool AShooterNPC::HasQuest(const UQuestDefinition* QuestDefinition) const
+{
+	return QuestGiverComponent && QuestGiverComponent->HasQuest(QuestDefinition);
+}
+
+bool AShooterNPC::StartQuest(UQuestDefinition* QuestDefinition)
+{
+	return QuestGiverComponent && QuestGiverComponent->StartQuest(QuestDefinition);
+}
 
 void AShooterNPC::BeginPlay()
 {
