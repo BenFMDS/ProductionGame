@@ -7,7 +7,6 @@
 #include "QuestGiverComponent.generated.h"
 
 class UQuestDefinition;
-class UQuestSubsystem;
 
 /** Reusable quest-offering component for NPCs and any other interactable actor. */
 UCLASS(ClassGroup=(Quest), BlueprintType, Blueprintable, meta=(BlueprintSpawnableComponent))
@@ -28,11 +27,4 @@ public:
 	UFUNCTION(BlueprintPure, Category="Quest", meta=(DisplayName="Has Quest"))
 	bool HasQuest(const UQuestDefinition* QuestDefinition) const;
 
-	/** Request that the central quest subsystem starts one of this actor's offered quests. */
-	UFUNCTION(BlueprintCallable, Category="Quest", meta=(DisplayName="Start Quest"))
-	bool StartQuest(UQuestDefinition* QuestDefinition);
-
-	/** Return this world's central quest subsystem, if available. */
-	UFUNCTION(BlueprintPure, Category="Quest")
-	UQuestSubsystem* GetQuestSubsystem() const;
 };

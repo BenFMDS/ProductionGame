@@ -9,7 +9,7 @@
 
 class UTexture2D;
 
-/** Immutable editor-authored data that describes a quest. Runtime state belongs to UQuestSubsystem. */
+/** Immutable editor-authored quest data. Multiplayer runtime state belongs to UPlayerQuestComponent. */
 UCLASS(BlueprintType)
 class PRODUCTIONGAME_API UQuestDefinition : public UPrimaryDataAsset
 {
@@ -39,6 +39,11 @@ public:
 	/** Amount required before the quest completes. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Quest", meta=(ClampMin="1"))
 	int32 RequiredAmount = 1;
+
+	/** Server gameplay reports this event after validating a pickup, kill, delivery, etc. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Quest")
+	FName ProgressEvent;
+
 
 	/** Optional HUD or journal icon. It is loaded only when the UI needs it. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Quest")

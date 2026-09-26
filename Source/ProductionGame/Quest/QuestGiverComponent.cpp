@@ -2,9 +2,7 @@
 
 #include "Quest/QuestGiverComponent.h"
 
-#include "Engine/GameInstance.h"
 #include "Quest/QuestDefinition.h"
-#include "Quest/QuestSubsystem.h"
 
 TArray<UQuestDefinition*> UQuestGiverComponent::GetAvailableQuests() const
 {
@@ -27,30 +25,3 @@ bool UQuestGiverComponent::HasQuest(const UQuestDefinition* QuestDefinition) con
 	return IsValid(QuestDefinition) && AvailableQuests.Contains(QuestDefinition);
 }
 
-bool UQuestGiverComponent::StartQuest(UQuestDefinition* QuestDefinition)
-{
-	if (!HasQuest(QuestDefinition))
-	{
-		return false;
-	}
-
-	if (UQuestSubsystem* QuestSubsystem = GetQuestSubsystem())
-	{
-		return QuestSubsystem->StartQuest(QuestDefinition);
-	}
-
-	return false;
-}
-
-UQuestSubsystem* UQuestGiverComponent::GetQuestSubsystem() const
-{
-	if (const UWorld* World = GetWorld())
-	{
-		if (UGameInstance* GameInstance = World->GetGameInstance())
-		{
-			return GameInstance->GetSubsystem<UQuestSubsystem>();
-		}
-	}
-
-	return nullptr;
-}

@@ -9,11 +9,13 @@
 #include "Blueprint/UserWidget.h"
 #include "ProductionGame.h"
 #include "Widgets/Input/SVirtualJoystick.h"
+#include "Quest/PlayerQuestComponent.h"
 
 AProductionGamePlayerController::AProductionGamePlayerController()
 {
 	// set the player camera manager class
 	PlayerCameraManagerClass = AProductionGameCameraManager::StaticClass();
+	PlayerQuests = CreateDefaultSubobject<UPlayerQuestComponent>(TEXT("PlayerQuests"));
 }
 
 void AProductionGamePlayerController::BeginPlay()
@@ -44,6 +46,10 @@ void AProductionGamePlayerController::BeginPlay()
 void AProductionGamePlayerController::SetupInputComponent()
 {
 	Super::SetupInputComponent();
+	if (bBindNativeDialogueKey)
+	{
+		InputComponent->BindKey(EKeys::F, IE_Pressed, PlayerQuests.Get(), &UPlayerQuestComponent::TalkToLookedAtNPC);
+	}
 
 	// only add IMCs for local player controllers
 	if (IsLocalPlayerController())

@@ -8,6 +8,7 @@
 
 class UInputMappingContext;
 class UUserWidget;
+class UPlayerQuestComponent;
 
 /**
  *  Simple first person Player Controller
@@ -23,6 +24,13 @@ public:
 
 	/** Constructor */
 	AProductionGamePlayerController();
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Quest")
+	TObjectPtr<UPlayerQuestComponent> PlayerQuests;
+
+	/** F is a fallback for native NPCs; existing interaction can call ServerTalkTo instead. */
+	UPROPERTY(EditDefaultsOnly, Category="Quest")
+	bool bBindNativeDialogueKey = true;
 
 protected:
 
