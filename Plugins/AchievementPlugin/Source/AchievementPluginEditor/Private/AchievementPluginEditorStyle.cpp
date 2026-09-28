@@ -50,8 +50,9 @@ TSharedRef<FSlateStyleSet> FAchievementPluginEditorStyle::Create()
 
 	Style->Set(
 		"AchievementPluginEditor.OpenPluginWindow",
-		new IMAGE_BRUSH_SVG(TEXT("PlaceholderButtonIcon"), Icon20x20)
+		new IMAGE_BRUSH(TEXT("Ach"), Icon20x20)
 	);
+	Style->Set("AchievementPluginEditor.OpenPluginWindow.Small", new IMAGE_BRUSH(TEXT("Ach"), Icon20x20));
 
 	return Style;
 }
