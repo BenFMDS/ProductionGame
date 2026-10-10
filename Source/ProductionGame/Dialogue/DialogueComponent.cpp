@@ -109,6 +109,7 @@ void UDialogueComponent::PublishNode()
 			const FDialogueChoice& Choice = Node->Choices[Index];
 			if (Choice.QuestAction == EDialogueQuestAction::Accept && !Player->CanAccept(Choice.Quest, GetOwner())) continue;
 			if (Choice.QuestAction == EDialogueQuestAction::TurnIn && !Player->CanTurnIn(Choice.Quest, GetOwner())) continue;
+			if (Choice.QuestAction == EDialogueQuestAction::Progress && !Player->CanProgressQuest(Choice.Quest, GetOwner())) continue;
 			if (!Choice.NextNode.IsNone() && !Dialogue->FindNode(Choice.NextNode)) continue;
 			Snapshot.Choices.Add(Choice.Text);
 			Snapshot.ChoiceIDs.Add(Index);
@@ -157,6 +158,7 @@ void UDialogueComponent::Choose(UPlayerQuestComponent* Player, int32 ChoiceID, i
 		bool bSuccess = true;
 		if (Choice.QuestAction == EDialogueQuestAction::Accept) bSuccess = Player->AcceptQuest(Choice.Quest, GetOwner());
 		if (Choice.QuestAction == EDialogueQuestAction::TurnIn) bSuccess = Player->TurnInQuest(Choice.Quest, GetOwner());
+		if (Choice.QuestAction == EDialogueQuestAction::Progress) bSuccess = Player->ProgressQuest(Choice.Quest, GetOwner(), Choice.ProgressAmount);
 		if (!IsParticipant(Player)) return;
 		if (bSuccess)
 		{

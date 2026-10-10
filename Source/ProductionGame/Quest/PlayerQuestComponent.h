@@ -9,6 +9,7 @@ class UDialogueComponent;
 class UQuestConversationWidget;
 class USoundBase;
 class UTexture2D;
+class AQuestSequenceStep;
 
 UENUM(BlueprintType)
 enum class EPlayerQuestState : uint8 { Active, ReadyToTurnIn, Completed };
@@ -57,14 +58,24 @@ public:
 	/** Server only, once per turn-in. Connect future item rewards (keys, equipment, etc.) here. */
 	UPROPERTY(BlueprintAssignable) FQuestRewardGranted OnRewardGranted;
 	UPROPERTY(BlueprintAssignable) FConversationRejected OnConversationRejected;
-	UPROPERTY(EditAnywhere, Category="Quest|UI") bool bCreateDefaultUI = true;
+	/** Controls whether this controller currently owns a quest/dialogue HUD. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Quest|UI") bool bCreateDefaultUI = true;
 	UPROPERTY(EditAnywhere, Category="Quest|UI") TSubclassOf<UQuestConversationWidget> WidgetClass;
+
+	/** Creates/removes the quest UI immediately. Safe to call from lobby or match flow Blueprints. */
+	UFUNCTION(BlueprintCallable, Category="Quest|UI")
+	void SetQuestUIEnabled(bool bEnabled);
+
+	UFUNCTION(BlueprintPure, Category="Quest|UI")
+	bool IsQuestUIEnabled() const { return bCreateDefaultUI; }
 
 	UFUNCTION(BlueprintCallable, Server, Reliable, Category="Dialogue") void ServerTalkTo(AActor* NPC);
 	UFUNCTION(BlueprintCallable, Server, Reliable, Category="Dialogue") void ServerChoose(int32 ChoiceID, int32 Revision);
 	UFUNCTION(BlueprintCallable, Server, Reliable, Category="Dialogue") void ServerEndConversation(int32 Revision);
 	/** Interaction requests carry only the object. The server determines event, amount, and eligibility. */
 	UFUNCTION(BlueprintCallable, Server, Reliable, Category="Quest") void ServerCollectQuestObject(AActor* QuestObject);
+	/** Puzzle interactions carry only the clicked step. The server validates the puzzle state and answer. */
+	UFUNCTION(BlueprintCallable, Server, Reliable, Category="Quest") void ServerActivateQuestPuzzle(AActor* PuzzleStep);
 	/** Call only from validated server gameplay; deliberately not a client RPC. */
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category="Quest") bool AddQuestProgress(FName QuestID, int32 Amount = 1);
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category="Quest") void ReportQuestEvent(FName Event, int32 Amount = 1);
@@ -73,8 +84,10 @@ public:
 
 	bool CanAccept(UQuestDefinition* Definition, AActor* Giver) const;
 	bool CanTurnIn(UQuestDefinition* Definition, AActor* Giver) const;
+	bool CanProgressQuest(UQuestDefinition* Definition, AActor* Giver) const;
 	bool AcceptQuest(UQuestDefinition* Definition, AActor* Giver);
 	bool TurnInQuest(UQuestDefinition* Definition, AActor* Giver);
+	bool ProgressQuest(UQuestDefinition* Definition, AActor* Giver, int32 Amount = 1);
 	void SetConversation(const FPlayerConversation& Snapshot);
 	void CloseConversation();
 	UFUNCTION(Client, Reliable) void ClientRejectConversation(const FText& Reason);
@@ -82,6 +95,7 @@ protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type Reason) override;
 private:
+	void RefreshDefaultUI();
 	UPROPERTY(Transient) TObjectPtr<UQuestConversationWidget> Widget;
 	UFUNCTION() void OnRep_Quests();
 	UFUNCTION() void OnRep_Conversation();

@@ -28,6 +28,10 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Quest")
 	TObjectPtr<UPlayerQuestComponent> PlayerQuests;
 
+	/** Read-only access for specialized controllers that reuse only this input profile. */
+	const TArray<UInputMappingContext*>& GetDefaultMappingContexts() const { return DefaultMappingContexts; }
+	const TArray<UInputMappingContext*>& GetMobileExcludedMappingContexts() const { return MobileExcludedMappingContexts; }
+
 	/** F is a fallback for native NPCs; existing interaction can call ServerTalkTo instead. */
 	UPROPERTY(EditDefaultsOnly, Category="Quest")
 	bool bBindNativeDialogueKey = true;
@@ -57,9 +61,19 @@ protected:
 	/** Gameplay initialization */
 	virtual void BeginPlay() override;
 
+	/** Ensures an interaction cannot leave two copies of the same menu on this player's screen. */
+	virtual void Tick(float DeltaSeconds) override;
+
+	/** Commits the mode selected in WBP_Settings when the player presses Apply. */
+	UFUNCTION()
+	void ApplyDisplaySettings();
+
 	/** Input mapping context setup */
 	virtual void SetupInputComponent() override;
 
 	/** Returns true if the player should use UMG touch controls */
 	bool ShouldUseTouchControls() const;
+
+	void RemoveDuplicateInteractionMenus();
+	void BindSettingsApplyButton();
 };

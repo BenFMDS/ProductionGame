@@ -10,6 +10,9 @@
 #include "ProductionGame.h"
 #include "Widgets/Input/SVirtualJoystick.h"
 #include "Quest/PlayerQuestComponent.h"
+#include "Components/Button.h"
+#include "GameFramework/GameUserSettings.h"
+#include "UObject/UObjectIterator.h"
 
 AProductionGamePlayerController::AProductionGamePlayerController()
 {
@@ -40,6 +43,83 @@ void AProductionGamePlayerController::BeginPlay()
 
 		}
 
+	}
+}
+
+void AProductionGamePlayerController::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+	if (IsLocalController())
+	{
+		RemoveDuplicateInteractionMenus();
+		BindSettingsApplyButton();
+	}
+}
+
+void AProductionGamePlayerController::RemoveDuplicateInteractionMenus()
+{
+	// BP_MenuObject currently receives both the local interaction and its
+	// server-forwarded copy.  Keep the newest copy of each project menu until
+	// that Blueprint's graph can be opened and resaved with a direct guard.
+	TMap<UClass*, UUserWidget*> NewestMenuByClass;
+	for (TObjectIterator<UUserWidget> It; It; ++It)
+	{
+		UUserWidget* Widget = *It;
+		if (!IsValid(Widget) || Widget->GetOwningPlayer() != this || !Widget->IsInViewport())
+		{
+			continue;
+		}
+
+		const FString ClassPath = Widget->GetClass()->GetPathName();
+		if (!ClassPath.StartsWith(TEXT("/Game/OurStuff/Widgets/Menus/")))
+		{
+			continue;
+		}
+
+		if (UUserWidget** Existing = NewestMenuByClass.Find(Widget->GetClass()))
+		{
+			if ((*Existing)->GetUniqueID() < Widget->GetUniqueID())
+			{
+				(*Existing)->RemoveFromParent();
+				*Existing = Widget;
+			}
+			else
+			{
+				Widget->RemoveFromParent();
+			}
+		}
+		else
+		{
+			NewestMenuByClass.Add(Widget->GetClass(), Widget);
+		}
+	}
+}
+
+void AProductionGamePlayerController::BindSettingsApplyButton()
+{
+	for (TObjectIterator<UUserWidget> It; It; ++It)
+	{
+		UUserWidget* SettingsWidget = *It;
+		if (!IsValid(SettingsWidget) || SettingsWidget->GetOwningPlayer() != this || !SettingsWidget->IsInViewport()
+			|| !SettingsWidget->GetClass()->GetPathName().StartsWith(TEXT("/Game/OurStuff/Widgets/Menus/WBP_Settings")))
+		{
+			continue;
+		}
+
+		if (UButton* ApplyButton = Cast<UButton>(SettingsWidget->GetWidgetFromName(TEXT("BTN_Apply"))))
+		{
+			ApplyButton->OnClicked.AddUniqueDynamic(this, &AProductionGamePlayerController::ApplyDisplaySettings);
+		}
+	}
+}
+
+void AProductionGamePlayerController::ApplyDisplaySettings()
+{
+	if (UGameUserSettings* Settings = GEngine ? GEngine->GetGameUserSettings() : nullptr)
+	{
+		// Do not let a launcher/editor command line overwrite the user's pending choice.
+		Settings->ApplySettings(false);
+		Settings->SaveSettings();
 	}
 }
 

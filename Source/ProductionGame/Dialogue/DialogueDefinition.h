@@ -9,7 +9,14 @@ class USoundBase;
 class UTexture2D;
 
 UENUM(BlueprintType)
-enum class EDialogueQuestAction : uint8 { None, Accept, TurnIn };
+enum class EDialogueQuestAction : uint8
+{
+	None = 0,
+	Accept = 1,
+	TurnIn = 2,
+	/** Marks one active quest step complete from a validated dialogue answer. */
+	Progress = 3
+};
 
 USTRUCT(BlueprintType)
 struct FDialogueChoice
@@ -20,6 +27,8 @@ struct FDialogueChoice
 	UPROPERTY(EditAnywhere, BlueprintReadOnly) FName NextNode;
 	UPROPERTY(EditAnywhere, BlueprintReadOnly) EDialogueQuestAction QuestAction = EDialogueQuestAction::None;
 	UPROPERTY(EditAnywhere, BlueprintReadOnly) TObjectPtr<UQuestDefinition> Quest;
+	/** Amount awarded by a correct dialogue answer. Ignored by non-progress actions. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, meta=(ClampMin="1")) int32 ProgressAmount = 1;
 };
 
 USTRUCT(BlueprintType)
