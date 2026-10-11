@@ -8,17 +8,18 @@ class UDialogueDefinition;
 class UQuestGiverComponent;
 class UQuestDefinition;
 
-/** Native parent for the existing talking character Blueprints; keeps their visual components. */
+/** Parent for talking-character Blueprints. The Dialogue Component's asset is the runtime source of truth. */
 UCLASS(Blueprintable)
 class PRODUCTIONGAME_API AQuestDialogueCharacter : public ACharacter
 {
 	GENERATED_BODY()
 public:
 	AQuestDialogueCharacter();
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Dialogue") TObjectPtr<UDialogueComponent> NativeDialogue;
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Quest") TObjectPtr<UQuestGiverComponent> NativeQuestGiver;
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Dialogue") TObjectPtr<UDialogueDefinition> NativeDialogueDefinition;
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Quest") TArray<TObjectPtr<UQuestDefinition>> NativeQuestDefinitions;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Dialogue", meta=(DisplayName="Dialogue Component")) TObjectPtr<UDialogueComponent> NativeDialogue;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Quest", meta=(DisplayName="Quest Giver Component")) TObjectPtr<UQuestGiverComponent> NativeQuestGiver;
+	/** Legacy compatibility field. It is copied to the Dialogue Component only when that component has no assigned asset. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Dialogue", meta=(DisplayName="Dialogue Asset (Legacy)")) TObjectPtr<UDialogueDefinition> NativeDialogueDefinition;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Quest", meta=(DisplayName="Available Quests")) TArray<TObjectPtr<UQuestDefinition>> NativeQuestDefinitions;
 protected:
 	virtual void BeginPlay() override;
 };

@@ -51,7 +51,7 @@ private:
     void OfferQuest(bool bOffer);
     void AddSupport();
     void LinkObjective();
-    void CreateAsset(bool bQuest);
+    void CreateAsset(bool bQuest, bool bQuestDialogue = false);
     void DuplicateDialogue();
     void CreateStarterDialogue();
     void Save();
