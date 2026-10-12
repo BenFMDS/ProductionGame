@@ -36,19 +36,39 @@ bool UDialogueComponent::IsParticipant(const UPlayerQuestComponent* Player) cons
 	return GetOwner()->HasAuthority() && bIsInConversation && Participant.Get() == Player;
 }
 
+bool UDialogueComponent::HasValidDialogue() const
+{
+	return IsValid(Dialogue) && Dialogue->FindNode(Dialogue->EntryNode);
+}
+
+TArray<UQuestDefinition*> UDialogueComponent::GetOfferedQuests() const
+{
+	TArray<UQuestDefinition*> Result;
+	for (UQuestDefinition* Quest : OfferedQuests) if (IsValid(Quest)) Result.AddUnique(Quest);
+	// Read old Quest Giver data too, so existing levels continue to work after the simplification.
+	if (const auto* LegacyGiver = GetOwner() ? GetOwner()->FindComponentByClass<UQuestGiverComponent>() : nullptr)
+		for (UQuestDefinition* Quest : LegacyGiver->AvailableQuests) if (IsValid(Quest)) Result.AddUnique(Quest);
+	return Result;
+}
+
+bool UDialogueComponent::OffersQuest(const UQuestDefinition* Quest) const
+{
+	return IsValid(Quest) && GetOfferedQuests().Contains(Quest);
+}
+
 bool UDialogueComponent::TryStart(UPlayerQuestComponent* Player)
 {
 	if (!GetOwner()->HasAuthority() || !GetOwner()->GetIsReplicated() || !CanReach(Player)) return false;
 	ValidateSession();
 	if (bIsInConversation || Player->Conversation.NPC) return false;
-	if (Dialogue && !Dialogue->FindNode(Dialogue->EntryNode)) return false;
+	if (!HasValidDialogue()) return false;
 	Participant = Player;
 	auto* PC = CastChecked<APlayerController>(Player->GetOwner());
 	StartingPawn = PC->GetPawn();
 	TalkingPlayer = PC->PlayerState;
 	bIsInConversation = true;
 	CurrentNode = Dialogue ? Dialogue->EntryNode : NAME_None;
-	if (Dialogue && IsValid(Dialogue->ContextQuest))
+	if (Dialogue && Dialogue->UsesQuests() && IsValid(Dialogue->ContextQuest))
 	{
 		FPlayerQuest Quest;
 		if (Player->GetQuest(Dialogue->ContextQuest->QuestID, Quest))
@@ -107,36 +127,32 @@ void UDialogueComponent::PublishNode()
 		for (int32 Index = 0; Index < Node->Choices.Num(); ++Index)
 		{
 			const FDialogueChoice& Choice = Node->Choices[Index];
-			if (Choice.QuestAction == EDialogueQuestAction::Accept && !Player->CanAccept(Choice.Quest, GetOwner())) continue;
-			if (Choice.QuestAction == EDialogueQuestAction::TurnIn && !Player->CanTurnIn(Choice.Quest, GetOwner())) continue;
-			if (Choice.QuestAction == EDialogueQuestAction::Progress && !Player->CanProgressQuest(Choice.Quest, GetOwner())) continue;
+			if (Dialogue->UsesQuests())
+			{
+				if (Choice.QuestAction == EDialogueQuestAction::Accept && !Player->CanAccept(Choice.Quest, GetOwner())) continue;
+				if (Choice.QuestAction == EDialogueQuestAction::TurnIn && !Player->CanTurnIn(Choice.Quest, GetOwner())) continue;
+				if (Choice.QuestAction == EDialogueQuestAction::Progress && !Player->CanProgressQuest(Choice.Quest, GetOwner())) continue;
+			}
 			if (!Choice.NextNode.IsNone() && !Dialogue->FindNode(Choice.NextNode)) continue;
 			Snapshot.Choices.Add(Choice.Text);
 			Snapshot.ChoiceIDs.Add(Index);
 		}
 	}
-	else
+	if (Dialogue->UsesQuests() && Dialogue->bIncludeQuestChoices)
 	{
-		Snapshot.Speaker = FText::FromString(GetOwner()->GetName());
-		Snapshot.Text = NSLOCTEXT("Dialogue", "Greeting", "Looking for work? You can accept a quest or collect your reward here.");
-	}
-	if (!Dialogue || Dialogue->bIncludeQuestChoices)
-	{
-		if (auto* Giver = GetOwner()->FindComponentByClass<UQuestGiverComponent>())
+		const TArray<UQuestDefinition*> Quests = GetOfferedQuests();
+		for (int32 Index = 0; Index < Quests.Num(); ++Index)
 		{
-			for (int32 Index = 0; Index < Giver->AvailableQuests.Num(); ++Index)
+			UQuestDefinition* Quest = Quests[Index];
+			if (Player->CanAccept(Quest, GetOwner()))
 			{
-				UQuestDefinition* Quest = Giver->AvailableQuests[Index];
-				if (Player->CanAccept(Quest, GetOwner()))
-				{
-					Snapshot.Choices.Add(FText::Format(NSLOCTEXT("Dialogue", "Accept", "Accept: {0}"), Quest->QuestName));
-					Snapshot.ChoiceIDs.Add(100000 + Index * 2);
-				}
-				else if (Player->CanTurnIn(Quest, GetOwner()))
-				{
-					Snapshot.Choices.Add(FText::Format(NSLOCTEXT("Dialogue", "TurnInQuest", "Complete: {0}"), Quest->QuestName));
-					Snapshot.ChoiceIDs.Add(100000 + Index * 2 + 1);
-				}
+				Snapshot.Choices.Add(FText::Format(NSLOCTEXT("Dialogue", "Accept", "Accept: {0}"), Quest->QuestName));
+				Snapshot.ChoiceIDs.Add(100000 + Index * 2);
+			}
+			else if (Player->CanTurnIn(Quest, GetOwner()))
+			{
+				Snapshot.Choices.Add(FText::Format(NSLOCTEXT("Dialogue", "TurnInQuest", "Complete: {0}"), Quest->QuestName));
+				Snapshot.ChoiceIDs.Add(100000 + Index * 2 + 1);
 			}
 		}
 	}
@@ -156,9 +172,12 @@ void UDialogueComponent::Choose(UPlayerQuestComponent* Player, int32 ChoiceID, i
 		if (!Node || !Node->Choices.IsValidIndex(ChoiceID)) return;
 		const FDialogueChoice Choice = Node->Choices[ChoiceID];
 		bool bSuccess = true;
-		if (Choice.QuestAction == EDialogueQuestAction::Accept) bSuccess = Player->AcceptQuest(Choice.Quest, GetOwner());
-		if (Choice.QuestAction == EDialogueQuestAction::TurnIn) bSuccess = Player->TurnInQuest(Choice.Quest, GetOwner());
-		if (Choice.QuestAction == EDialogueQuestAction::Progress) bSuccess = Player->ProgressQuest(Choice.Quest, GetOwner(), Choice.ProgressAmount);
+		if (Dialogue->UsesQuests())
+		{
+			if (Choice.QuestAction == EDialogueQuestAction::Accept) bSuccess = Player->AcceptQuest(Choice.Quest, GetOwner());
+			if (Choice.QuestAction == EDialogueQuestAction::TurnIn) bSuccess = Player->TurnInQuest(Choice.Quest, GetOwner());
+			if (Choice.QuestAction == EDialogueQuestAction::Progress) bSuccess = Player->ProgressQuest(Choice.Quest, GetOwner(), Choice.ProgressAmount);
+		}
 		if (!IsParticipant(Player)) return;
 		if (bSuccess)
 		{
@@ -166,12 +185,13 @@ void UDialogueComponent::Choose(UPlayerQuestComponent* Player, int32 ChoiceID, i
 			CurrentNode = Choice.NextNode;
 		}
 	}
-	else if (auto* Giver = GetOwner()->FindComponentByClass<UQuestGiverComponent>())
+	else
 	{
 		ChoiceID -= 100000;
 		if (ChoiceID < 0) return;
-		if (!Giver->AvailableQuests.IsValidIndex(ChoiceID / 2)) return;
-		UQuestDefinition* Quest = Giver->AvailableQuests[ChoiceID / 2];
+		const TArray<UQuestDefinition*> Quests = GetOfferedQuests();
+		if (!Quests.IsValidIndex(ChoiceID / 2)) return;
+		UQuestDefinition* Quest = Quests[ChoiceID / 2];
 		if (ChoiceID % 2 == 0) Player->AcceptQuest(Quest, GetOwner());
 		else Player->TurnInQuest(Quest, GetOwner());
 	}

@@ -11,7 +11,15 @@ AQuestDialogueCharacter::AQuestDialogueCharacter()
 
 void AQuestDialogueCharacter::BeginPlay()
 {
-	NativeDialogue->Dialogue = NativeDialogueDefinition;
-	NativeQuestGiver->AvailableQuests = NativeQuestDefinitions;
+	// Blueprint component defaults are the authored source of truth. Older assets may only
+	// have the legacy field populated, so use it solely as a fallback and then keep it synced.
+	if (!NativeDialogue->Dialogue && NativeDialogueDefinition)
+	{
+		NativeDialogue->Dialogue = NativeDialogueDefinition;
+	}
+	NativeDialogueDefinition = NativeDialogue->Dialogue;
+	for (UQuestDefinition* Quest : NativeQuestDefinitions) if (Quest) NativeDialogue->OfferedQuests.AddUnique(Quest);
+	// Preserve old Blueprint data, but the Talker Component is now the runtime source.
+	if (NativeQuestGiver) NativeQuestGiver->AvailableQuests = NativeQuestDefinitions;
 	Super::BeginPlay();
 }

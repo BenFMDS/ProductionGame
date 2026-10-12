@@ -1,6 +1,5 @@
 #include "Quest/PlayerQuestComponent.h"
 #include "Quest/QuestDefinition.h"
-#include "Quest/QuestGiverComponent.h"
 #include "Quest/QuestConversationWidget.h"
 #include "Quest/QuestObjectiveComponent.h"
 #include "Quest/QuestSequenceStep.h"
@@ -78,6 +77,11 @@ void UPlayerQuestComponent::ServerTalkTo_Implementation(AActor* NPC)
 	if (Conversation.NPC) return;
 	if (auto* Dialogue = NPC->FindComponentByClass<UDialogueComponent>())
 	{
+		if (!Dialogue->HasValidDialogue())
+		{
+			ClientRejectConversation(NSLOCTEXT("Dialogue", "MissingAsset", "This actor has no valid Dialogue Asset assigned."));
+			return;
+		}
 		if (!Dialogue->TryStart(this))
 			ClientRejectConversation(NSLOCTEXT("Dialogue", "Unavailable", "This NPC is busy or out of reach."));
 	}
@@ -119,9 +123,9 @@ bool UPlayerQuestComponent::GetQuest(FName QuestID, FPlayerQuest& OutQuest) cons
 bool UPlayerQuestComponent::CanAccept(UQuestDefinition* Definition, AActor* Giver) const
 {
 	if (!IsValid(Definition) || Definition->QuestID.IsNone() || Definition->RequiredAmount <= 0 || !IsValid(Giver)) return false;
-	const auto* Offers = Giver->FindComponentByClass<UQuestGiverComponent>();
+	const auto* Talker = Giver->FindComponentByClass<UDialogueComponent>();
 	FPlayerQuest Existing;
-	return Offers && Offers->HasQuest(Definition) && !GetQuest(Definition->QuestID, Existing);
+	return Talker && Talker->OffersQuest(Definition) && !GetQuest(Definition->QuestID, Existing);
 }
 
 bool UPlayerQuestComponent::CanTurnIn(UQuestDefinition* Definition, AActor* Giver) const

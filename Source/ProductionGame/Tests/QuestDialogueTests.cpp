@@ -5,9 +5,9 @@
 #include "GameFramework/DefaultPawn.h"
 #include "Dialogue/QuestNPC.h"
 #include "Dialogue/DialogueComponent.h"
+#include "Dialogue/DialogueDefinition.h"
 #include "Quest/PlayerQuestComponent.h"
 #include "Quest/QuestDefinition.h"
-#include "Quest/QuestGiverComponent.h"
 #include "Quest/QuestObjectiveComponent.h"
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FQuestDialogueFlowTest, "ProductionGame.Quests.AuthoritativeFlow",
@@ -35,12 +35,19 @@ bool FQuestDialogueFlowTest::RunTest(const FString& Parameters)
 	auto* Second = MakePlayer(FVector(100, 100, 0));
 	auto* NPC = World->SpawnActor<AQuestNPC>();
 	auto* OtherNPC = World->SpawnActor<AQuestNPC>(FVector(0, 200, 0), FRotator::ZeroRotator);
+	auto* Dialogue = NewObject<UDialogueDefinition>(World);
+	auto& Greeting = Dialogue->Nodes.AddDefaulted_GetRef();
+	Greeting.ID = TEXT("Greeting");
+	Greeting.Text = FText::FromString(TEXT("Hello"));
+	Dialogue->EntryNode = Greeting.ID;
+	NPC->DialogueComponent->Dialogue = Dialogue;
+	OtherNPC->DialogueComponent->Dialogue = Dialogue;
 	auto* Quest = NewObject<UQuestDefinition>(World);
 	Quest->QuestID = TEXT("TestQuest");
 	Quest->ProgressEvent = TEXT("TestPickup");
 	Quest->RequiredAmount = 3;
-	NPC->QuestGiver->AvailableQuests.Add(Quest);
-	OtherNPC->QuestGiver->AvailableQuests.Add(Quest);
+	NPC->DialogueComponent->OfferedQuests.Add(Quest);
+	OtherNPC->DialogueComponent->OfferedQuests.Add(Quest);
 	auto* Pickup = NewObject<UQuestObjectiveComponent>(OtherNPC);
 	OtherNPC->AddInstanceComponent(Pickup);
 	Pickup->RegisterComponent();
