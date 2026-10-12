@@ -8,6 +8,14 @@ class UQuestDefinition;
 class USoundBase;
 class UTexture2D;
 
+/** Controls whether this dialogue can show or perform quest interactions. */
+UENUM(BlueprintType)
+enum class EDialogueType : uint8
+{
+	DialogueOnly UMETA(DisplayName="Dialogue only"),
+	QuestDialogue UMETA(DisplayName="Dialogue + quests")
+};
+
 UENUM(BlueprintType)
 enum class EDialogueQuestAction : uint8
 {
@@ -47,6 +55,8 @@ class PRODUCTIONGAME_API UDialogueDefinition : public UDataAsset
 {
 	GENERATED_BODY()
 public:
+	/** Dialogue only is a normal conversation. Dialogue + quests supports quest-state greetings and quest choices. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Dialogue") EDialogueType DialogueType = EDialogueType::QuestDialogue;
 	UPROPERTY(EditAnywhere, BlueprintReadOnly) FText SpeakerName;
 	UPROPERTY(EditAnywhere, BlueprintReadOnly) TObjectPtr<UTexture2D> Portrait;
 	UPROPERTY(EditAnywhere, BlueprintReadOnly) FName EntryNode;
@@ -58,6 +68,7 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly) TArray<FDialogueNode> Nodes;
 	/** Append available quest offers/turn-ins to every node. Disable for fully authored choices. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly) bool bIncludeQuestChoices = true;
+	bool UsesQuests() const { return DialogueType == EDialogueType::QuestDialogue; }
 	const FDialogueNode* FindNode(FName ID) const
 	{
 		return Nodes.FindByPredicate([ID](const FDialogueNode& Node) { return Node.ID == ID; });

@@ -11,24 +11,16 @@ namespace DialogueAuthoring
 {
 UDialogueDefinition* GetDialogue(AActor* Actor)
 {
-    if (auto* Character = Cast<AQuestDialogueCharacter>(Actor)) return Character->NativeDialogueDefinition;
+    if (auto* Character = Cast<AQuestDialogueCharacter>(Actor))
+        return Character->NativeDialogue && Character->NativeDialogue->Dialogue ? Character->NativeDialogue->Dialogue : Character->NativeDialogueDefinition;
     if (Actor) if (auto* Component = Actor->FindComponentByClass<UDialogueComponent>()) return Component->Dialogue;
     return nullptr;
 }
 
 TArray<UQuestDefinition*> GetQuests(AActor* Actor)
 {
-    TArray<UQuestDefinition*> Result;
-    if (auto* Character = Cast<AQuestDialogueCharacter>(Actor))
-    {
-        for (UQuestDefinition* Quest : Character->NativeQuestDefinitions) if (Quest) Result.Add(Quest);
-    }
-    else if (Actor)
-    {
-        if (auto* Giver = Actor->FindComponentByClass<UQuestGiverComponent>())
-            for (UQuestDefinition* Quest : Giver->AvailableQuests) if (Quest) Result.Add(Quest);
-    }
-    return Result;
+    if (Actor) if (auto* Talker = Actor->FindComponentByClass<UDialogueComponent>()) return Talker->GetOfferedQuests();
+    return {};
 }
 
 bool AssignDialogue(AActor* Actor, UDialogueDefinition* Dialogue)
@@ -48,19 +40,26 @@ bool AssignDialogue(AActor* Actor, UDialogueDefinition* Dialogue)
 bool SetQuestOffered(AActor* Actor, UQuestDefinition* Quest, bool bOffered)
 {
     if (!Actor || !Quest) return false;
-    auto* Giver = Actor->FindComponentByClass<UQuestGiverComponent>();
-    if (!Giver) return false;
+    auto* Talker = Actor->FindComponentByClass<UDialogueComponent>();
+    if (!Talker) return false;
     Actor->Modify();
-    Giver->Modify();
+    Talker->Modify();
+    if (bOffered) Talker->OfferedQuests.AddUnique(Quest);
+    else Talker->OfferedQuests.Remove(Quest);
+    // Keep legacy character data synchronized for existing Blueprints while the runtime
+    // reads the Talker Component as its primary source.
     if (auto* Character = Cast<AQuestDialogueCharacter>(Actor))
     {
         if (bOffered) Character->NativeQuestDefinitions.AddUnique(Quest);
         else Character->NativeQuestDefinitions.Remove(Quest);
-        Giver->AvailableQuests = Character->NativeQuestDefinitions;
+        if (Character->NativeQuestGiver)
+        {
+            Character->NativeQuestGiver->Modify();
+            Character->NativeQuestGiver->AvailableQuests = Character->NativeQuestDefinitions;
+            Character->NativeQuestGiver->PostEditChange();
+        }
     }
-    else if (bOffered) Giver->AvailableQuests.AddUnique(Quest);
-    else Giver->AvailableQuests.Remove(Quest);
-    Giver->PostEditChange();
+    Talker->PostEditChange();
     Actor->MarkPackageDirty();
     return true;
 }
@@ -117,7 +116,7 @@ TArray<FString> Validate(const UDialogueDefinition* Dialogue, const UQuestDefini
             if (const auto* Node = Dialogue->FindNode(Queue[Index]))
                 for (const auto& Choice : Node->Choices) if (!Choice.NextNode.IsNone()) Queue.AddUnique(Choice.NextNode);
         for (const auto& Node : Dialogue->Nodes) if (!Queue.Contains(Node.ID)) Issues.Add(TEXT("Unreachable line: ") + Node.ID.ToString());
-        if (!Dialogue->ContextQuest && (!Dialogue->ActiveEntryNode.IsNone() || !Dialogue->ReadyEntryNode.IsNone() || !Dialogue->CompletedEntryNode.IsNone()))
+        if (Dialogue->UsesQuests() && !Dialogue->ContextQuest && (!Dialogue->ActiveEntryNode.IsNone() || !Dialogue->ReadyEntryNode.IsNone() || !Dialogue->CompletedEntryNode.IsNone()))
             Issues.Add(TEXT("Quest-state greetings need a Context Quest."));
     }
     if (Quest)
@@ -130,7 +129,7 @@ TArray<FString> Validate(const UDialogueDefinition* Dialogue, const UQuestDefini
     if (Actor)
     {
         if (!Actor->GetIsReplicated()) Issues.Add(TEXT("Object is not replicated; multiplayer dialogue requires replication."));
-        if (!Actor->FindComponentByClass<UDialogueComponent>()) Issues.Add(TEXT("Object has no Dialogue Component. Use Add dialogue support to configure it."));
+        if (!GetDialogue(Actor)) Issues.Add(TEXT("Object has no Dialogue Asset assigned. Choose one and click Assign dialogue to object."));
         if (auto* Objective = Actor->FindComponentByClass<UQuestObjectiveComponent>())
         {
             if (Quest && Objective->ProgressEvent != Quest->ProgressEvent) Issues.Add(TEXT("Pickup progress event differs from the selected quest."));
