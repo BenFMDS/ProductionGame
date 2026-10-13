@@ -28,9 +28,10 @@ UAchievementPopupWidget* UAchievementPopupWidget::CreateAndShowPopup(
 	TSubclassOf<UAchievementPopupWidget> WidgetClass,
 	UAchievementDefinitionAsset* AchievementAsset,
 	FAchievementProgressState ProgressState,
-	float InAutoHideDelay)
+	float InAutoHideDelay,
+	int32 ZOrder)
 {
-	if (!WorldContextObject || !WidgetClass)
+	if (!WorldContextObject || !WidgetClass || !AchievementAsset)
 	{
 		return nullptr;
 	}
@@ -42,6 +43,19 @@ UAchievementPopupWidget* UAchievementPopupWidget::CreateAndShowPopup(
 		return nullptr;
 	}
 
+	for (TObjectIterator<UAchievementPopupWidget> It; It; ++It)
+	{
+		UAchievementPopupWidget* ExistingWidget = *It;
+		if (ExistingWidget->GetWorld() == World
+			&& ExistingWidget->SourceAchievement == AchievementAsset
+			&& ExistingWidget->IsInViewport())
+		{
+			ExistingWidget->SetPopupDataFromDefinition(AchievementAsset, ProgressState);
+			ExistingWidget->ShowPopup(InAutoHideDelay);
+			return ExistingWidget;
+		}
+	}
+
 	UAchievementPopupWidget* Widget = CreateWidget<UAchievementPopupWidget>(World, WidgetClass);
 
 	if (!Widget)
@@ -49,7 +63,8 @@ UAchievementPopupWidget* UAchievementPopupWidget::CreateAndShowPopup(
 		return nullptr;
 	}
 
-	Widget->AddToViewport(9999);
+	Widget->SourceAchievement = AchievementAsset;
+	Widget->AddToViewport(ZOrder);
 	Widget->SetPopupDataFromDefinition(AchievementAsset, ProgressState);
 	Widget->ShowPopup(InAutoHideDelay);
 
@@ -88,6 +103,13 @@ void UAchievementPopupWidget::SetPopupDataFromDefinition(
 	UTexture2D* ImageToUse = ProgressState.bUnlocked
 		? AchievementAsset->UnlockedImage.LoadSynchronous()
 		: AchievementAsset->LockedImage.LoadSynchronous();
+
+	if (ImageToUse == nullptr)
+	{
+		ImageToUse = ProgressState.bUnlocked
+			? AchievementAsset->LockedImage.LoadSynchronous()
+			: AchievementAsset->UnlockedImage.LoadSynchronous();
+	}
 
 	SetPopupData(
 		ImageToUse,

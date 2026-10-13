@@ -19,6 +19,7 @@ class ACHIEVEMENTPLUGIN_API UAchievementListWidget : public UUserWidget
 
 public:
 	virtual void NativeOnInitialized() override;
+	virtual void NativeConstruct() override;
 
 	UFUNCTION(BlueprintCallable, Category = "Achievements")
 	void ClearAchievements();
@@ -53,6 +54,8 @@ protected:
 private:
 	UFUNCTION()
 	void HandleResetAllButtonClicked();
+	void RemoveIfViewportDuplicate();
+	bool HasViewportDuplicate() const;
 
 	void UpdateResetAllButtonVisibility();
 
