@@ -1,0 +1,39 @@
+<svg id="Layer_1" data-name="Layer 1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100.403 100.4014">
+  <defs>
+    <style>
+      .cls-1 {
+        fill: #8e8e8e;
+      }
+
+      .cls-2 {
+        fill: none;
+      }
+
+      .cls-3, .cls-4 {
+        fill: #efefef;
+      }
+
+      .cls-3 {
+        fill-rule: evenodd;
+      }
+    </style>
+  </defs>
+  <g>
+    <rect class="cls-1" x="0.2015" y="19.7677" width="33.3333" height="20.289"/>
+    <rect class="cls-1" x="33.5348" y="40.0567" width="33.3333" height="20.289"/>
+    <rect class="cls-1" x="66.8682" y="60.3447" width="33.3333" height="20.289"/>
+    <rect class="cls-1" x="66.8682" y="19.7677" width="33.3333" height="20.289"/>
+    <rect class="cls-1" x="0.2015" y="60.3447" width="33.3333" height="20.289"/>
+  </g>
+  <g>
+    <g>
+      <rect class="cls-2" x="74.8263" y="31.7358" width="32.7559" height="36.9309"/>
+      <polygon class="cls-3" points="74.826 59.434 74.826 68.667 97.347 50.202 74.826 31.736 74.826 40.969 74.826 59.434"/>
+      <polygon class="cls-3" points="25.609 40.969 25.609 31.736 3.088 50.2 25.609 68.667 25.609 59.434 25.609 40.969"/>
+    </g>
+    <g>
+      <rect class="cls-2" x="25.5767" y="48.4007" width="49.2496" height="3.6001"/>
+      <rect class="cls-4" x="25.5767" y="45.2348" width="49.2496" height="9.9319"/>
+    </g>
+  </g>
+</svg>

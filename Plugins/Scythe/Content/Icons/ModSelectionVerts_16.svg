@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   width="16"
+   height="16"
+   viewBox="0 0 16 16"
+   fill="none"
+   version="1.1"
+   id="svg12566"
+   sodipodi:docname="ModSelectionVerts_16.svg"
+   inkscape:version="1.2.1 (9c6d41e410, 2022-07-14)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <defs
+     id="defs12570" />
+  <sodipodi:namedview
+     id="namedview12568"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="true"
+     inkscape:deskcolor="#d1d1d1"
+     showgrid="false"
+     inkscape:zoom="92.1875"
+     inkscape:cx="8"
+     inkscape:cy="8"
+     inkscape:window-width="3643"
+     inkscape:window-height="2126"
+     inkscape:window-x="186"
+     inkscape:window-y="-11"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="svg12566" />
+  <path
+     d="M16 3H11V8H16V3Z"
+     fill="white"
+     id="path12560"
+     style="fill:#ccffcc;fill-opacity:1" />
+  <path
+     d="M7 11H2V16H7V11Z"
+     fill="white"
+     id="path12562"
+     style="fill:#ccffcc;fill-opacity:1" />
+  <path
+     d="M5 0H0V5H5V0Z"
+     fill="white"
+     id="path12564"
+     style="fill:#ccffcc;fill-opacity:1" />
+</svg>

@@ -1,0 +1,10 @@
+<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g opacity="0.5">
+<path d="M18 2V18H2V2H18ZM19 1H1V19H19V1Z" fill="white"/>
+</g>
+<path d="M14 6H6V14H14V6Z" fill="white"/>
+<path opacity="0.5" d="M2 2L6 6" stroke="white" stroke-miterlimit="10"/>
+<path opacity="0.5" d="M14 6L18 2" stroke="white" stroke-miterlimit="10"/>
+<path opacity="0.5" d="M14 14L18 18" stroke="white" stroke-miterlimit="10"/>
+<path opacity="0.5" d="M6 14L2 18" stroke="white" stroke-miterlimit="10"/>
+</svg>
