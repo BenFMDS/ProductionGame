@@ -39,7 +39,13 @@
 		{
 			"Name": "Scythe",
 			"Enabled": true,
-			"MarketplaceURL": "com.epicgames.launcher://ue/Fab/product/01e83831-6ce9-4cc0-b8fd-2587cd5df8d2"
+			"MarketplaceURL": "com.epicgames.launcher://ue/Fab/product/01e83831-6ce9-4cc0-b8fd-2587cd5df8d2",
+			"TargetAllowList": [
+				"Editor"
+			],
+			"TargetConfigurationAllowList": [
+				"Development"
+			]
 		}
 	]
 }
