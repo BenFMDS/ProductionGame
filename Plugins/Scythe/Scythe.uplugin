@@ -1,0 +1,119 @@
+{
+  "FileVersion": 3,
+  "Version": 1,
+  "VersionName": "0.11.0",
+  "FriendlyName": "Scythe",
+  "Description": "A modern level editor",
+  "Category": "Mapping",
+  "CreatedBy": "Shambler Studio, LLC",
+  "CreatedByURL": "https://ScytheEditor.com",
+  "DocsURL": "https://ScytheEditor.com/guide/",
+  "MarketplaceURL": "com.epicgames.launcher://ue/Fab/product/01e83831-6ce9-4cc0-b8fd-2587cd5df8d2",
+  "SupportURL": "",
+  "CanContainContent": true,
+  "IsBetaVersion": true,
+  "IsExperimentalVersion": false,
+  "Installed": true,
+  "Modules": [
+    {
+      "Name": "ScytheCommon",
+      "Type": "Editor",
+      "LoadingPhase": "PreDefault"
+    },
+    {
+      "Name": "ScytheMessages",
+      "Type": "Editor",
+      "LoadingPhase": "Default"
+    },
+    {
+      "Name": "Scythe",
+      "Type": "Editor",
+      "LoadingPhase": "Default"
+    },
+    {
+      "Name": "ScytheTools",
+      "Type": "Editor",
+      "LoadingPhase": "Default"
+    },
+    {
+      "Name": "ScytheComponents",
+      "Type": "Editor",
+      "LoadingPhase": "Default"
+    },
+    {
+      "Name": "ScytheSettings",
+      "Type": "Editor",
+      "LoadingPhase": "PreDefault"
+    },
+    {
+      "Name": "HotspotEditor",
+      "Type": "Editor",
+      "LoadingPhase": "Default"
+    },
+    {
+      "Name": "ScytheDataAssets",
+      "Type": "Editor",
+      "LoadingPhase": "Default"
+    },
+    {
+      "Name": "ScytheMaterialBrowser",
+      "Type": "Editor",
+      "LoadingPhase": "Default"
+    }
+  ],
+  "Plugins": [
+    {
+      "Name": "MeshModelingToolset",
+      "Enabled": true,
+      "TargetAllowList": [
+        "Editor"
+      ]
+    },
+    {
+      "Name": "ModelingToolsEditorMode",
+      "Enabled": true,
+      "TargetAllowList": [
+        "Editor"
+      ]
+    },
+    {
+      "Name": "MeshModelingToolsetExp",
+      "Enabled": true,
+      "TargetAllowList": [
+        "Editor"
+      ]
+    },
+    {
+      "Name": "MeshLODToolset",
+      "Enabled": true,
+      "TargetAllowList": [
+        "Editor"
+      ]
+    },
+    {
+      "Name": "ToolPresets",
+      "Enabled": true,
+      "TargetAllowList": [
+        "Editor"
+      ]
+    },
+    {
+      "Name": "GeometryProcessing",
+      "Enabled": true
+    },
+    {
+      "Name": "GeometryScripting",
+      "Enabled": true
+    },
+    {
+      "Name": "ProxyLODPlugin",
+      "Enabled": true
+    },
+    {
+      "Name": "UVEditor",
+      "Enabled": true
+    }
+  ],
+  "EngineVersion": "5.7.0",
+  "EnabledByDefault": false
+}
