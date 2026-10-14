@@ -12,12 +12,13 @@
 	"SupportURL": "",
 	"EngineVersion": "5.7.0",
 	"CanContainContent": true,
-	"Installed": true,
+	"Installed": false,
+	"EnabledByDefault": true,
 	"Modules": [
 		{
 			"Name": "AchievementPlugin",
 			"Type": "Runtime",
-			"LoadingPhase": "Default"
+			"LoadingPhase": "PreDefault"
 		},
 		{
 			"Name": "AchievementPluginEditor",

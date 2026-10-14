@@ -19,7 +19,10 @@ public:
 	ARobberMenuPlayerController();
 
 protected:
+	virtual void Tick(float DeltaSeconds) override;
 	virtual void SetupInputComponent() override;
+
+	void RemoveDuplicateMenuWidgets();
 
 	/** Existing controller used only as the source of input mapping contexts. */
 	UPROPERTY(EditDefaultsOnly, Category = "Input|Input Mappings")
