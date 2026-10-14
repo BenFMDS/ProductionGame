@@ -1,0 +1,15 @@
+{
+	"BuildId": "47537391",
+	"Modules": 
+	{
+		"HotspotEditor": "UnrealEditor-HotspotEditor.dll",
+		"Scythe": "UnrealEditor-Scythe.dll",
+		"ScytheCommon": "UnrealEditor-ScytheCommon.dll",
+		"ScytheComponents": "UnrealEditor-ScytheComponents.dll",
+		"ScytheDataAssets": "UnrealEditor-ScytheDataAssets.dll",
+		"ScytheMaterialBrowser": "UnrealEditor-ScytheMaterialBrowser.dll",
+		"ScytheMessages": "UnrealEditor-ScytheMessages.dll",
+		"ScytheSettings": "UnrealEditor-ScytheSettings.dll",
+		"ScytheTools": "UnrealEditor-ScytheTools.dll"
+	}
+}

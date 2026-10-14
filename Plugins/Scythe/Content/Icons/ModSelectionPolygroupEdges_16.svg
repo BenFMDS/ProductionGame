@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   width="16"
+   height="17"
+   viewBox="0 0 16 17"
+   fill="none"
+   version="1.1"
+   id="svg1055"
+   sodipodi:docname="ModSelectionPolygroupEdges_16.svg"
+   inkscape:version="1.2.1 (9c6d41e410, 2022-07-14)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <defs
+     id="defs1059" />
+  <sodipodi:namedview
+     id="namedview1057"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0"
+     inkscape:pagecheckerboard="true"
+     inkscape:deskcolor="#d1d1d1"
+     showgrid="false"
+     inkscape:zoom="39.161237"
+     inkscape:cx="-0.47240591"
+     inkscape:cy="16.151175"
+     inkscape:window-width="3643"
+     inkscape:window-height="2126"
+     inkscape:window-x="186"
+     inkscape:window-y="-11"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="svg1055" />
+  <path
+     opacity="0.5"
+     d="M8 1.27005V14.81L1 13.5701V3.00005L8 1.32005M9 0.0500488L0 2.21005V14.4601L9 16.05V0.0500488Z"
+     fill="white"
+     id="path1049"
+     style="fill:#ccccff;fill-opacity:1" />
+  <path
+     opacity="0.5"
+     d="M10 1.52L15 3.66V13L10 14.66V1.57001M9 0.0500031V16.05L16 13.72V3L9 0V0.0500031Z"
+     fill="white"
+     id="path1051"
+     style="fill:#ccccff;fill-opacity:1" />
+  <path
+     d="M10 0.759995L8.5 0L7 0.289993V15.71L8.5 16L10 15.42V0.759995Z"
+     fill="white"
+     id="path1053"
+     style="fill:#ccccff;fill-opacity:1" />
+</svg>

@@ -20,3 +20,11 @@ void UDialogueInteractionLibrary::CollectQuestObject(AActor* QuestObject, AActor
 	if (!IsValid(PC) || !PC->IsLocalController()) return;
 	if (auto* Player = PC->FindComponentByClass<UPlayerQuestComponent>()) Player->ServerCollectQuestObject(QuestObject);
 }
+
+void UDialogueInteractionLibrary::ActivateQuestPuzzle(AActor* PuzzleStep, AActor* InteractingPlayer)
+{
+	APlayerController* PC = Cast<APlayerController>(InteractingPlayer);
+	if (APawn* Pawn = Cast<APawn>(InteractingPlayer)) PC = Cast<APlayerController>(Pawn->GetController());
+	if (!IsValid(PC) || !PC->IsLocalController()) return;
+	if (auto* Player = PC->FindComponentByClass<UPlayerQuestComponent>()) Player->ServerActivateQuestPuzzle(PuzzleStep);
+}

@@ -10,6 +10,9 @@
 #include "ProductionGame.h"
 #include "Widgets/Input/SVirtualJoystick.h"
 #include "Quest/PlayerQuestComponent.h"
+#include "Components/Button.h"
+#include "GameFramework/GameUserSettings.h"
+#include "UObject/UObjectIterator.h"
 
 AProductionGamePlayerController::AProductionGamePlayerController()
 {
@@ -40,6 +43,85 @@ void AProductionGamePlayerController::BeginPlay()
 
 		}
 
+	}
+}
+
+void AProductionGamePlayerController::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+	if (IsLocalController())
+	{
+		RemoveDuplicateProjectWidgets();
+		BindSettingsApplyButton();
+	}
+}
+
+void AProductionGamePlayerController::RemoveDuplicateProjectWidgets()
+{
+	// Keep one copy of every project widget class. The interaction prompt is a
+	// persistent, independently managed HUD element and is intentionally exempt.
+	TMap<UClass*, UUserWidget*> NewestWidgetByClass;
+	for (TObjectIterator<UUserWidget> It; It; ++It)
+	{
+		UUserWidget* Widget = *It;
+		if (!IsValid(Widget) || Widget->GetOwningPlayer() != this || !Widget->IsInViewport())
+		{
+			continue;
+		}
+
+		const FString ClassPath = Widget->GetClass()->GetPathName();
+		const bool bProjectWidget = ClassPath.StartsWith(TEXT("/Game/OurStuff/"));
+		const bool bIsInteractionWidget = ClassPath.StartsWith(
+			TEXT("/Game/OurStuff/Core/InteractionSystem/WBP_Interaction"));
+		if (!bProjectWidget || bIsInteractionWidget)
+		{
+			continue;
+		}
+
+		if (UUserWidget** Existing = NewestWidgetByClass.Find(Widget->GetClass()))
+		{
+			if ((*Existing)->GetUniqueID() < Widget->GetUniqueID())
+			{
+				(*Existing)->RemoveFromParent();
+				*Existing = Widget;
+			}
+			else
+			{
+				Widget->RemoveFromParent();
+			}
+		}
+		else
+		{
+			NewestWidgetByClass.Add(Widget->GetClass(), Widget);
+		}
+	}
+}
+
+void AProductionGamePlayerController::BindSettingsApplyButton()
+{
+	for (TObjectIterator<UUserWidget> It; It; ++It)
+	{
+		UUserWidget* SettingsWidget = *It;
+		if (!IsValid(SettingsWidget) || SettingsWidget->GetOwningPlayer() != this || !SettingsWidget->IsInViewport()
+			|| !SettingsWidget->GetClass()->GetPathName().StartsWith(TEXT("/Game/OurStuff/Widgets/Menus/WBP_Settings")))
+		{
+			continue;
+		}
+
+		if (UButton* ApplyButton = Cast<UButton>(SettingsWidget->GetWidgetFromName(TEXT("BTN_Apply"))))
+		{
+			ApplyButton->OnClicked.AddUniqueDynamic(this, &AProductionGamePlayerController::ApplyDisplaySettings);
+		}
+	}
+}
+
+void AProductionGamePlayerController::ApplyDisplaySettings()
+{
+	if (UGameUserSettings* Settings = GEngine ? GEngine->GetGameUserSettings() : nullptr)
+	{
+		// Do not let a launcher/editor command line overwrite the user's pending choice.
+		Settings->ApplySettings(false);
+		Settings->SaveSettings();
 	}
 }
 

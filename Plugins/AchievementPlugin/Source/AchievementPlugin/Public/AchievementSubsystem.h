@@ -77,6 +77,10 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Achievements")
 	TArray<FAchievementDefinition> GetAchievementDefinitions() const;
 
+	/** Returns the asset behind an achievement ID so presentation always has one authoritative source. */
+	UFUNCTION(BlueprintPure, Category = "Achievements")
+	UAchievementDefinitionAsset* GetAchievementDefinitionAsset(FName AchievementId) const;
+
 	UFUNCTION(BlueprintCallable, Category = "Achievements")
 	bool ResetAchievementProgress(FName AchievementId);
 

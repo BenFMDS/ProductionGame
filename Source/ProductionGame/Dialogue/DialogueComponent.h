@@ -5,24 +5,31 @@
 #include "DialogueComponent.generated.h"
 
 class UDialogueDefinition;
+class UQuestDefinition;
 class UPlayerQuestComponent;
 class APlayerState;
 class APawn;
 
 /** Add to a replicated NPC. Never give NPC ownership to a client. */
-UCLASS(ClassGroup=(Dialogue), BlueprintType, meta=(BlueprintSpawnableComponent))
+UCLASS(ClassGroup=(Dialogue), BlueprintType, meta=(BlueprintSpawnableComponent, DisplayName="Talker Component"))
 class PRODUCTIONGAME_API UDialogueComponent : public UActorComponent
 {
 	GENERATED_BODY()
 public:
 	UDialogueComponent();
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Dialogue") TObjectPtr<UDialogueDefinition> Dialogue;
+	/** The one dialogue asset this actor speaks. A conversation cannot begin without it. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Dialogue", meta=(DisplayName="Dialogue Asset")) TObjectPtr<UDialogueDefinition> Dialogue;
+	/** Optional quests offered through this conversation. New talkers use this instead of a separate Quest Giver Component. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Quests", meta=(DisplayName="Offered Quests")) TArray<TObjectPtr<UQuestDefinition>> OfferedQuests;
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Dialogue", meta=(ClampMin="1")) float InteractionDistance = 350.f;
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Dialogue", meta=(ClampMin="1")) float IdleTimeout = 120.f;
 	/** Replicated busy indicator; lock ownership itself is private server state. */
 	UPROPERTY(Replicated, BlueprintReadOnly, Category="Dialogue") bool bIsInConversation = false;
 	UPROPERTY(Replicated, BlueprintReadOnly, Category="Dialogue") TObjectPtr<APlayerState> TalkingPlayer;
 	bool TryStart(UPlayerQuestComponent* Player);
+	bool HasValidDialogue() const;
+	TArray<UQuestDefinition*> GetOfferedQuests() const;
+	bool OffersQuest(const UQuestDefinition* Quest) const;
 	void Choose(UPlayerQuestComponent* Player, int32 ChoiceID, int32 Revision);
 	void Release(UPlayerQuestComponent* Player);
 	bool IsParticipant(const UPlayerQuestComponent* Player) const;

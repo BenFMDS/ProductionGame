@@ -32,17 +32,26 @@
 #include "Widgets/Layout/SWidgetSwitcher.h"
 #include "Widgets/Text/STextBlock.h"
 #include "Framework/MultiBox/MultiBoxBuilder.h"
+#include "Styling/AppStyle.h"
 
 namespace
 {
 FText Txt(const FString& Value) { return FText::FromString(Value); }
 TSharedRef<SWidget> Label(const FString& Value)
 {
-    return SNew(STextBlock).Text(Txt(Value)).AutoWrapText(true);
+    return SNew(STextBlock).Text(Txt(Value)).AutoWrapText(true).ColorAndOpacity(FSlateColor::UseForeground());
 }
-TSharedRef<SWidget> Button(const FString& Name, TFunction<void()> Action)
+TSharedRef<SWidget> SectionTitle(const FString& Title)
 {
-    return SNew(SButton).Text(Txt(Name)).OnClicked_Lambda([Action] { Action(); return FReply::Handled(); });
+    return SNew(STextBlock).Text(Txt(Title)).Font(FAppStyle::GetFontStyle("BoldFont"));
+}
+TSharedRef<SWidget> Button(const FString& Name, TFunction<void()> Action, bool bPrimary = false)
+{
+    return SNew(SButton)
+        .ButtonStyle(bPrimary ? &FAppStyle::Get().GetWidgetStyle<FButtonStyle>("PrimaryButton") : &FAppStyle::Get().GetWidgetStyle<FButtonStyle>("Button"))
+        .ContentPadding(FMargin(9, 5))
+        .Text(Txt(Name))
+        .OnClicked_Lambda([Action] { Action(); return FReply::Handled(); });
 }
 FName UniqueNodeID(const UDialogueDefinition& Dialogue)
 {
@@ -64,9 +73,12 @@ void SDialogueManager::Construct(const FArguments& Args)
     DialogueDetails = Properties.CreateDetailView(DetailArgs);
     QuestDetails = Properties.CreateDetailView(DetailArgs);
     ObjectDetails = Properties.CreateDetailView(DetailArgs);
-    DialogueDetails->SetIsPropertyVisibleDelegate(FIsPropertyVisible::CreateLambda([](const FPropertyAndParent& Property)
+    DialogueDetails->SetIsPropertyVisibleDelegate(FIsPropertyVisible::CreateLambda([this](const FPropertyAndParent& Property)
     {
-        return Property.Property.GetFName() != TEXT("Nodes");
+        const FName Name = Property.Property.GetFName();
+        if (Name == TEXT("Nodes")) return false;
+        const bool bQuestSetting = Name == TEXT("ContextQuest") || Name == TEXT("ActiveEntryNode") || Name == TEXT("ReadyEntryNode") || Name == TEXT("CompletedEntryNode") || Name == TEXT("bIncludeQuestChoices");
+        return !bQuestSetting || !Dialogue.IsValid() || Dialogue->UsesQuests();
     }));
     ObjectDetails->SetIsPropertyVisibleDelegate(FIsPropertyVisible::CreateLambda([](const FPropertyAndParent& Property)
     {
@@ -83,56 +95,60 @@ void SDialogueManager::Construct(const FArguments& Args)
     ChildSlot
     [
         SNew(SVerticalBox)
-        + SVerticalBox::Slot().AutoHeight().Padding(6)
-        [ SNew(STextBlock).Text_Lambda([this] { return Txt(CanEdit() ? TEXT("Dialogue & Quests  |  Select an object, choose an asset, edit and preview") : TEXT("Stop Play / Simulate to edit dialogue and quests.")); }) ]
-        + SVerticalBox::Slot().AutoHeight().Padding(6)
+        + SVerticalBox::Slot().AutoHeight().Padding(8, 8, 8, 2)
+        [
+            SNew(SHorizontalBox)
+            + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
+            [
+                SNew(STextBlock).Text(Txt(TEXT("Dialogue Helper"))).Font(FAppStyle::GetFontStyle("HeadingSmall"))
+            ]
+            + SHorizontalBox::Slot().FillWidth(1)
+            + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
+            [SNew(STextBlock).Text_Lambda([this] { return Txt(CanEdit() ? TEXT("Editing") : TEXT("Stop Play to edit")); }).ColorAndOpacity(FSlateColor::UseSubduedForeground())]
+        ]
+        + SVerticalBox::Slot().AutoHeight().Padding(8, 2)
         [
             SNew(SHorizontalBox)
             + SHorizontalBox::Slot().AutoWidth()[Button(TEXT("Refresh"), [this] { Refresh(); })]
-            + SHorizontalBox::Slot().AutoWidth().Padding(4, 0)[Button(TEXT("Save changes..."), [this] { Save(); })]
-            + SHorizontalBox::Slot().AutoWidth()[Button(TEXT("Validate"), [this] { Validate(); })]
+            + SHorizontalBox::Slot().AutoWidth().Padding(4, 0)[Button(TEXT("Save"), [this] { Save(); }, true)]
+            + SHorizontalBox::Slot().AutoWidth().Padding(4, 0)[Button(TEXT("Validate"), [this] { Validate(); })]
+            + SHorizontalBox::Slot().FillWidth(1)
             + SHorizontalBox::Slot().AutoWidth().Padding(8, 0)
             [ SNew(SCheckBox).IsChecked(ECheckBoxState::Checked).OnCheckStateChanged_Lambda([this](ECheckBoxState Value) { bFollowSelection = Value == ECheckBoxState::Checked; if (bFollowSelection) SelectionChanged(nullptr); })[Label(TEXT("Follow level selection"))] ]
         ]
-        + SVerticalBox::Slot().FillHeight(1).Padding(6)
+        + SVerticalBox::Slot().FillHeight(1).Padding(8, 4)
         [
             SNew(SSplitter).IsEnabled_Lambda([this] { return CanEdit(); })
             + SSplitter::Slot().Value(.22f)
             [
                 SNew(SScrollBox)
-                + SScrollBox::Slot()[Label(TEXT("OBJECTS IN CURRENT LEVEL"))]
+                + SScrollBox::Slot()[SectionTitle(TEXT("OBJECTS"))]
                 + SScrollBox::Slot().Padding(0, 4)[SNew(SSearchBox).HintText(Txt(TEXT("Search objects"))).OnTextChanged_Lambda([this](const FText& Value) { ObjectSearch = Value.ToString(); RefreshObjects(); })]
                 + SScrollBox::Slot()[SNew(SBox).MaxDesiredHeight(220)[SNew(SScrollBox) + SScrollBox::Slot()[SAssignNew(ObjectList, SVerticalBox)]]]
                 + SScrollBox::Slot().Padding(0, 8)[SNew(STextBlock).AutoWrapText(true).Text_Lambda([this] { return Txt(Actor.IsValid() ? TEXT("Placed object: ") + Actor->GetActorLabel() : TEXT("No object selected. You can still edit assets.")); })]
-                + SScrollBox::Slot()[Button(TEXT("Focus object"), [this] { if (Actor.IsValid()) GEditor->MoveViewportCamerasToActor(*Actor.Get(), false); })]
-                + SScrollBox::Slot()[Button(TEXT("Open Blueprint defaults"), [this] { if (Actor.IsValid()) if (auto* BP = Cast<UBlueprint>(Actor->GetClass()->ClassGeneratedBy)) GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->OpenEditorForAsset(BP); })]
-                + SScrollBox::Slot().Padding(0, 4)[Label(TEXT("Assignments below affect this placed object. Open its Blueprint to change class defaults."))]
-                + SScrollBox::Slot()[Button(TEXT("Add dialogue / quest-giver support"), [this] { AddSupport(); })]
-                + SScrollBox::Slot().Padding(0, 8)[Label(TEXT("Dialogue asset"))]
+                + SScrollBox::Slot().Padding(0, 4)[Label(TEXT("This object uses one Talker Component. It owns its dialogue and optional offered quests."))]
+                + SScrollBox::Slot()[Button(TEXT("Add Talker Component"), [this] { AddSupport(); })]
+                + SScrollBox::Slot().Padding(0, 8)[Label(TEXT("Dialogue Asset"))]
                 + SScrollBox::Slot()[SNew(STextBlock).AutoWrapText(true).Text_Lambda([this] { auto* Assigned = DialogueAuthoring::GetDialogue(Actor.Get()); return Txt(TEXT("Object currently uses: ") + (Assigned ? Assigned->GetName() : TEXT("None"))); })]
                 + SScrollBox::Slot()[SNew(SObjectPropertyEntryBox).AllowedClass(UDialogueDefinition::StaticClass()).ObjectPath_Lambda([this] { return Dialogue.IsValid() ? Dialogue->GetPathName() : FString(); }).OnObjectChanged_Lambda([this](const FAssetData& Asset) { SelectDialogue(Cast<UDialogueDefinition>(Asset.GetAsset())); })]
-                + SScrollBox::Slot()[Button(TEXT("Assign dialogue to object (or clear)"), [this] { AssignDialogue(); })]
+                + SScrollBox::Slot()[Button(TEXT("Apply Dialogue Asset"), [this] { AssignDialogue(); })]
                 + SScrollBox::Slot()[Button(TEXT("New dialogue..."), [this] { CreateAsset(false); })]
-                + SScrollBox::Slot()[Button(TEXT("Make unique copy and assign..."), [this] { DuplicateDialogue(); })]
-                + SScrollBox::Slot().Padding(0, 8)[Label(TEXT("Quest asset"))]
+                + SScrollBox::Slot()[Button(TEXT("New quest dialogue..."), [this] { CreateAsset(false, true); })]
+                + SScrollBox::Slot().Padding(0, 8)[Label(TEXT("Offered Quest (optional)"))]
                 + SScrollBox::Slot()[SNew(SObjectPropertyEntryBox).AllowedClass(UQuestDefinition::StaticClass()).ObjectPath_Lambda([this] { return Quest.IsValid() ? Quest->GetPathName() : FString(); }).OnObjectChanged_Lambda([this](const FAssetData& Asset) { SelectQuest(Cast<UQuestDefinition>(Asset.GetAsset())); })]
                 + SScrollBox::Slot()[Button(TEXT("New quest..."), [this] { CreateAsset(true); })]
-                + SScrollBox::Slot()[Button(TEXT("Offer quest on object"), [this] { OfferQuest(true); })]
-                + SScrollBox::Slot()[Button(TEXT("Remove quest from object"), [this] { OfferQuest(false); })]
-                + SScrollBox::Slot()[Button(TEXT("Create starter dialogue for quest..."), [this] { CreateStarterDialogue(); })]
-                + SScrollBox::Slot().Padding(0, 6)[Label(TEXT("Object's quests / matching pickup quests (click to edit)"))]
+                + SScrollBox::Slot()[Button(TEXT("Add selected quest"), [this] { OfferQuest(true); })]
+                + SScrollBox::Slot()[Button(TEXT("Remove selected quest"), [this] { OfferQuest(false); })]
+                + SScrollBox::Slot().Padding(0, 6)[Label(TEXT("Current offered quests"))]
                 + SScrollBox::Slot()[SAssignNew(Offers, SVerticalBox)]
-                + SScrollBox::Slot().Padding(0, 6)[Button(TEXT("Link existing pickup to selected quest"), [this] { LinkObjective(); })]
-                + SScrollBox::Slot()[Label(TEXT("Pickup links use the quest's Progress Event. Interaction Blueprint wiring is still required."))]
-                + SScrollBox::Slot()[ObjectDetails.ToSharedRef()]
             ]
             + SSplitter::Slot().Value(.48f)
             [
                 SNew(SVerticalBox)
                 + SVerticalBox::Slot().AutoHeight()
                 [ SNew(SHorizontalBox)
-                    + SHorizontalBox::Slot()[Button(TEXT("Dialogue"), [this] { bQuestTab = false; })]
-                    + SHorizontalBox::Slot()[Button(TEXT("Quests"), [this] { bQuestTab = true; })]
+                    + SHorizontalBox::Slot()[Button(TEXT("Dialogue"), [this] { bQuestTab = false; }, true)]
+                    + SHorizontalBox::Slot().Padding(4, 0, 0, 0)[Button(TEXT("Quests"), [this] { bQuestTab = true; })]
                 ]
                 + SVerticalBox::Slot().AutoHeight().Padding(4)
                 [SNew(STextBlock).AutoWrapText(true).Text_Lambda([this]
@@ -145,8 +161,21 @@ void SDialogueManager::Construct(const FArguments& Args)
                     SNew(SWidgetSwitcher).WidgetIndex_Lambda([this] { return bQuestTab ? 1 : 0; })
                     + SWidgetSwitcher::Slot()
                     [SNew(SScrollBox)
+                        + SScrollBox::Slot().Padding(0, 0, 0, 4)[SNew(SHorizontalBox)
+                            + SHorizontalBox::Slot()[Button(TEXT("Dialogue only"), [this]
+                            {
+                                ChangeDialogue([](UDialogueDefinition& D)
+                                {
+                                    D.DialogueType = EDialogueType::DialogueOnly;
+                                });
+                            }, Dialogue.IsValid() && Dialogue->DialogueType == EDialogueType::DialogueOnly)]
+                            + SHorizontalBox::Slot().Padding(4, 0, 0, 0)[Button(TEXT("Dialogue + quests"), [this]
+                            {
+                                ChangeDialogue([](UDialogueDefinition& D) { D.DialogueType = EDialogueType::QuestDialogue; });
+                            }, Dialogue.IsValid() && Dialogue->DialogueType == EDialogueType::QuestDialogue)]
+                        ]
                         + SScrollBox::Slot()[SNew(SBox).HeightOverride(260)[DialogueDetails.ToSharedRef()]]
-                        + SScrollBox::Slot()[Label(TEXT("CONVERSATION LINES"))]
+                        + SScrollBox::Slot().Padding(0, 8, 0, 3)[SectionTitle(TEXT("CONVERSATION LINES"))]
                         + SScrollBox::Slot()[SNew(SSearchBox).HintText(Txt(TEXT("Search line ID or text"))).OnTextChanged_Lambda([this](const FText& Value) { LineSearch = Value.ToString(); RefreshLines(); })]
                         + SScrollBox::Slot()[SNew(SHorizontalBox)
                             + SHorizontalBox::Slot()[Button(TEXT("Add line"), [this] { AddNode(false); })]
@@ -164,14 +193,13 @@ void SDialogueManager::Construct(const FArguments& Args)
             ]
             + SSplitter::Slot().Value(.30f)
             [SNew(SScrollBox)
-                + SScrollBox::Slot()[Label(TEXT("CONVERSATION SIMULATOR"))]
-                + SScrollBox::Slot().Padding(0, 6)[Label(TEXT("Simulates authored choices and quests offered by the selected object. Assumes this object gave accepted quests. Does not run gameplay, grant rewards, or change saved progress."))]
+                + SScrollBox::Slot()[SectionTitle(TEXT("SIMULATOR"))]
                 + SScrollBox::Slot()[Button(TEXT("Restart conversation"), [this] { RestartPreview(); })]
                 + SScrollBox::Slot()[Button(TEXT("Reset simulated quest progress"), [this] { SimulatedStates.Reset(); RestartPreview(); })]
                 + SScrollBox::Slot().Padding(0, 8)[SAssignNew(Preview, SVerticalBox)]
             ]
         ]
-        + SVerticalBox::Slot().AutoHeight().Padding(6)
+        + SVerticalBox::Slot().AutoHeight().Padding(8, 4, 8, 8)
         [SNew(SBox).MaxDesiredHeight(140)[SNew(SScrollBox) + SScrollBox::Slot()[SNew(STextBlock).AutoWrapText(true).Text_Lambda([this] { return Txt(Status); })]]]
     ];
     SelectionChanged(nullptr);
@@ -289,6 +317,7 @@ void SDialogueManager::ChangeDialogue(TFunctionRef<void(UDialogueDefinition&)> C
     Change(*Dialogue);
     Dialogue->PostEditChange();
     Dialogue->MarkPackageDirty();
+    DialogueDetails->ForceRefresh();
     bRefresh = true;
 }
 void SDialogueManager::RefreshLines()
@@ -301,7 +330,7 @@ void SDialogueManager::RefreshLines()
         FString Caption = (Node.ID == SelectedNode ? TEXT("> ") : TEXT("")) + Node.ID.ToString();
         if (Node.ID == Dialogue->EntryNode) Caption += TEXT(" [START]");
         Caption += TEXT("  ") + Node.Text.ToString().Left(65).Replace(TEXT("\n"), TEXT(" "));
-        Lines->AddSlot().AutoHeight()[Button(Caption, [this, ID = Node.ID] { SelectedNode = ID; bRefresh = true; })];
+        Lines->AddSlot().AutoHeight().Padding(0, 1)[Button(Caption, [this, ID = Node.ID] { SelectedNode = ID; bRefresh = true; }, Node.ID == SelectedNode)];
     }
 }
 TSharedRef<SWidget> SDialogueManager::NodePicker(FName Value, TFunction<void(FName)> OnPicked, bool bAllowEnd)
@@ -321,7 +350,8 @@ void SDialogueManager::RefreshLineEditor()
     LineEditor->ClearChildren();
     auto* Node = CurrentNode();
     if (!Node) { LineEditor->AddSlot().AutoHeight()[Label(TEXT("Select or add a line."))]; return; }
-    LineEditor->AddSlot().AutoHeight()[Label(TEXT("Line ID (renaming updates all links)"))];
+    LineEditor->AddSlot().AutoHeight().Padding(0, 8, 0, 3)[SectionTitle(TEXT("LINE EDITOR  •  ") + Node->ID.ToString())];
+    LineEditor->AddSlot().AutoHeight()[Label(TEXT("Line ID (renaming updates every link)"))];
     LineEditor->AddSlot().AutoHeight()[SNew(SEditableTextBox).Text(Txt(Node->ID.ToString())).OnTextCommitted_Lambda([this](const FText& Text, ETextCommit::Type)
     {
         const FName NewID(*Text.ToString().TrimStartAndEnd());
@@ -332,30 +362,34 @@ void SDialogueManager::RefreshLineEditor()
         bRefresh = true;
     })];
     LineEditor->AddSlot().AutoHeight()[Button(TEXT("Use as starting line"), [this] { ChangeDialogue([this](auto& D) { D.EntryNode = SelectedNode; }); })];
-    LineEditor->AddSlot().AutoHeight().Padding(0, 6)[SNew(SBox).MinDesiredHeight(100)[SNew(SMultiLineEditableTextBox).Text(Node->Text).AutoWrapText(true).OnTextCommitted_Lambda([this](const FText& Text, ETextCommit::Type) { if (auto* N = CurrentNode(); N && !N->Text.EqualTo(Text)) ChangeDialogue([this, Text](auto&) { if (auto* Current = CurrentNode()) Current->Text = Text; }); })]];
+    LineEditor->AddSlot().AutoHeight().Padding(0, 6)[SNew(SBox).MinDesiredHeight(100)[SNew(SMultiLineEditableTextBox).HintText(Txt(TEXT("Dialogue text"))).Text(Node->Text).AutoWrapText(true).OnTextCommitted_Lambda([this](const FText& Text, ETextCommit::Type) { if (auto* N = CurrentNode(); N && !N->Text.EqualTo(Text)) ChangeDialogue([this, Text](auto&) { if (auto* Current = CurrentNode()) Current->Text = Text; }); })]];
     LineEditor->AddSlot().AutoHeight()[Label(TEXT("Voice sound"))];
     LineEditor->AddSlot().AutoHeight()[SNew(SObjectPropertyEntryBox).AllowedClass(USoundBase::StaticClass()).ObjectPath(Node->Voice ? Node->Voice->GetPathName() : FString()).OnObjectChanged_Lambda([this](const FAssetData& Asset) { ChangeDialogue([this, Asset](auto&) { if (auto* N = CurrentNode()) N->Voice = Cast<USoundBase>(Asset.GetAsset()); }); })];
     LineEditor->AddSlot().AutoHeight()[SNew(SHorizontalBox)
         + SHorizontalBox::Slot()[Button(TEXT("Play voice"), [this] { PlayVoice(SelectedNode); })]
         + SHorizontalBox::Slot()[Button(TEXT("Stop"), [] { GEditor->ResetPreviewAudioComponent(); })]];
-    LineEditor->AddSlot().AutoHeight().Padding(0, 8)[Label(TEXT("PLAYER RESPONSES"))];
+    LineEditor->AddSlot().AutoHeight().Padding(0, 10, 0, 3)[SectionTitle(TEXT("PLAYER RESPONSES"))];
     for (int32 Index = 0; Index < Node->Choices.Num(); ++Index)
     {
         const auto& Choice = Node->Choices[Index];
-        LineEditor->AddSlot().AutoHeight().Padding(0, 4)[SNew(SMultiLineEditableTextBox).Text(Choice.Text).AutoWrapText(true).OnTextCommitted_Lambda([this, Index](const FText& Text, ETextCommit::Type)
+        LineEditor->AddSlot().AutoHeight().Padding(0, 5, 0, 2)[SNew(STextBlock).Text(FText::Format(NSLOCTEXT("DialogueHelper", "ResponseNumber", "Response {0}"), FText::AsNumber(Index + 1))).Font(FAppStyle::GetFontStyle("BoldFont"))];
+        LineEditor->AddSlot().AutoHeight()[SNew(SMultiLineEditableTextBox).HintText(Txt(TEXT("What can the player say?"))).Text(Choice.Text).AutoWrapText(true).OnTextCommitted_Lambda([this, Index](const FText& Text, ETextCommit::Type)
         { if (auto* N = CurrentNode(); N && N->Choices.IsValidIndex(Index) && !N->Choices[Index].Text.EqualTo(Text)) ChangeDialogue([this, Index, Text](auto&) { if (auto* Current = CurrentNode(); Current && Current->Choices.IsValidIndex(Index)) Current->Choices[Index].Text = Text; }); })];
         LineEditor->AddSlot().AutoHeight()[NodePicker(Choice.NextNode, [this, Index](FName ID)
         { ChangeDialogue([this, Index, ID](auto&) { if (auto* N = CurrentNode(); N && N->Choices.IsValidIndex(Index)) N->Choices[Index].NextNode = ID; }); })];
-        LineEditor->AddSlot().AutoHeight()[SNew(SComboButton).ButtonContent()[Label(StaticEnum<EDialogueQuestAction>()->GetDisplayNameTextByValue(static_cast<int64>(Choice.QuestAction)).ToString())].OnGetMenuContent_Lambda([this, Index]
+        if (Dialogue->UsesQuests())
         {
-            FMenuBuilder Menu(true, nullptr);
-            for (auto Action : {EDialogueQuestAction::None, EDialogueQuestAction::Accept, EDialogueQuestAction::TurnIn})
-                Menu.AddMenuEntry(StaticEnum<EDialogueQuestAction>()->GetDisplayNameTextByValue(static_cast<int64>(Action)), FText(), FSlateIcon(), FUIAction(FExecuteAction::CreateLambda([this, Index, Action]
-                { ChangeDialogue([this, Index, Action](auto&) { if (auto* N = CurrentNode(); N && N->Choices.IsValidIndex(Index)) N->Choices[Index].QuestAction = Action; }); })));
-            return Menu.MakeWidget();
-        })];
-        LineEditor->AddSlot().AutoHeight()[SNew(SObjectPropertyEntryBox).AllowedClass(UQuestDefinition::StaticClass()).ObjectPath(Choice.Quest ? Choice.Quest->GetPathName() : FString()).OnObjectChanged_Lambda([this, Index](const FAssetData& Asset)
-        { ChangeDialogue([this, Index, Asset](auto&) { if (auto* N = CurrentNode(); N && N->Choices.IsValidIndex(Index)) N->Choices[Index].Quest = Cast<UQuestDefinition>(Asset.GetAsset()); }); })];
+            LineEditor->AddSlot().AutoHeight()[SNew(SComboButton).ButtonContent()[Label(StaticEnum<EDialogueQuestAction>()->GetDisplayNameTextByValue(static_cast<int64>(Choice.QuestAction)).ToString())].OnGetMenuContent_Lambda([this, Index]
+            {
+                FMenuBuilder Menu(true, nullptr);
+                for (auto Action : {EDialogueQuestAction::None, EDialogueQuestAction::Accept, EDialogueQuestAction::TurnIn})
+                    Menu.AddMenuEntry(StaticEnum<EDialogueQuestAction>()->GetDisplayNameTextByValue(static_cast<int64>(Action)), FText(), FSlateIcon(), FUIAction(FExecuteAction::CreateLambda([this, Index, Action]
+                    { ChangeDialogue([this, Index, Action](auto&) { if (auto* N = CurrentNode(); N && N->Choices.IsValidIndex(Index)) N->Choices[Index].QuestAction = Action; }); })));
+                return Menu.MakeWidget();
+            })];
+            LineEditor->AddSlot().AutoHeight()[SNew(SObjectPropertyEntryBox).AllowedClass(UQuestDefinition::StaticClass()).ObjectPath(Choice.Quest ? Choice.Quest->GetPathName() : FString()).OnObjectChanged_Lambda([this, Index](const FAssetData& Asset)
+            { ChangeDialogue([this, Index, Asset](auto&) { if (auto* N = CurrentNode(); N && N->Choices.IsValidIndex(Index)) N->Choices[Index].Quest = Cast<UQuestDefinition>(Asset.GetAsset()); }); })];
+        }
         LineEditor->AddSlot().AutoHeight()[Button(TEXT("Remove response"), [this, Index] { ChangeDialogue([this, Index](auto&) { if (auto* N = CurrentNode(); N && N->Choices.IsValidIndex(Index)) N->Choices.RemoveAt(Index); }); })];
     }
     LineEditor->AddSlot().AutoHeight().Padding(0, 4)[Button(TEXT("Add response"), [this] { ChangeDialogue([this](auto&) { if (auto* N = CurrentNode()) N->Choices.AddDefaulted(); }); })];
@@ -390,7 +424,7 @@ void SDialogueManager::OfferQuest(bool bOffer)
 {
     if (!CanEdit()) return;
     const FScopedTransaction Transaction(Txt(TEXT("Change offered quest")));
-    Status = DialogueAuthoring::SetQuestOffered(Actor.Get(), Quest.Get(), bOffer) ? TEXT("Quest offer updated. Save the level to keep the assignment.") : TEXT("Choose a quest and an object with a Quest Giver Component first.");
+    Status = DialogueAuthoring::SetQuestOffered(Actor.Get(), Quest.Get(), bOffer) ? TEXT("Offered quests updated. Save the level to keep the assignment.") : TEXT("Choose a quest and an object with a Talker Component first.");
     bRefresh = true;
 }
 void SDialogueManager::AddSupport()
@@ -408,10 +442,9 @@ void SDialogueManager::AddSupport()
         Component->RegisterComponent();
     };
     Add(UDialogueComponent::StaticClass());
-    Add(UQuestGiverComponent::StaticClass());
     Target->SetReplicates(true);
     Target->MarkPackageDirty();
-    Status = TEXT("Added dialogue / quest-giver components and enabled replication. Interaction input must call TalkToNPC for this object; existing Blueprint interaction wiring was not changed.");
+    Status = TEXT("Added a Talker Component and enabled replication. Assign a Dialogue Asset before testing. Offered quests live on this same component.");
     bRefresh = true;
 }
 void SDialogueManager::LinkObjective()
@@ -427,14 +460,14 @@ void SDialogueManager::LinkObjective()
     Status = TEXT("Pickup event now matches the selected quest. Other quests using the same event also receive progress.");
     bRefresh = true;
 }
-void SDialogueManager::CreateAsset(bool bQuest)
+void SDialogueManager::CreateAsset(bool bQuest, bool bQuestDialogue)
 {
     if (!CanEdit()) return;
     UClass* Class = bQuest ? UQuestDefinition::StaticClass() : UDialogueDefinition::StaticClass();
     auto* Factory = NewObject<UDataAssetFactory>();
     Factory->DataAssetClass = Class;
     auto& Tools = FModuleManager::LoadModuleChecked<FAssetToolsModule>("AssetTools").Get();
-    UObject* Asset = Tools.CreateAssetWithDialog(bQuest ? TEXT("DA_NewQuest") : TEXT("DA_NewDialogue"), TEXT("/Game"), Class, Factory, NAME_None, false);
+    UObject* Asset = Tools.CreateAssetWithDialog(bQuest ? TEXT("DA_NewQuest") : (bQuestDialogue ? TEXT("DA_NewQuestDialogue") : TEXT("DA_NewDialogue")), TEXT("/Game"), Class, Factory, NAME_None, false);
     if (auto* NewQuest = Cast<UQuestDefinition>(Asset))
     {
         NewQuest->QuestID = NewQuest->GetFName();
@@ -444,6 +477,9 @@ void SDialogueManager::CreateAsset(bool bQuest)
     }
     if (auto* NewDialogue = Cast<UDialogueDefinition>(Asset))
     {
+        NewDialogue->DialogueType = bQuestDialogue ? EDialogueType::QuestDialogue : EDialogueType::DialogueOnly;
+        NewDialogue->bIncludeQuestChoices = bQuestDialogue;
+        NewDialogue->MarkPackageDirty();
         SelectDialogue(NewDialogue); AddNode(false); bQuestTab = false;
     }
 }
@@ -464,6 +500,7 @@ void SDialogueManager::CreateStarterDialogue()
     SelectDialogue(Created);
     ChangeDialogue([this](auto& D)
     {
+        D.DialogueType = EDialogueType::QuestDialogue;
         D.SpeakerName = Txt(Actor.IsValid() ? Actor->GetActorLabel() : TEXT("Speaker"));
         D.ContextQuest = Quest.Get(); D.bIncludeQuestChoices = false;
         D.EntryNode = TEXT("Offer"); D.ActiveEntryNode = TEXT("Active"); D.ReadyEntryNode = TEXT("Ready"); D.CompletedEntryNode = TEXT("Completed");
@@ -519,7 +556,7 @@ bool SDialogueManager::CanSimulateAction(UQuestDefinition* InQuest, EDialogueQue
 void SDialogueManager::RestartPreview()
 {
     PreviewNode = Dialogue.IsValid() ? Dialogue->EntryNode : NAME_None;
-    if (Dialogue.IsValid() && Dialogue->ContextQuest)
+    if (Dialogue.IsValid() && Dialogue->UsesQuests() && Dialogue->ContextQuest)
     {
         int32 Value = State(Dialogue->ContextQuest);
         FName Entry = Value == 1 ? Dialogue->ActiveEntryNode : Value == 2 ? Dialogue->ReadyEntryNode : Value == 3 ? Dialogue->CompletedEntryNode : Dialogue->EntryNode;
@@ -530,7 +567,7 @@ void SDialogueManager::RestartPreview()
 void SDialogueManager::SimulateChoice(const FDialogueChoice& Choice)
 {
     if (!CanSimulateAction(Choice.Quest, Choice.QuestAction)) return;
-    if (Choice.QuestAction != EDialogueQuestAction::None) SimulatedStates.Add(Choice.Quest, Choice.QuestAction == EDialogueQuestAction::Accept ? 1 : 3);
+    if (Dialogue.IsValid() && Dialogue->UsesQuests() && Choice.QuestAction != EDialogueQuestAction::None) SimulatedStates.Add(Choice.Quest, Choice.QuestAction == EDialogueQuestAction::Accept ? 1 : 3);
     PreviewNode = Choice.NextNode;
     RefreshPreview();
 }
@@ -539,7 +576,7 @@ void SDialogueManager::RefreshPreview()
     Preview->ClearChildren();
     TArray<UQuestDefinition*> SimulationQuests = DialogueAuthoring::GetQuests(Actor.Get());
     if (Quest.IsValid()) SimulationQuests.AddUnique(Quest.Get());
-    if (Dialogue.IsValid() && Dialogue->ContextQuest) SimulationQuests.AddUnique(Dialogue->ContextQuest);
+    if (Dialogue.IsValid() && Dialogue->UsesQuests() && Dialogue->ContextQuest) SimulationQuests.AddUnique(Dialogue->ContextQuest);
     const TCHAR* StateNames[] = { TEXT("Not accepted"), TEXT("Active"), TEXT("Ready to turn in"), TEXT("Completed") };
     for (auto* Q : SimulationQuests)
     {
@@ -565,7 +602,7 @@ void SDialogueManager::RefreshPreview()
         if (!CanSimulateAction(Choice.Quest, Choice.QuestAction) || (!Choice.NextNode.IsNone() && !Dialogue->FindNode(Choice.NextNode))) continue;
         Preview->AddSlot().AutoHeight().Padding(0, 2)[Button(Choice.Text.ToString(), [this, Choice] { SimulateChoice(Choice); })];
     }
-    if (Dialogue->bIncludeQuestChoices) for (auto* Q : DialogueAuthoring::GetQuests(Actor.Get()))
+    if (Dialogue->UsesQuests() && Dialogue->bIncludeQuestChoices) for (auto* Q : DialogueAuthoring::GetQuests(Actor.Get()))
     {
         const auto Action = State(Q) == 0 ? EDialogueQuestAction::Accept : EDialogueQuestAction::TurnIn;
         if (!CanSimulateAction(Q, Action)) continue;

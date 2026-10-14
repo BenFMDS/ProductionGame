@@ -8,8 +8,8 @@
 
 class UQuestDefinition;
 
-/** Reusable quest-offering component for NPCs and any other interactable actor. */
-UCLASS(ClassGroup=(Quest), BlueprintType, Blueprintable, meta=(BlueprintSpawnableComponent))
+/** Legacy quest-offering data. New talkers store Offered Quests on their Talker Component. */
+UCLASS(ClassGroup=(Quest), BlueprintType, Blueprintable, meta=(BlueprintSpawnableComponent, DisplayName="Legacy Quest Giver (Compatibility)"))
 class PRODUCTIONGAME_API UQuestGiverComponent : public UActorComponent
 {
 	GENERATED_BODY()

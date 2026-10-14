@@ -1,8 +1,8 @@
 #include "Quest/PlayerQuestComponent.h"
 #include "Quest/QuestDefinition.h"
-#include "Quest/QuestGiverComponent.h"
 #include "Quest/QuestConversationWidget.h"
 #include "Quest/QuestObjectiveComponent.h"
+#include "Quest/QuestSequenceStep.h"
 #include "Dialogue/DialogueComponent.h"
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/Pawn.h"
@@ -24,8 +24,34 @@ void UPlayerQuestComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>
 void UPlayerQuestComponent::BeginPlay()
 {
 	Super::BeginPlay();
+	RefreshDefaultUI();
+}
+
+void UPlayerQuestComponent::SetQuestUIEnabled(bool bEnabled)
+{
+	bCreateDefaultUI = bEnabled;
+	RefreshDefaultUI();
+}
+
+void UPlayerQuestComponent::RefreshDefaultUI()
+{
 	APlayerController* PC = Cast<APlayerController>(GetOwner());
-	if (PC && PC->IsLocalController() && bCreateDefaultUI)
+	if (!PC || !PC->IsLocalController())
+	{
+		return;
+	}
+
+	if (!bCreateDefaultUI)
+	{
+		if (Widget)
+		{
+			Widget->RemoveFromParent();
+			Widget = nullptr;
+		}
+		return;
+	}
+
+	if (!Widget)
 	{
 		Widget = CreateWidget<UQuestConversationWidget>(PC, WidgetClass ? WidgetClass.Get() : UQuestConversationWidget::StaticClass());
 		if (Widget) Widget->AddToPlayerScreen(20);
@@ -51,6 +77,11 @@ void UPlayerQuestComponent::ServerTalkTo_Implementation(AActor* NPC)
 	if (Conversation.NPC) return;
 	if (auto* Dialogue = NPC->FindComponentByClass<UDialogueComponent>())
 	{
+		if (!Dialogue->HasValidDialogue())
+		{
+			ClientRejectConversation(NSLOCTEXT("Dialogue", "MissingAsset", "This actor has no valid Dialogue Asset assigned."));
+			return;
+		}
 		if (!Dialogue->TryStart(this))
 			ClientRejectConversation(NSLOCTEXT("Dialogue", "Unavailable", "This NPC is busy or out of reach."));
 	}
@@ -75,6 +106,12 @@ void UPlayerQuestComponent::ServerCollectQuestObject_Implementation(AActor* Ques
 	if (auto* Objective = QuestObject->FindComponentByClass<UQuestObjectiveComponent>()) Objective->Collect(this);
 }
 
+void UPlayerQuestComponent::ServerActivateQuestPuzzle_Implementation(AActor* PuzzleStep)
+{
+	if (!IsValid(PuzzleStep) || PuzzleStep->GetWorld() != GetWorld()) return;
+	if (auto* Step = Cast<AQuestSequenceStep>(PuzzleStep)) Step->Activate(this);
+}
+
 bool UPlayerQuestComponent::GetQuest(FName QuestID, FPlayerQuest& OutQuest) const
 {
 	for (const FPlayerQuest& Quest : Quests)
@@ -86,9 +123,9 @@ bool UPlayerQuestComponent::GetQuest(FName QuestID, FPlayerQuest& OutQuest) cons
 bool UPlayerQuestComponent::CanAccept(UQuestDefinition* Definition, AActor* Giver) const
 {
 	if (!IsValid(Definition) || Definition->QuestID.IsNone() || Definition->RequiredAmount <= 0 || !IsValid(Giver)) return false;
-	const auto* Offers = Giver->FindComponentByClass<UQuestGiverComponent>();
+	const auto* Talker = Giver->FindComponentByClass<UDialogueComponent>();
 	FPlayerQuest Existing;
-	return Offers && Offers->HasQuest(Definition) && !GetQuest(Definition->QuestID, Existing);
+	return Talker && Talker->OffersQuest(Definition) && !GetQuest(Definition->QuestID, Existing);
 }
 
 bool UPlayerQuestComponent::CanTurnIn(UQuestDefinition* Definition, AActor* Giver) const
@@ -97,6 +134,14 @@ bool UPlayerQuestComponent::CanTurnIn(UQuestDefinition* Definition, AActor* Give
 	FPlayerQuest Quest;
 	return GetQuest(Definition->QuestID, Quest) && Quest.Definition == Definition && Quest.Giver == Giver
 		&& Quest.State == EPlayerQuestState::ReadyToTurnIn;
+}
+
+bool UPlayerQuestComponent::CanProgressQuest(UQuestDefinition* Definition, AActor* Giver) const
+{
+	if (!IsValid(Definition) || !IsValid(Giver)) return false;
+	FPlayerQuest Quest;
+	return GetQuest(Definition->QuestID, Quest) && Quest.Definition == Definition && Quest.Giver == Giver
+		&& Quest.State == EPlayerQuestState::Active;
 }
 
 bool UPlayerQuestComponent::AcceptQuest(UQuestDefinition* Definition, AActor* Giver)
@@ -129,6 +174,12 @@ bool UPlayerQuestComponent::TurnInQuest(UQuestDefinition* Definition, AActor* Gi
 		return true;
 	}
 	return false;
+}
+
+bool UPlayerQuestComponent::ProgressQuest(UQuestDefinition* Definition, AActor* Giver, int32 Amount)
+{
+	if (!GetOwner()->HasAuthority() || Amount <= 0 || !CanProgressQuest(Definition, Giver)) return false;
+	return AddQuestProgress(Definition->QuestID, Amount);
 }
 
 bool UPlayerQuestComponent::AddQuestProgress(FName QuestID, int32 Amount)

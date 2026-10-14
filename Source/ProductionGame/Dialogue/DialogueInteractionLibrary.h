@@ -13,4 +13,7 @@ public:
 	static void TalkToNPC(AActor* NPC, AActor* InteractingPlayer);
 	UFUNCTION(BlueprintCallable, Category="Quest")
 	static void CollectQuestObject(AActor* QuestObject, AActor* InteractingPlayer);
+	/** Sends an interactable puzzle step to the owning player's validated server RPC. */
+	UFUNCTION(BlueprintCallable, Category="Quest")
+	static void ActivateQuestPuzzle(AActor* PuzzleStep, AActor* InteractingPlayer);
 };
