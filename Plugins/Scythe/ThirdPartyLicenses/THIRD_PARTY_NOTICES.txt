@@ -1,0 +1,33 @@
+# Third-Party Notices
+
+This project includes code derived from third-party GPL-licensed sources.
+
+## 1) pixel-uv-tools
+
+- Upstream repository: <https://github.com/Capacap/pixel-uv-tools>
+- Derived upstream file:
+  <https://github.com/Capacap/pixel-uv-tools/blob/main/pixel_uv_tools/pixel_smart_follow_quads.py>
+- License: GNU General Public License, version 3 or later (GPL v3+)
+
+## 2) UvSquares
+
+- Upstream repository: <https://github.com/Radivarig/UvSquares>
+- Derived upstream file:
+  <https://github.com/Radivarig/UvSquares/blob/master/uv_squares.py>
+- License: GNU General Public License, version 3 or later (GPL v3+)
+
+## Affected Scythe Files
+
+- `Source/ScytheTools/Utils/ScytheUnwrapFunctions.h`
+- `Source/ScytheTools/Utils/ScytheUnwrapFunctions.cpp`
+
+## Modification Statement
+
+Code derived from the above projects has been substantially modified, translated,
+and integrated into Unreal Engine C++ for Scythe.
+
+## License Text
+
+The full GPL v3 license text is included at:
+
+- `ThirdPartyLicenses/GPL-3.0.txt`

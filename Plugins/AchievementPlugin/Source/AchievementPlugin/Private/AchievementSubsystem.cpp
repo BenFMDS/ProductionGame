@@ -111,6 +111,11 @@ TArray<FAchievementDefinition> UAchievementSubsystem::GetAchievementDefinitions(
 	return DB ? DB->GetAchievementDefinitions() : TArray<FAchievementDefinition>();
 }
 
+UAchievementDefinitionAsset* UAchievementSubsystem::GetAchievementDefinitionAsset(const FName AchievementId) const
+{
+	return const_cast<UAchievementDefinitionAsset*>(FindDefinitionAsset(AchievementId));
+}
+
 const UAchievementDatabase* UAchievementSubsystem::GetAchievementDatabase() const
 {
 	const UAchievementPluginSettings* Settings = GetDefault<UAchievementPluginSettings>();

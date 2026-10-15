@@ -9,6 +9,7 @@
 #include "Engine/GameInstance.h"
 #include "Engine/World.h"
 #include "Engine/Texture2D.h"
+#include "TimerManager.h"
 
 void UAchievementListWidget::NativeOnInitialized()
 {
@@ -20,6 +21,27 @@ void UAchievementListWidget::NativeOnInitialized()
 	}
 
 	UpdateResetAllButtonVisibility();
+}
+
+void UAchievementListWidget::NativeConstruct()
+{
+	Super::NativeConstruct();
+
+	// A widget is not in the viewport while NativeConstruct runs.  Checking here
+	// directly lets two lists created in the same frame both pass the test.
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().SetTimerForNextTick(
+			FTimerDelegate::CreateUObject(this, &UAchievementListWidget::RemoveIfViewportDuplicate));
+	}
+}
+
+void UAchievementListWidget::RemoveIfViewportDuplicate()
+{
+	if (IsInViewport() && HasViewportDuplicate())
+	{
+		RemoveFromParent();
+	}
 }
 
 void UAchievementListWidget::ClearAchievements()
@@ -156,6 +178,29 @@ void UAchievementListWidget::PopulateFromDatabase(UAchievementDatabase* Database
 void UAchievementListWidget::HandleResetAllButtonClicked()
 {
 	ResetAllAchievements();
+}
+
+bool UAchievementListWidget::HasViewportDuplicate() const
+{
+	const UWorld* World = GetWorld();
+	if (World == nullptr)
+	{
+		return false;
+	}
+
+	for (TObjectIterator<UAchievementListWidget> It; It; ++It)
+	{
+		const UAchievementListWidget* ExistingList = *It;
+		if (ExistingList != this
+			&& ExistingList->GetWorld() == World
+			&& ExistingList->IsInViewport()
+			&& ExistingList->GetUniqueID() < GetUniqueID())
+		{
+			return true;
+		}
+	}
+
+	return false;
 }
 
 void UAchievementListWidget::UpdateResetAllButtonVisibility()

@@ -48,32 +48,20 @@ namespace
 	UAchievementPopupWidget* CreateAchievementPopup(
 		UWorld* World,
 		TSubclassOf<UAchievementPopupWidget> PopupWidgetClass,
-		UTexture2D* ImageToUse,
-		const FText& Title,
-		const FText& Description,
-		const EAchievementType Type,
-		const int32 CurrentAmount,
-		const int32 RequiredAmount,
-		const bool bUnlocked,
+		UAchievementDefinitionAsset* AchievementAsset,
+		const FAchievementProgressState& ProgressState,
 		const float AutoHideDelay,
 		const int32 ZOrder)
 	{
-		if (World == nullptr || PopupWidgetClass == nullptr)
-		{
-			return nullptr;
-		}
-
-		UAchievementPopupWidget* PopupWidget = CreateWidget<UAchievementPopupWidget>(World, PopupWidgetClass);
+		UAchievementPopupWidget* PopupWidget = UAchievementPopupWidget::CreateAndShowPopup(
+			World, PopupWidgetClass, AchievementAsset, ProgressState, AutoHideDelay, ZOrder);
 		if (PopupWidget == nullptr)
 		{
 			return nullptr;
 		}
 
-		PopupWidget->AddToViewport(ZOrder);
 		PopupWidget->SetAlignmentInViewport(FVector2D(1.0f, 1.0f));
 		PopupWidget->SetPositionInViewport(FVector2D(-24.0f, -24.0f), false);
-		PopupWidget->SetPopupData(ImageToUse, Title, Description, Type, CurrentAmount, RequiredAmount, bUnlocked);
-		PopupWidget->ShowPopup(AutoHideDelay);
 		return PopupWidget;
 	}
 }
@@ -236,27 +224,11 @@ UAchievementPopupWidget* UAchievementBlueprintFunctionLibrary::ShowAchievementPo
 			return nullptr;
 		}
 
-		UTexture2D* ImageToUse = ProgressState.bUnlocked
-			? AchievementAsset->UnlockedImage.LoadSynchronous()
-			: AchievementAsset->LockedImage.LoadSynchronous();
-
-		if (ImageToUse == nullptr)
-		{
-			ImageToUse = ProgressState.bUnlocked
-				? AchievementAsset->LockedImage.LoadSynchronous()
-				: AchievementAsset->UnlockedImage.LoadSynchronous();
-		}
-
 		return CreateAchievementPopup(
 			World,
 			PopupWidgetClass,
-			ImageToUse,
-			AchievementAsset->Title,
-			AchievementAsset->Description,
-			AchievementAsset->Type,
-			ProgressState.CurrentAmount,
-			AchievementAsset->RequiredAmount,
-			ProgressState.bUnlocked,
+			AchievementAsset,
+			ProgressState,
 			AutoHideDelay,
 			ZOrder);
 	}
@@ -278,41 +250,21 @@ UAchievementPopupWidget* UAchievementBlueprintFunctionLibrary::ShowAchievementPo
 
 	if (UAchievementSubsystem* Subsystem = GetAchievementSubsystem(WorldContextObject))
 	{
-		const TArray<FAchievementDefinition> Definitions = Subsystem->GetAchievementDefinitions();
-		const FAchievementDefinition* Definition = Definitions.FindByPredicate([AchievementId](const FAchievementDefinition& Entry)
-		{
-			return Entry.AchievementId == AchievementId;
-		});
-
-		if (Definition == nullptr)
+		UAchievementDefinitionAsset* AchievementAsset = Subsystem->GetAchievementDefinitionAsset(AchievementId);
+		if (AchievementAsset == nullptr)
 		{
 			return nullptr;
 		}
 
 		const FAchievementProgressState ProgressState = Subsystem->GetAchievementProgress(AchievementId);
-		UTexture2D* ImageToUse = ProgressState.bUnlocked
-			? Definition->UnlockedImage.LoadSynchronous()
-			: Definition->LockedImage.LoadSynchronous();
-
-		if (ImageToUse == nullptr)
-		{
-			ImageToUse = ProgressState.bUnlocked
-				? Definition->LockedImage.LoadSynchronous()
-				: Definition->UnlockedImage.LoadSynchronous();
-		}
 
 		if (UWorld* World = ResolveWorldContext(WorldContextObject))
 		{
 			return CreateAchievementPopup(
 				World,
 				PopupWidgetClass,
-				ImageToUse,
-				Definition->Title,
-				Definition->Description,
-				Definition->Type,
-				ProgressState.CurrentAmount,
-				Definition->RequiredAmount,
-				ProgressState.bUnlocked,
+				AchievementAsset,
+				ProgressState,
 				AutoHideDelay,
 				ZOrder);
 		}

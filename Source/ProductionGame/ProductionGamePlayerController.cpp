@@ -51,17 +51,16 @@ void AProductionGamePlayerController::Tick(float DeltaSeconds)
 	Super::Tick(DeltaSeconds);
 	if (IsLocalController())
 	{
-		RemoveDuplicateInteractionMenus();
+		RemoveDuplicateProjectWidgets();
 		BindSettingsApplyButton();
 	}
 }
 
-void AProductionGamePlayerController::RemoveDuplicateInteractionMenus()
+void AProductionGamePlayerController::RemoveDuplicateProjectWidgets()
 {
-	// BP_MenuObject currently receives both the local interaction and its
-	// server-forwarded copy.  Keep the newest copy of each project menu until
-	// that Blueprint's graph can be opened and resaved with a direct guard.
-	TMap<UClass*, UUserWidget*> NewestMenuByClass;
+	// Keep one copy of every project widget class. The interaction prompt is a
+	// persistent, independently managed HUD element and is intentionally exempt.
+	TMap<UClass*, UUserWidget*> NewestWidgetByClass;
 	for (TObjectIterator<UUserWidget> It; It; ++It)
 	{
 		UUserWidget* Widget = *It;
@@ -71,12 +70,15 @@ void AProductionGamePlayerController::RemoveDuplicateInteractionMenus()
 		}
 
 		const FString ClassPath = Widget->GetClass()->GetPathName();
-		if (!ClassPath.StartsWith(TEXT("/Game/OurStuff/Widgets/Menus/")))
+		const bool bProjectWidget = ClassPath.StartsWith(TEXT("/Game/OurStuff/"));
+		const bool bIsInteractionWidget = ClassPath.StartsWith(
+			TEXT("/Game/OurStuff/Core/InteractionSystem/WBP_Interaction"));
+		if (!bProjectWidget || bIsInteractionWidget)
 		{
 			continue;
 		}
 
-		if (UUserWidget** Existing = NewestMenuByClass.Find(Widget->GetClass()))
+		if (UUserWidget** Existing = NewestWidgetByClass.Find(Widget->GetClass()))
 		{
 			if ((*Existing)->GetUniqueID() < Widget->GetUniqueID())
 			{
@@ -90,7 +92,7 @@ void AProductionGamePlayerController::RemoveDuplicateInteractionMenus()
 		}
 		else
 		{
-			NewestMenuByClass.Add(Widget->GetClass(), Widget);
+			NewestWidgetByClass.Add(Widget->GetClass(), Widget);
 		}
 	}
 }

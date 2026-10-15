@@ -22,6 +22,10 @@
 	],
 	"Plugins": [
 		{
+			"Name": "AchievementPlugin",
+			"Enabled": true
+		},
+		{
 			"Name": "ModelingToolsEditorMode",
 			"Enabled": true,
 			"TargetAllowList": [
@@ -35,6 +39,17 @@
 		{
 			"Name": "GameplayStateTree",
 			"Enabled": true
+		},
+		{
+			"Name": "Scythe",
+			"Enabled": true,
+			"MarketplaceURL": "com.epicgames.launcher://ue/Fab/product/01e83831-6ce9-4cc0-b8fd-2587cd5df8d2",
+			"TargetAllowList": [
+				"Editor"
+			],
+			"TargetConfigurationAllowList": [
+				"Development"
+			]
 		}
 	]
 }

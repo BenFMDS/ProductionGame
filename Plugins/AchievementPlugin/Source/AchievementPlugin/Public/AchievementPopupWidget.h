@@ -26,7 +26,8 @@ public:
 		TSubclassOf<UAchievementPopupWidget> WidgetClass,
 		UAchievementDefinitionAsset* AchievementAsset,
 		FAchievementProgressState ProgressState,
-		float AutoHideDelay = 2.5f);
+		float AutoHideDelay = 2.5f,
+		int32 ZOrder = 100);
 
 	UFUNCTION(BlueprintCallable, Category = "Achievements")
 	void SetPopupData(
@@ -98,6 +99,10 @@ private:
 
 	UPROPERTY()
 	EAchievementType DisplayType = EAchievementType::Goal;
+
+	/** Used to refresh an existing popup instead of stacking a duplicate for the same achievement. */
+	UPROPERTY(Transient)
+	TObjectPtr<UAchievementDefinitionAsset> SourceAchievement;
 
 	UPROPERTY()
 	int32 CurrentAmount = 0;
