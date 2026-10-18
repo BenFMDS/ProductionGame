@@ -38,7 +38,9 @@ bool UDialogueComponent::IsParticipant(const UPlayerQuestComponent* Player) cons
 
 bool UDialogueComponent::HasValidDialogue() const
 {
-	return IsValid(Dialogue) && Dialogue->FindNode(Dialogue->EntryNode);
+	if (!IsValid(Dialogue)) return false;
+	if (Dialogue->FindNode(Dialogue->EntryNode)) return true;
+	return Dialogue->RandomEntryNodes.ContainsByPredicate([this](const FName NodeID) { return Dialogue->FindNode(NodeID) != nullptr; });
 }
 
 TArray<UQuestDefinition*> UDialogueComponent::GetOfferedQuests() const
@@ -68,6 +70,13 @@ bool UDialogueComponent::TryStart(UPlayerQuestComponent* Player)
 	TalkingPlayer = PC->PlayerState;
 	bIsInConversation = true;
 	CurrentNode = Dialogue ? Dialogue->EntryNode : NAME_None;
+	if (Dialogue && !Dialogue->RandomEntryNodes.IsEmpty())
+	{
+		TArray<FName> ValidRandomEntries;
+		for (const FName NodeID : Dialogue->RandomEntryNodes)
+			if (Dialogue->FindNode(NodeID)) ValidRandomEntries.Add(NodeID);
+		if (!ValidRandomEntries.IsEmpty()) CurrentNode = ValidRandomEntries[FMath::RandHelper(ValidRandomEntries.Num())];
+	}
 	if (Dialogue && Dialogue->UsesQuests() && IsValid(Dialogue->ContextQuest))
 	{
 		FPlayerQuest Quest;

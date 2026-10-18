@@ -60,6 +60,8 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly) FText SpeakerName;
 	UPROPERTY(EditAnywhere, BlueprintReadOnly) TObjectPtr<UTexture2D> Portrait;
 	UPROPERTY(EditAnywhere, BlueprintReadOnly) FName EntryNode;
+	/** Optional pool of normal greetings. When populated, one valid node is chosen at random each time this dialogue starts. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Dialogue") TArray<FName> RandomEntryNodes;
 	/** Optional quest-state greetings; the initial greeting is used until this quest is accepted. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly) TObjectPtr<UQuestDefinition> ContextQuest;
 	UPROPERTY(EditAnywhere, BlueprintReadOnly) FName ActiveEntryNode;

@@ -39,7 +39,9 @@ bool FQuestDialogueFlowTest::RunTest(const FString& Parameters)
 	auto& Greeting = Dialogue->Nodes.AddDefaulted_GetRef();
 	Greeting.ID = TEXT("Greeting");
 	Greeting.Text = FText::FromString(TEXT("Hello"));
-	Dialogue->EntryNode = Greeting.ID;
+	// A dialogue may be entirely driven by its random greeting pool.
+	Dialogue->EntryNode = NAME_None;
+	Dialogue->RandomEntryNodes.Add(Greeting.ID);
 	NPC->DialogueComponent->Dialogue = Dialogue;
 	OtherNPC->DialogueComponent->Dialogue = Dialogue;
 	auto* Quest = NewObject<UQuestDefinition>(World);
