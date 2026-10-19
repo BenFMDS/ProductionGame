@@ -17,6 +17,7 @@ public class ProductionGame : ModuleRules
 			"AIModule",
 			"StateTreeModule",
 			"GameplayStateTreeModule",
+			"AchievementPlugin",
 			"UMG",
 			"Slate",
 			"SlateCore"
