@@ -9,6 +9,8 @@
 #include "Blueprint/UserWidget.h"
 #include "Components/Widget.h"
 #include "EnhancedInputComponent.h"
+#include "GameFramework/Character.h"
+#include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/PlayerInput.h"
 #include "InputAction.h"
 #include "InputMappingContext.h"
@@ -187,6 +189,56 @@ void ARobberController::BindAchievementNotifications()
 		AchievementSubsystem->OnAchievementCompleted.AddUniqueDynamic(this, &ARobberController::ShowAchievementCompletePopup);
 		AchievementSubsystem->OnAchievementMilestoneReached.AddUniqueDynamic(this, &ARobberController::ShowAchievementProgressPopup);
 	}
+}
+
+void ARobberController::SetHeistFrozen(bool bFrozen)
+{
+	ApplyHeistFrozen(bFrozen);
+	if (!IsLocalController())
+	{
+		ClientSetHeistFrozen(bFrozen);
+	}
+}
+
+void ARobberController::ClientSetHeistFrozen_Implementation(bool bFrozen)
+{
+	ApplyHeistFrozen(bFrozen);
+}
+
+void ARobberController::ApplyHeistFrozen(bool bFrozen)
+{
+	// Both sides change movement, so the owning client doesn't predict walking and get corrected every frame.
+	if (bFrozen)
+	{
+		SetIgnoreMoveInput(true);
+	}
+	else
+	{
+		ResetIgnoreMoveInput();
+	}
+	if (ACharacter* RobberCharacter = GetCharacter())
+	{
+		if (bFrozen)
+		{
+			RobberCharacter->GetCharacterMovement()->StopMovementImmediately();
+			RobberCharacter->GetCharacterMovement()->DisableMovement();
+		}
+		else
+		{
+			RobberCharacter->GetCharacterMovement()->SetMovementMode(MOVE_Walking);
+		}
+	}
+}
+
+void ARobberController::ClientHeistMessage_Implementation(const FText& Message)
+{
+	HeistMessage = Message;
+	HeistMessageTime = GetWorld()->GetTimeSeconds();
+}
+
+bool ARobberController::IsHeistMessageVisible() const
+{
+	return !HeistMessage.IsEmpty() && GetWorld()->GetTimeSeconds() - HeistMessageTime < 5.;
 }
 
 void ARobberController::ShowAchievementCompletePopup(UAchievementDefinitionAsset* AchievementAsset, FAchievementProgressState ProgressState)

@@ -39,6 +39,16 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Robber|Achievements")
 	void ShowAchievementProgressPopup(UAchievementDefinitionAsset* AchievementAsset, FAchievementProgressState ProgressState);
 
+	/** Server only. Stops (or restores) this player's movement, e.g. while hiding during a break-in. */
+	void SetHeistFrozen(bool bFrozen);
+
+	/** A short note for this player, shown on the HUD for a few seconds. */
+	UFUNCTION(Client, Reliable)
+	void ClientHeistMessage(const FText& Message);
+
+	const FText& GetHeistMessage() const { return HeistMessage; }
+	bool IsHeistMessageVisible() const;
+
 	UUserWidget* GetDevUIWidget() const { return DevUIRef; }
 	UUserWidget* GetGameUIWidget() const { return GameUIRef; }
 
@@ -51,6 +61,13 @@ private:
 	void OpenPauseMenu();
 	void UnmuteVoice();
 	void BindAchievementNotifications();
+	void ApplyHeistFrozen(bool bFrozen);
+
+	UFUNCTION(Client, Reliable)
+	void ClientSetHeistFrozen(bool bFrozen);
+
+	FText HeistMessage;
+	double HeistMessageTime = -100.;
 
 	UPROPERTY(Transient, BlueprintReadOnly, Category = "Robber|UI", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UUserWidget> ActiveWidget;
