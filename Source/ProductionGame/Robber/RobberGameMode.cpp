@@ -2,6 +2,8 @@
 
 #include "Robber/RobberGameMode.h"
 
+#include "EngineUtils.h"
+#include "GameFramework/PlayerStart.h"
 #include "Robber/RobberController.h"
 #include "Robber/RobberGameState.h"
 #include "UObject/ConstructorHelpers.h"
@@ -23,4 +25,22 @@ ARobberGameMode::ARobberGameMode()
 	{
 		DefaultPawnClass = RobberPawn.Class;
 	}
+}
+
+AActor* ARobberGameMode::ChoosePlayerStart_Implementation(AController* Player)
+{
+	TArray<APlayerStart*> LobbyStarts;
+	for (TActorIterator<APlayerStart> It(GetWorld()); It; ++It)
+	{
+		if (It->PlayerStartTag == TEXT("Lobby"))
+		{
+			LobbyStarts.Add(*It);
+		}
+	}
+	if (LobbyStarts.Num() == 0)
+	{
+		return Super::ChoosePlayerStart_Implementation(Player);
+	}
+	// Spread the crew out: one start per player already in the game.
+	return LobbyStarts[GetNumPlayers() % LobbyStarts.Num()];
 }

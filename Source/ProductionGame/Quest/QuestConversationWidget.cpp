@@ -1,6 +1,10 @@
 #include "Quest/QuestConversationWidget.h"
 #include "Quest/PlayerQuestComponent.h"
 #include "Quest/QuestDefinition.h"
+#include "Robber/RobberGameState.h"
+#include "Robber/RobberController.h"
+#include "Heist/RobberEntryPoint.h"
+#include "Heist/RobberStage.h"
 #include "Blueprint/WidgetTree.h"
 #include "Components/Border.h"
 #include "Components/Button.h"
@@ -9,7 +13,8 @@
 #include "Components/TextBlock.h"
 #include "Components/PanelWidget.h"
 #include "Components/Image.h"
-#include "Components/ScrollBox.h"
+#include "Components/ProgressBar.h"
+#include "Components/VerticalBoxSlot.h"
 #include "Components/AudioComponent.h"
 #include "GameFramework/PlayerController.h"
 #include "Kismet/GameplayStatics.h"
@@ -192,31 +197,32 @@ void UDialoguePresentationWidget::NativeDestruct()
 	Super::NativeDestruct();
 }
 
-TSharedRef<SWidget> UQuestConversationWidget::RebuildWidget()
+void UQuestTrackerRow::SetRow(const FText& Title, const FText& Detail, const FText& Count, float Fraction, bool bDone)
 {
-	UCanvasPanel* Canvas = WidgetTree->ConstructWidget<UCanvasPanel>();
-	WidgetTree->RootWidget = Canvas;
-	Canvas->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
-	UBorder* QuestPanel = WidgetTree->ConstructWidget<UBorder>();
-	QuestPanel->SetBrushColor(FLinearColor(0.025f, 0.03f, 0.045f, 0.9f));
-	QuestPanel->SetPadding(FMargin(18.f));
-	QuestPanel->SetVisibility(ESlateVisibility::HitTestInvisible);
-	QuestText = WidgetTree->ConstructWidget<UTextBlock>();
-	QuestText->SetAutoWrapText(true);
-	UScrollBox* QuestScroll = WidgetTree->ConstructWidget<UScrollBox>();
-	QuestScroll->AddChild(QuestText);
-	QuestPanel->AddChild(QuestScroll);
-	UCanvasPanelSlot* QuestSlot = Canvas->AddChildToCanvas(QuestPanel);
-	QuestSlot->SetAnchors(FAnchors(1.f, 0.f));
-	QuestSlot->SetAlignment(FVector2D(1.f, 0.f));
-	QuestSlot->SetPosition(FVector2D(-24.f, 40.f));
-	QuestSlot->SetSize(FVector2D(360.f, 360.f));
-	FeedbackText = WidgetTree->ConstructWidget<UTextBlock>();
-	FeedbackText->SetVisibility(ESlateVisibility::HitTestInvisible);
-	UCanvasPanelSlot* FeedbackSlot = Canvas->AddChildToCanvas(FeedbackText);
-	FeedbackSlot->SetPosition(FVector2D(24.f, 40.f));
-	FeedbackSlot->SetAutoSize(true);
-	return Super::RebuildWidget();
+	if (!bCapturedColours)
+	{
+		bCapturedColours = true;
+		if (TitleText) TitleColor = TitleText->GetColorAndOpacity();
+		if (Progress) FillColor = Progress->GetFillColorAndOpacity();
+	}
+	if (TitleText)
+	{
+		TitleText->SetText(Title);
+		TitleText->SetColorAndOpacity(bDone ? DoneTitleColor : TitleColor);
+	}
+	if (DetailText)
+	{
+		DetailText->SetText(Detail);
+		DetailText->SetVisibility(Detail.IsEmpty() ? ESlateVisibility::Collapsed : ESlateVisibility::HitTestInvisible);
+	}
+	if (CountText) CountText->SetText(Count);
+	if (Progress)
+	{
+		Progress->SetPercent(Fraction);
+		Progress->SetFillColorAndOpacity(bDone ? DoneFillColor : FillColor);
+	}
+	if (DoneMark) DoneMark->SetVisibility(bDone ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+	OnRowSet(bDone);
 }
 
 void UQuestConversationWidget::NativeConstruct()
@@ -227,30 +233,149 @@ void UQuestConversationWidget::NativeConstruct()
 	Player->OnQuestsChanged.AddUniqueDynamic(this, &UQuestConversationWidget::RefreshQuests);
 	Player->OnConversationChanged.AddUniqueDynamic(this, &UQuestConversationWidget::RefreshConversation);
 	Player->OnConversationRejected.AddUniqueDynamic(this, &UQuestConversationWidget::ShowRejection);
+	DisplayedText.Reset();
 	RefreshQuests();
 	RefreshConversation();
 }
 
 FText UQuestConversationWidget::GetDisplayedQuestText() const
 {
-	return QuestText ? QuestText->GetText() : FText::GetEmpty();
+	return FText::FromString(DisplayedText);
+}
+
+void UQuestConversationWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
+{
+	Super::NativeTick(MyGeometry, InDeltaTime);
+	// The heist objective changes per player (ticket bought, hidden) with no event to bind to.
+	RefreshQuests();
+}
+
+namespace
+{
+	void SetShown(UWidget* Widget, bool bShown)
+	{
+		if (Widget) Widget->SetVisibility(bShown ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+	}
+
+	void SetTextShown(UTextBlock* Block, const FString& String)
+	{
+		if (!Block) return;
+		Block->SetText(FText::FromString(String));
+		SetShown(Block, !String.IsEmpty());
+	}
+}
+
+UQuestTrackerRow* UQuestConversationWidget::RowAt(UPanelWidget* List, TSubclassOf<UQuestTrackerRow> RowClass, float Spacing, int32 Index)
+{
+	if (!List || !RowClass) return nullptr;
+	// Reuse rows: a new row has no size for its first frame, so recreating them made rows overlap on every change.
+	UQuestTrackerRow* Row = Cast<UQuestTrackerRow>(List->GetChildAt(Index));
+	if (!Row || Row->GetClass() != RowClass)
+	{
+		while (List->GetChildrenCount() > Index) List->RemoveChildAt(Index);
+		Row = CreateWidget<UQuestTrackerRow>(GetOwningPlayer(), RowClass);
+		if (!Row) return nullptr;
+		List->AddChild(Row);
+	}
+	if (auto* VerticalSlot = Cast<UVerticalBoxSlot>(Row->Slot)) VerticalSlot->SetPadding(FMargin(0.f, Index == 0 ? 0.f : Spacing, 0.f, 0.f));
+	return Row;
+}
+
+namespace
+{
+	void TrimRows(UPanelWidget* List, int32 Count)
+	{
+		while (List && List->GetChildrenCount() > Count) List->RemoveChildAt(Count);
+	}
 }
 
 void UQuestConversationWidget::RefreshQuests()
 {
-	if (!Player || !QuestText) return;
-	FString Text;
-	for (const FPlayerQuest& Quest : Player->Quests)
+	if (!Player) return;
+	const ARobberGameState* GameState = GetWorld() ? GetWorld()->GetGameState<ARobberGameState>() : nullptr;
+	const APlayerController* PC = GetOwningPlayer();
+	const bool bHeist = GameState && PC;
+	const uint8 Stage = bHeist ? GameState->GetGameStage() : 0;
+	const FString Phase = bHeist ? RobberStage::GetDisplayName(Stage).ToString().ToUpper() : FString();
+	const float TimeLeft = bHeist ? GameState->GetPhaseTimeRemaining() : -1.f;
+	const int32 Seconds = TimeLeft >= 0.f ? FMath::CeilToInt(TimeLeft) : INDEX_NONE;
+	const FString Timer = Seconds != INDEX_NONE ? FString::Printf(TEXT("%d:%02d"), Seconds / 60, Seconds % 60) : FString();
+	const ARobberController* RobberController = Cast<ARobberController>(PC);
+	const FString Message = RobberController && RobberController->IsHeistMessageVisible() ? RobberController->GetHeistMessage().ToString() : FString();
+	const FString Objective = bHeist ? GameState->GetObjectiveText(PC->PlayerState).ToString() : FString();
+	TArray<TPair<FString, int32>> Votes;
+	if (bHeist && Stage == RobberStage::Lobby)
 	{
-		if (!IsValid(Quest.Definition) || Quest.State == EPlayerQuestState::Completed) continue;
-		Text += TEXT("\n") + Quest.Definition->QuestName.ToString() + TEXT("\n");
-		{
-			Text += Quest.Definition->ObjectiveText.ToString();
-			Text += FString::Printf(TEXT("  %d / %d\n"), Quest.Amount, Quest.Definition->RequiredAmount);
-			if (Quest.State == EPlayerQuestState::ReadyToTurnIn) Text += TEXT("Objective complete - return to the quest giver\n");
-		}
+		TArray<const ARobberEntryPoint*> Counted;
+		for (const FRobberEntryVote& Vote : GameState->GetVotes())
+			if (Vote.Entry && !Counted.Contains(Vote.Entry))
+			{
+				Counted.Add(Vote.Entry);
+				Votes.Emplace(Vote.Entry->DisplayName.ToString(), GameState->GetVoteCount(Vote.Entry));
+			}
 	}
-	QuestText->SetText(FText::FromString(Text.TrimStartAndEnd()));
+	static const TArray<FRobberJob> NoJobs;
+	const TArray<FRobberJob>& Jobs = bHeist ? GameState->GetJobs() : NoJobs;
+	TArray<const FPlayerQuest*> Favours;
+	for (const FPlayerQuest& Quest : Player->Quests)
+		if (IsValid(Quest.Definition) && Quest.State != EPlayerQuestState::Completed) Favours.Add(&Quest);
+
+	// Ticks every frame, so compare a plain-text summary before touching any widgets.
+	FString Summary = Phase;
+	if (!Message.IsEmpty()) Summary += TEXT("\n") + Message;
+	if (!Timer.IsEmpty()) Summary += TEXT("\nClosing in ") + Timer;
+	Summary += TEXT("\n") + Objective;
+	for (const TPair<FString, int32>& Vote : Votes) Summary += FString::Printf(TEXT("\n%s: %d"), *Vote.Key, Vote.Value);
+	for (const FRobberJob& Job : Jobs)
+		Summary += FString::Printf(TEXT("\n[%s] %s"), Job.bDone ? TEXT("x") : TEXT(" "), *Job.Title.ToString());
+	for (const FPlayerQuest* Quest : Favours)
+		Summary += FString::Printf(TEXT("\n%s\n%s %d / %d%s"), *Quest->Definition->QuestName.ToString(), *Quest->Definition->ObjectiveText.ToString(),
+			Quest->Amount, Quest->Definition->RequiredAmount, Quest->State == EPlayerQuestState::ReadyToTurnIn ? TEXT(" (return to the quest giver)") : TEXT(""));
+	if (Summary == DisplayedText && !DisplayedText.IsEmpty()) return;
+	DisplayedText = Summary;
+
+	SetShown(HeistCard, bHeist);
+	if (PhaseText) PhaseText->SetText(FText::FromString(Phase));
+	if (MessageText) MessageText->SetText(FText::FromString(Message));
+	SetShown(MessageBox, !Message.IsEmpty());
+	if (TimerText)
+	{
+		if (!bTimerColourCaptured)
+		{
+			bTimerColourCaptured = true;
+			TimerColor = TimerText->GetColorAndOpacity();
+		}
+		TimerText->SetText(FText::FromString(Timer));
+		TimerText->SetColorAndOpacity(Seconds != INDEX_NONE && Seconds <= TimerWarningSeconds ? TimerWarningColor : TimerColor);
+	}
+	SetShown(TimerBox, !Timer.IsEmpty());
+	SetTextShown(ObjectiveText, Objective);
+
+	const int32 Crew = bHeist ? FMath::Max(1, GameState->PlayerArray.Num()) : 1;
+	for (int32 Index = 0; Index < Votes.Num(); ++Index)
+		if (UQuestTrackerRow* Row = RowAt(VotesList, VoteRowClass, RowSpacing, Index))
+			Row->SetRow(FText::FromString(Votes[Index].Key), FText::GetEmpty(), FText::AsNumber(Votes[Index].Value),
+				FMath::Clamp(float(Votes[Index].Value) / Crew, 0.f, 1.f), false);
+	TrimRows(VotesList, Votes.Num());
+	SetShown(VotesBox, !Votes.IsEmpty());
+
+	for (int32 Index = 0; Index < Jobs.Num(); ++Index)
+		if (UQuestTrackerRow* Row = RowAt(JobsList, JobRowClass, RowSpacing, Index))
+			Row->SetRow(Jobs[Index].Title, FText::GetEmpty(), FText::GetEmpty(), Jobs[Index].bDone ? 1.f : 0.f, Jobs[Index].bDone);
+	TrimRows(JobsList, Jobs.Num());
+	SetShown(JobsBox, !Jobs.IsEmpty());
+
+	for (int32 Index = 0; Index < Favours.Num(); ++Index)
+	{
+		const FPlayerQuest& Quest = *Favours[Index];
+		const int32 Required = FMath::Max(1, Quest.Definition->RequiredAmount);
+		if (UQuestTrackerRow* Row = RowAt(FavourList, FavourRowClass, FavourSpacing, Index))
+			Row->SetRow(Quest.Definition->QuestName, Quest.Definition->ObjectiveText,
+				FText::FromString(FString::Printf(TEXT("%d / %d"), Quest.Amount, Required)),
+				FMath::Clamp(float(Quest.Amount) / Required, 0.f, 1.f), Quest.State == EPlayerQuestState::ReadyToTurnIn);
+	}
+	TrimRows(FavourList, Favours.Num());
+	SetShown(FavourCard, !Favours.IsEmpty());
 }
 
 void UQuestConversationWidget::RefreshConversation()
@@ -262,7 +387,7 @@ void UQuestConversationWidget::RefreshConversation()
 		Dialogue = nullptr;
 		return;
 	}
-	FeedbackText->SetText(FText::GetEmpty());
+	if (FeedbackText) FeedbackText->SetText(FText::GetEmpty());
 	if (!Dialogue)
 	{
 		Dialogue = CreateWidget<UDialoguePresentationWidget>(GetOwningPlayer());
