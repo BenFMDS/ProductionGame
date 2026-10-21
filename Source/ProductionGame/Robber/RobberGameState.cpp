@@ -3,8 +3,12 @@
 #include "Robber/RobberGameState.h"
 
 #include "Blueprint/UserWidget.h"
+#include "Components/TextBlock.h"
 #include "EngineUtils.h"
 #include "GameFramework/PlayerController.h"
+#include "GameFramework/PlayerState.h"
+#include "Heist/RobberEntryPoint.h"
+#include "Heist/RobberStage.h"
 #include "Kismet/GameplayStatics.h"
 #include "Net/UnrealNetwork.h"
 #include "Robber/RobberController.h"
@@ -12,8 +16,8 @@
 
 namespace
 {
-	// NewEnumerator3 in the E_GameStage Blueprint enum.
-	constexpr uint8 EscapeGameStage = 3;
+	const FName PowerJob(TEXT("Power"));
+	const FName GemJob(TEXT("Gem"));
 }
 
 ARobberGameState::ARobberGameState()
@@ -48,6 +52,233 @@ void ARobberGameState::Tick(float DeltaSeconds)
 	{
 		SetGameStage(GetLegacyGameState());
 	}
+	if (HasAuthority())
+	{
+		TickPhase();
+	}
+}
+
+void ARobberGameState::TickPhase()
+{
+	if (ReplicatedGameStage == RobberStage::BreakIn && ActiveEntry)
+	{
+		ActiveEntry->TickBreakIn(this);
+		if (ReplicatedGameStage == RobberStage::BreakIn && PhaseEndServerTime > 0. && GetServerWorldTimeSeconds() >= PhaseEndServerTime)
+		{
+			ActiveEntry->OnBreakInTimerExpired(this);
+		}
+	}
+	// BP_PowerGenerator only flips the Blueprint PowerOn? flag, so watch it rather than wiring every generator.
+	if (ReplicatedGameStage == RobberStage::Heist && !IsPowerOn())
+	{
+		CompleteJob(PowerJob);
+	}
+}
+
+bool ARobberGameState::IsPowerOn() const
+{
+	const FBoolProperty* PowerProperty = FindFProperty<FBoolProperty>(GetClass(), TEXT("PowerOn?"));
+	return !PowerProperty || PowerProperty->GetPropertyValue_InContainer(this);
+}
+
+void ARobberGameState::CastVote(APlayerState* Voter, ARobberEntryPoint* Entry)
+{
+	if (!HasAuthority() || !Voter || !Entry || ReplicatedGameStage != RobberStage::Lobby)
+	{
+		return;
+	}
+	for (FRobberEntryVote& Vote : Votes)
+	{
+		if (Vote.Voter == Voter)
+		{
+			Vote.Entry = Entry;
+			ForceNetUpdate();
+			return;
+		}
+	}
+	Votes.Add({ Voter, Entry });
+	ForceNetUpdate();
+}
+
+int32 ARobberGameState::GetVoteCount(const ARobberEntryPoint* Entry) const
+{
+	int32 Count = 0;
+	for (const FRobberEntryVote& Vote : Votes)
+	{
+		Count += Vote.Voter && Vote.Entry == Entry;
+	}
+	return Count;
+}
+
+ARobberEntryPoint* ARobberGameState::GetWinningEntry() const
+{
+	ARobberEntryPoint* Winner = nullptr;
+	int32 WinnerVotes = 0;
+	for (const FRobberEntryVote& Vote : Votes)
+	{
+		const int32 Count = Vote.Voter ? GetVoteCount(Vote.Entry) : 0;
+		if (Vote.Entry && Count > WinnerVotes)
+		{
+			Winner = Vote.Entry;
+			WinnerVotes = Count;
+		}
+	}
+	return Winner;
+}
+
+bool ARobberGameState::StartBreakIn()
+{
+	ARobberEntryPoint* Entry = GetWinningEntry();
+	if (!HasAuthority() || !Entry || ReplicatedGameStage != RobberStage::Lobby)
+	{
+		return false;
+	}
+
+	ActiveEntry = Entry;
+	Crew.Reset();
+	int32 SpawnIndex = 0;
+	for (APlayerState* Player : PlayerArray)
+	{
+		FindOrAddCrewStatus(Player);
+		if (APawn* Pawn = Player ? Player->GetPawn() : nullptr)
+		{
+			const FTransform Spawn = Entry->GetSpawnTransform(SpawnIndex++);
+			Pawn->TeleportTo(Spawn.GetLocation(), Spawn.Rotator());
+			if (AController* Controller = Pawn->GetController())
+			{
+				Controller->ClientSetRotation(Spawn.Rotator());
+			}
+		}
+	}
+	SetGameStage(RobberStage::BreakIn);
+	Entry->BeginBreakIn(this);
+	return true;
+}
+
+void ARobberGameState::FinishBreakIn()
+{
+	if (!HasAuthority() || ReplicatedGameStage != RobberStage::BreakIn)
+	{
+		return;
+	}
+	UE_LOG(LogTemp, Display, TEXT("Break-in finished with %.1fs left on the timer. Crew: %s"), GetPhaseTimeRemaining(),
+		*FString::JoinBy(Crew, TEXT(", "), [](const FRobberCrewStatus& Status)
+		{
+			return FString::Printf(TEXT("%s ticket=%d hidden=%d"), Status.Player ? *Status.Player->GetPlayerName() : TEXT("?"), Status.bHasTicket, Status.HidingSpot != nullptr);
+		}));
+	PhaseEndServerTime = 0.;
+	if (ActiveEntry)
+	{
+		ActiveEntry->EndBreakIn(this);
+	}
+	SetGameStage(RobberStage::Investigate);
+}
+
+void ARobberGameState::SetPhaseTimer(float Seconds)
+{
+	if (HasAuthority())
+	{
+		PhaseEndServerTime = Seconds > 0.f ? GetServerWorldTimeSeconds() + Seconds : 0.;
+		ForceNetUpdate();
+	}
+}
+
+float ARobberGameState::GetPhaseTimeRemaining() const
+{
+	return PhaseEndServerTime > 0. ? FMath::Max(0., PhaseEndServerTime - GetServerWorldTimeSeconds()) : -1.f;
+}
+
+FRobberCrewStatus ARobberGameState::GetCrewStatus(const APlayerState* Player) const
+{
+	const FRobberCrewStatus* Status = Crew.FindByPredicate([Player](const FRobberCrewStatus& Entry) { return Entry.Player == Player; });
+	return Status ? *Status : FRobberCrewStatus();
+}
+
+FRobberCrewStatus* ARobberGameState::FindOrAddCrewStatus(APlayerState* Player)
+{
+	if (!Player)
+	{
+		return nullptr;
+	}
+	FRobberCrewStatus* Status = Crew.FindByPredicate([Player](const FRobberCrewStatus& Entry) { return Entry.Player == Player; });
+	if (!Status)
+	{
+		Status = &Crew.AddDefaulted_GetRef();
+		Status->Player = Player;
+	}
+	return Status;
+}
+
+void ARobberGameState::GiveTicket(APlayerState* Player)
+{
+	if (FRobberCrewStatus* Status = HasAuthority() ? FindOrAddCrewStatus(Player) : nullptr)
+	{
+		Status->bHasTicket = true;
+		ForceNetUpdate();
+	}
+}
+
+void ARobberGameState::SetHidingSpot(APlayerState* Player, AActor* HidingSpot)
+{
+	if (FRobberCrewStatus* Status = HasAuthority() ? FindOrAddCrewStatus(Player) : nullptr)
+	{
+		Status->HidingSpot = HidingSpot;
+		ForceNetUpdate();
+	}
+}
+
+bool ARobberGameState::CanTalkToExhibits() const
+{
+	return ReplicatedGameStage != RobberStage::BreakIn && ReplicatedGameStage != RobberStage::Investigate;
+}
+
+void ARobberGameState::StartHeist()
+{
+	if (!HasAuthority() || ReplicatedGameStage != RobberStage::Investigate)
+	{
+		return;
+	}
+	Jobs = {
+		{ PowerJob, NSLOCTEXT("RobberHeist", "PowerJob", "Turn off the power"), false },
+		{ GemJob, NSLOCTEXT("RobberHeist", "GemJob", "Steal the gem"), false },
+	};
+	OnRep_Jobs();
+	SetGameStage(RobberStage::Heist);
+}
+
+void ARobberGameState::CompleteJob(FName JobId)
+{
+	FRobberJob* Job = HasAuthority() ? Jobs.FindByPredicate([JobId](const FRobberJob& Entry) { return Entry.Id == JobId; }) : nullptr;
+	if (Job && !Job->bDone)
+	{
+		Job->bDone = true;
+		ForceNetUpdate();
+		OnRep_Jobs();
+	}
+}
+
+void ARobberGameState::OnRep_Jobs()
+{
+	OnJobsChanged.Broadcast();
+}
+
+FText ARobberGameState::GetObjectiveText(const APlayerState* Viewer) const
+{
+	switch (ReplicatedGameStage)
+	{
+	case RobberStage::Lobby:
+		return NSLOCTEXT("RobberHeist", "LobbyObjective", "Vote for a way in, then walk through the museum door together.");
+	case RobberStage::BreakIn:
+		return ActiveEntry ? ActiveEntry->GetBreakInStatus(this, Viewer) : FText::GetEmpty();
+	case RobberStage::Investigate:
+		return NSLOCTEXT("RobberHeist", "InvestigateObjective", "Sneak to the gem room door. The exhibits won't talk to you yet.");
+	case RobberStage::Heist:
+		return NSLOCTEXT("RobberHeist", "HeistObjective", "Do the jobs. The exhibits will talk now.");
+	case RobberStage::Escape:
+		return NSLOCTEXT("RobberHeist", "EscapeObjective", "Get out the way you came in!");
+	default:
+		return FText::GetEmpty();
+	}
 }
 
 void ARobberGameState::ActivateAlarms()
@@ -73,6 +304,11 @@ void ARobberGameState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& Out
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 	DOREPLIFETIME(ARobberGameState, ReplicatedGameStage);
+	DOREPLIFETIME(ARobberGameState, Votes);
+	DOREPLIFETIME(ARobberGameState, ActiveEntry);
+	DOREPLIFETIME(ARobberGameState, Crew);
+	DOREPLIFETIME(ARobberGameState, Jobs);
+	DOREPLIFETIME(ARobberGameState, PhaseEndServerTime);
 }
 
 void ARobberGameState::SetGameStage(uint8 NewGameStage)
@@ -108,10 +344,12 @@ void ARobberGameState::HandleGameStageChanged()
 {
 	BindLocalStageReaders();
 	NotifyDevUIOfStageChange();
-	if (ReplicatedGameStage == EscapeGameStage)
+	if (ReplicatedGameStage == RobberStage::Escape)
 	{
 		ActivateAlarms();
+		CompleteJob(GemJob);
 	}
+	OnGameStageChanged.Broadcast(ReplicatedGameStage);
 }
 
 void ARobberGameState::BindLocalStageReaders()
@@ -166,6 +404,14 @@ void ARobberGameState::NotifyDevUIOfStageChange()
 		if (UpdateStageText && UpdateStageText->ParmsSize == 0)
 		{
 			DevUI->ProcessEvent(UpdateStageText, nullptr);
+		}
+
+		// The widget's Switch on E_GameStage has no pin for stages added after it was built (Investigate), so
+		// it leaves the text blank for them. Write the label from C++ so every stage shows.
+		const FObjectPropertyBase* TextProperty = FindFProperty<FObjectPropertyBase>(DevUI->GetClass(), TEXT("TXT_GameStage"));
+		if (UTextBlock* StageText = TextProperty ? Cast<UTextBlock>(TextProperty->GetObjectPropertyValue_InContainer(DevUI)) : nullptr)
+		{
+			StageText->SetText(FText::Format(NSLOCTEXT("RobberStage", "DevUIStage", "Game Stage: {0}"), RobberStage::GetDisplayName(ReplicatedGameStage)));
 		}
 	}
 }

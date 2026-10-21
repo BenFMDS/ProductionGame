@@ -7,6 +7,7 @@ class UPlayerQuestComponent;
 class UTextBlock;
 class UAudioComponent;
 class UButton;
+class UVerticalBox;
 
 /** Uses the original WBP_TextEntry artwork, with native RPC handling. */
 UCLASS()
@@ -72,10 +73,18 @@ protected:
 	virtual TSharedRef<SWidget> RebuildWidget() override;
 	virtual void NativeConstruct() override;
 	virtual void NativeDestruct() override;
+	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
 private:
 	UPROPERTY(Transient) TObjectPtr<UPlayerQuestComponent> Player;
-	UPROPERTY(Transient) TObjectPtr<UTextBlock> QuestText;
+	UPROPERTY(Transient) TObjectPtr<UWidget> HeistCard;
+	UPROPERTY(Transient) TObjectPtr<UTextBlock> PhaseTag;
+	UPROPERTY(Transient) TObjectPtr<UVerticalBox> HeistBody;
+	UPROPERTY(Transient) TObjectPtr<UWidget> FavourCard;
+	UPROPERTY(Transient) TObjectPtr<UVerticalBox> FavourBody;
 	UPROPERTY(Transient) TObjectPtr<UTextBlock> FeedbackText;
+	/** Plain-text copy of the tracker; rows are only rebuilt when it changes. */
+	FString DisplayedText;
+	UWidget* MakeCard(UVerticalBox* Tracker, const FString& Title, const FLinearColor& Accent, TObjectPtr<UVerticalBox>& OutBody, TObjectPtr<UTextBlock>* OutTag = nullptr);
 	UPROPERTY(Transient) TObjectPtr<UDialoguePresentationWidget> Dialogue;
 	UFUNCTION() void RefreshQuests();
 	UFUNCTION() void RefreshConversation();

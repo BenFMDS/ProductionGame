@@ -8,6 +8,7 @@
 #include "GameFramework/Pawn.h"
 #include "Engine/World.h"
 #include "Net/UnrealNetwork.h"
+#include "Robber/RobberGameState.h"
 
 UPlayerQuestComponent::UPlayerQuestComponent()
 {
@@ -77,6 +78,12 @@ void UPlayerQuestComponent::ServerTalkTo_Implementation(AActor* NPC)
 	if (Conversation.NPC) return;
 	if (auto* Dialogue = NPC->FindComponentByClass<UDialogueComponent>())
 	{
+		const auto* RobberState = GetWorld()->GetGameState<ARobberGameState>();
+		if (RobberState && !RobberState->CanTalkToExhibits())
+		{
+			ClientRejectConversation(NSLOCTEXT("Dialogue", "NotYet", "The exhibits won't talk yet. Find the gem room first."));
+			return;
+		}
 		if (!Dialogue->HasValidDialogue())
 		{
 			ClientRejectConversation(NSLOCTEXT("Dialogue", "MissingAsset", "This actor has no valid Dialogue Asset assigned."));

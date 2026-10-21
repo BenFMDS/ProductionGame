@@ -17,4 +17,7 @@ class PRODUCTIONGAME_API ARobberGameMode : public AProductionGameGameMode
 
 public:
 	ARobberGameMode();
+
+	/** Prefers PlayerStarts tagged "Lobby", so a map with a heist lobby always starts the crew there. */
+	virtual AActor* ChoosePlayerStart_Implementation(AController* Player) override;
 };
