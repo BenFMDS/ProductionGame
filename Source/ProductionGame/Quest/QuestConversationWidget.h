@@ -7,7 +7,8 @@ class UPlayerQuestComponent;
 class UTextBlock;
 class UAudioComponent;
 class UButton;
-class UVerticalBox;
+class UPanelWidget;
+class UProgressBar;
 
 /** Uses the original WBP_TextEntry artwork, with native RPC handling. */
 UCLASS()
@@ -62,29 +63,84 @@ private:
 	void SetBoxVisibility(FName Name, ESlateVisibility NewVisibility);
 };
 
-/** Tracker with a separate modal dialogue layer above the existing game HUD. */
+/**
+ * One row of the tracker (a job, a vote or a favour). Layout lives in WBP_QuestJobRow / VoteRow / FavourRow;
+ * every bound widget is optional, so a row Blueprint only needs the parts it shows.
+ */
+UCLASS(Abstract, Blueprintable)
+class PRODUCTIONGAME_API UQuestTrackerRow : public UUserWidget
+{
+	GENERATED_BODY()
+public:
+	void SetRow(const FText& Title, const FText& Detail, const FText& Count, float Fraction, bool bDone);
+
+	/** Title colour once the row is done; the designer colour is used otherwise. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Quest Tracker") FSlateColor DoneTitleColor = FLinearColor(0.58f, 0.6f, 0.64f);
+	/** Progress fill colour once the row is done; the designer colour is used otherwise. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Quest Tracker") FLinearColor DoneFillColor = FLinearColor(0.38f, 0.85f, 0.42f);
+protected:
+	/** Hook for extra Blueprint styling after C++ has filled the row. */
+	UFUNCTION(BlueprintImplementableEvent, Category="Quest Tracker") void OnRowSet(bool bDone);
+
+	UPROPERTY(BlueprintReadOnly, meta=(BindWidgetOptional)) TObjectPtr<UTextBlock> TitleText;
+	UPROPERTY(BlueprintReadOnly, meta=(BindWidgetOptional)) TObjectPtr<UTextBlock> DetailText;
+	UPROPERTY(BlueprintReadOnly, meta=(BindWidgetOptional)) TObjectPtr<UTextBlock> CountText;
+	UPROPERTY(BlueprintReadOnly, meta=(BindWidgetOptional)) TObjectPtr<UProgressBar> Progress;
+	/** Shown only when done (the job tick, the "return to the quest giver" line). */
+	UPROPERTY(BlueprintReadOnly, meta=(BindWidgetOptional)) TObjectPtr<UWidget> DoneMark;
+private:
+	bool bCapturedColours = false;
+	FSlateColor TitleColor;
+	FLinearColor FillColor;
+};
+
+/**
+ * Tracker with a separate modal dialogue layer above the existing game HUD. Layout lives in WBP_QuestTracker;
+ * C++ fills the named widgets and adds rows to the lists.
+ */
 UCLASS(Blueprintable)
 class PRODUCTIONGAME_API UQuestConversationWidget : public UUserWidget
 {
 	GENERATED_BODY()
 public:
 	FText GetDisplayedQuestText() const;
+
+	UPROPERTY(EditAnywhere, Category="Quest Tracker") TSubclassOf<UQuestTrackerRow> JobRowClass;
+	UPROPERTY(EditAnywhere, Category="Quest Tracker") TSubclassOf<UQuestTrackerRow> VoteRowClass;
+	UPROPERTY(EditAnywhere, Category="Quest Tracker") TSubclassOf<UQuestTrackerRow> FavourRowClass;
+	/** Gap above every row but the first in a list. */
+	UPROPERTY(EditAnywhere, Category="Quest Tracker") float RowSpacing = 6.f;
+	UPROPERTY(EditAnywhere, Category="Quest Tracker") float FavourSpacing = 14.f;
+	/** Timer colour for the last few seconds. */
+	UPROPERTY(EditAnywhere, Category="Quest Tracker") FSlateColor TimerWarningColor = FLinearColor(1.f, 0.38f, 0.32f);
+	UPROPERTY(EditAnywhere, Category="Quest Tracker") int32 TimerWarningSeconds = 10;
 protected:
-	virtual TSharedRef<SWidget> RebuildWidget() override;
 	virtual void NativeConstruct() override;
 	virtual void NativeDestruct() override;
 	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
+
+	// Whole sections are collapsed when they have nothing to show.
+	UPROPERTY(BlueprintReadOnly, meta=(BindWidgetOptional)) TObjectPtr<UWidget> HeistCard;
+	UPROPERTY(BlueprintReadOnly, meta=(BindWidgetOptional)) TObjectPtr<UTextBlock> PhaseText;
+	UPROPERTY(BlueprintReadOnly, meta=(BindWidgetOptional)) TObjectPtr<UWidget> MessageBox;
+	UPROPERTY(BlueprintReadOnly, meta=(BindWidgetOptional)) TObjectPtr<UTextBlock> MessageText;
+	UPROPERTY(BlueprintReadOnly, meta=(BindWidgetOptional)) TObjectPtr<UWidget> TimerBox;
+	UPROPERTY(BlueprintReadOnly, meta=(BindWidgetOptional)) TObjectPtr<UTextBlock> TimerText;
+	UPROPERTY(BlueprintReadOnly, meta=(BindWidgetOptional)) TObjectPtr<UTextBlock> ObjectiveText;
+	UPROPERTY(BlueprintReadOnly, meta=(BindWidgetOptional)) TObjectPtr<UWidget> VotesBox;
+	UPROPERTY(BlueprintReadOnly, meta=(BindWidgetOptional)) TObjectPtr<UPanelWidget> VotesList;
+	UPROPERTY(BlueprintReadOnly, meta=(BindWidgetOptional)) TObjectPtr<UWidget> JobsBox;
+	UPROPERTY(BlueprintReadOnly, meta=(BindWidgetOptional)) TObjectPtr<UPanelWidget> JobsList;
+	UPROPERTY(BlueprintReadOnly, meta=(BindWidgetOptional)) TObjectPtr<UWidget> FavourCard;
+	UPROPERTY(BlueprintReadOnly, meta=(BindWidgetOptional)) TObjectPtr<UPanelWidget> FavourList;
+	UPROPERTY(BlueprintReadOnly, meta=(BindWidgetOptional)) TObjectPtr<UTextBlock> FeedbackText;
 private:
 	UPROPERTY(Transient) TObjectPtr<UPlayerQuestComponent> Player;
-	UPROPERTY(Transient) TObjectPtr<UWidget> HeistCard;
-	UPROPERTY(Transient) TObjectPtr<UTextBlock> PhaseTag;
-	UPROPERTY(Transient) TObjectPtr<UVerticalBox> HeistBody;
-	UPROPERTY(Transient) TObjectPtr<UWidget> FavourCard;
-	UPROPERTY(Transient) TObjectPtr<UVerticalBox> FavourBody;
-	UPROPERTY(Transient) TObjectPtr<UTextBlock> FeedbackText;
-	/** Plain-text copy of the tracker; rows are only rebuilt when it changes. */
+	/** Plain-text copy of the tracker; widgets are only touched when it changes. */
 	FString DisplayedText;
-	UWidget* MakeCard(UVerticalBox* Tracker, const FString& Title, const FLinearColor& Accent, TObjectPtr<UVerticalBox>& OutBody, TObjectPtr<UTextBlock>* OutTag = nullptr);
+	bool bTimerColourCaptured = false;
+	FSlateColor TimerColor;
+	UQuestTrackerRow* RowAt(UPanelWidget* List, TSubclassOf<UQuestTrackerRow> RowClass, float Spacing, int32 Index);
 	UPROPERTY(Transient) TObjectPtr<UDialoguePresentationWidget> Dialogue;
 	UFUNCTION() void RefreshQuests();
 	UFUNCTION() void RefreshConversation();

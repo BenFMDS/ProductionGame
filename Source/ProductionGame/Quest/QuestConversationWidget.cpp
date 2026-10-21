@@ -13,103 +13,12 @@
 #include "Components/TextBlock.h"
 #include "Components/PanelWidget.h"
 #include "Components/Image.h"
-#include "Components/VerticalBox.h"
+#include "Components/ProgressBar.h"
 #include "Components/VerticalBoxSlot.h"
-#include "Components/HorizontalBox.h"
-#include "Components/HorizontalBoxSlot.h"
-#include "Components/SizeBox.h"
-#include "Components/Spacer.h"
 #include "Components/AudioComponent.h"
 #include "GameFramework/PlayerController.h"
 #include "Kismet/GameplayStatics.h"
-#include "Styling/CoreStyle.h"
 #include "UObject/ConstructorHelpers.h"
-
-namespace QuestTracker
-{
-	const FLinearColor Panel(0.008f, 0.01f, 0.016f, 0.8f);
-	const FLinearColor HeistAccent(1.f, 0.62f, 0.16f);
-	const FLinearColor FavourAccent(0.32f, 0.74f, 0.95f);
-	const FLinearColor Done(0.38f, 0.85f, 0.42f);
-	const FLinearColor Primary(0.94f, 0.94f, 0.92f);
-	const FLinearColor Muted(0.58f, 0.6f, 0.64f);
-	const FLinearColor Track(1.f, 1.f, 1.f, 0.1f);
-
-	FSlateBrush Rounded(const FLinearColor& Color, float Radius)
-	{
-		FSlateBrush Brush;
-		Brush.DrawAs = ESlateBrushDrawType::RoundedBox;
-		Brush.OutlineSettings = FSlateBrushOutlineSettings(FVector4(Radius, Radius, Radius, Radius));
-		Brush.TintColor = FSlateColor(Color);
-		return Brush;
-	}
-
-	UBorder* Box(UWidgetTree* Tree, const FLinearColor& Color, float Radius, const FMargin& Padding = FMargin(0.f))
-	{
-		UBorder* Border = Tree->ConstructWidget<UBorder>();
-		Border->SetBrush(Rounded(Color, Radius));
-		Border->SetPadding(Padding);
-		return Border;
-	}
-
-	UTextBlock* Text(UWidgetTree* Tree, const FString& String, int32 Size, const FLinearColor& Color, FName Typeface = TEXT("Regular"), int32 LetterSpacing = 0)
-	{
-		UTextBlock* Block = Tree->ConstructWidget<UTextBlock>();
-		FSlateFontInfo Font = FCoreStyle::GetDefaultFontStyle(Typeface, Size);
-		Font.LetterSpacing = LetterSpacing;
-		Block->SetFont(Font);
-		Block->SetText(FText::FromString(String));
-		Block->SetColorAndOpacity(FSlateColor(Color));
-		Block->SetShadowOffset(FVector2D(1.f, 1.f));
-		Block->SetShadowColorAndOpacity(FLinearColor(0.f, 0.f, 0.f, 0.6f));
-		Block->SetAutoWrapText(true);
-		return Block;
-	}
-
-	UWidget* Sized(UWidgetTree* Tree, UWidget* Child, float Width, float Height)
-	{
-		USizeBox* Size = Tree->ConstructWidget<USizeBox>();
-		if (Width > 0.f) Size->SetWidthOverride(Width);
-		if (Height > 0.f) Size->SetHeightOverride(Height);
-		Size->AddChild(Child);
-		return Size;
-	}
-
-	void Add(UVerticalBox* Box, UWidget* Child, const FMargin& Padding = FMargin(0.f))
-	{
-		Box->AddChildToVerticalBox(Child)->SetPadding(Padding);
-	}
-
-	UHorizontalBoxSlot* Add(UHorizontalBox* Box, UWidget* Child, float Fill = -1.f)
-	{
-		UHorizontalBoxSlot* Slot = Box->AddChildToHorizontalBox(Child);
-		Slot->SetVerticalAlignment(VAlign_Center);
-		if (Fill >= 0.f)
-		{
-			FSlateChildSize Size(ESlateSizeRule::Fill);
-			Size.Value = Fill;
-			Slot->SetSize(Size);
-		}
-		return Slot;
-	}
-
-	UWidget* Checkbox(UWidgetTree* Tree, bool bChecked)
-	{
-		UBorder* Outer = Box(Tree, bChecked ? Done : Muted, 3.f, FMargin(2.f));
-		Outer->AddChild(Box(Tree, bChecked ? Done : FLinearColor(0.02f, 0.025f, 0.035f, 1.f), 2.f));
-		return Sized(Tree, Outer, 13.f, 13.f);
-	}
-
-	UWidget* ProgressBar(UWidgetTree* Tree, float Fraction, const FLinearColor& Color)
-	{
-		UHorizontalBox* Row = Tree->ConstructWidget<UHorizontalBox>();
-		Add(Row, Box(Tree, Color, 3.f), Fraction);
-		Add(Row, Tree->ConstructWidget<USpacer>(), 1.f - Fraction);
-		UBorder* TrackBox = Box(Tree, Track, 3.f);
-		TrackBox->AddChild(Row);
-		return Sized(Tree, TrackBox, 0.f, 6.f);
-	}
-}
 
 UConversationChoiceWidget::UConversationChoiceWidget(const FObjectInitializer& Initializer) : Super(Initializer)
 {
@@ -288,29 +197,32 @@ void UDialoguePresentationWidget::NativeDestruct()
 	Super::NativeDestruct();
 }
 
-TSharedRef<SWidget> UQuestConversationWidget::RebuildWidget()
+void UQuestTrackerRow::SetRow(const FText& Title, const FText& Detail, const FText& Count, float Fraction, bool bDone)
 {
-	UCanvasPanel* Canvas = WidgetTree->ConstructWidget<UCanvasPanel>();
-	WidgetTree->RootWidget = Canvas;
-	Canvas->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
-	UVerticalBox* Tracker = WidgetTree->ConstructWidget<UVerticalBox>();
-	HeistCard = MakeCard(Tracker, TEXT("THE HEIST"), QuestTracker::HeistAccent, HeistBody, &PhaseTag);
-	FavourCard = MakeCard(Tracker, TEXT("FAVOURS"), QuestTracker::FavourAccent, FavourBody);
-	UWidget* TrackerSized = QuestTracker::Sized(WidgetTree, Tracker, 340.f, 0.f);
-	TrackerSized->SetVisibility(ESlateVisibility::HitTestInvisible);
-	UCanvasPanelSlot* QuestSlot = Canvas->AddChildToCanvas(TrackerSized);
-	QuestSlot->SetAnchors(FAnchors(1.f, 0.f));
-	QuestSlot->SetAlignment(FVector2D(1.f, 0.f));
-	QuestSlot->SetPosition(FVector2D(-24.f, 40.f));
-	QuestSlot->SetAutoSize(true);
-	DisplayedText.Reset();
-	FeedbackText = QuestTracker::Text(WidgetTree, FString(), 14, FLinearColor(1.f, 0.45f, 0.38f), TEXT("Bold"));
-	FeedbackText->SetAutoWrapText(false);
-	FeedbackText->SetVisibility(ESlateVisibility::HitTestInvisible);
-	UCanvasPanelSlot* FeedbackSlot = Canvas->AddChildToCanvas(FeedbackText);
-	FeedbackSlot->SetPosition(FVector2D(24.f, 40.f));
-	FeedbackSlot->SetAutoSize(true);
-	return Super::RebuildWidget();
+	if (!bCapturedColours)
+	{
+		bCapturedColours = true;
+		if (TitleText) TitleColor = TitleText->GetColorAndOpacity();
+		if (Progress) FillColor = Progress->GetFillColorAndOpacity();
+	}
+	if (TitleText)
+	{
+		TitleText->SetText(Title);
+		TitleText->SetColorAndOpacity(bDone ? DoneTitleColor : TitleColor);
+	}
+	if (DetailText)
+	{
+		DetailText->SetText(Detail);
+		DetailText->SetVisibility(Detail.IsEmpty() ? ESlateVisibility::Collapsed : ESlateVisibility::HitTestInvisible);
+	}
+	if (CountText) CountText->SetText(Count);
+	if (Progress)
+	{
+		Progress->SetPercent(Fraction);
+		Progress->SetFillColorAndOpacity(bDone ? DoneFillColor : FillColor);
+	}
+	if (DoneMark) DoneMark->SetVisibility(bDone ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+	OnRowSet(bDone);
 }
 
 void UQuestConversationWidget::NativeConstruct()
@@ -321,6 +233,7 @@ void UQuestConversationWidget::NativeConstruct()
 	Player->OnQuestsChanged.AddUniqueDynamic(this, &UQuestConversationWidget::RefreshQuests);
 	Player->OnConversationChanged.AddUniqueDynamic(this, &UQuestConversationWidget::RefreshConversation);
 	Player->OnConversationRejected.AddUniqueDynamic(this, &UQuestConversationWidget::ShowRejection);
+	DisplayedText.Reset();
 	RefreshQuests();
 	RefreshConversation();
 }
@@ -330,33 +243,6 @@ FText UQuestConversationWidget::GetDisplayedQuestText() const
 	return FText::FromString(DisplayedText);
 }
 
-UWidget* UQuestConversationWidget::MakeCard(UVerticalBox* Tracker, const FString& Title, const FLinearColor& Accent, TObjectPtr<UVerticalBox>& OutBody, TObjectPtr<UTextBlock>* OutTag)
-{
-	using namespace QuestTracker;
-	UVerticalBox* Content = WidgetTree->ConstructWidget<UVerticalBox>();
-	UHorizontalBox* Header = WidgetTree->ConstructWidget<UHorizontalBox>();
-	Add(Header, Sized(WidgetTree, Box(WidgetTree, Accent, 2.f), 4.f, 14.f))->SetPadding(FMargin(0.f, 0.f, 8.f, 0.f));
-	Add(Header, Text(WidgetTree, Title, 10, Accent, TEXT("Bold"), 250));
-	if (OutTag)
-	{
-		Add(Header, WidgetTree->ConstructWidget<USpacer>(), 1.f);
-		*OutTag = Text(WidgetTree, FString(), 9, Muted, TEXT("Bold"), 150);
-		(*OutTag)->SetAutoWrapText(false);
-		UBorder* Pill = Box(WidgetTree, Track, 4.f, FMargin(7.f, 2.f));
-		Pill->AddChild(*OutTag);
-		Add(Header, Pill);
-	}
-	Add(Content, Header);
-	Add(Content, Sized(WidgetTree, Box(WidgetTree, Accent.CopyWithNewOpacity(0.25f), 0.f), 0.f, 1.f), FMargin(0.f, 8.f, 0.f, 10.f));
-	OutBody = WidgetTree->ConstructWidget<UVerticalBox>();
-	Add(Content, OutBody);
-	UBorder* Card = Box(WidgetTree, Panel, 8.f, FMargin(14.f, 12.f, 14.f, 14.f));
-	Card->AddChild(Content);
-	Card->SetVisibility(ESlateVisibility::Collapsed);
-	Add(Tracker, Card, FMargin(0.f, 0.f, 0.f, 10.f));
-	return Card;
-}
-
 void UQuestConversationWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 {
 	Super::NativeTick(MyGeometry, InDeltaTime);
@@ -364,10 +250,48 @@ void UQuestConversationWidget::NativeTick(const FGeometry& MyGeometry, float InD
 	RefreshQuests();
 }
 
+namespace
+{
+	void SetShown(UWidget* Widget, bool bShown)
+	{
+		if (Widget) Widget->SetVisibility(bShown ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+	}
+
+	void SetTextShown(UTextBlock* Block, const FString& String)
+	{
+		if (!Block) return;
+		Block->SetText(FText::FromString(String));
+		SetShown(Block, !String.IsEmpty());
+	}
+}
+
+UQuestTrackerRow* UQuestConversationWidget::RowAt(UPanelWidget* List, TSubclassOf<UQuestTrackerRow> RowClass, float Spacing, int32 Index)
+{
+	if (!List || !RowClass) return nullptr;
+	// Reuse rows: a new row has no size for its first frame, so recreating them made rows overlap on every change.
+	UQuestTrackerRow* Row = Cast<UQuestTrackerRow>(List->GetChildAt(Index));
+	if (!Row || Row->GetClass() != RowClass)
+	{
+		while (List->GetChildrenCount() > Index) List->RemoveChildAt(Index);
+		Row = CreateWidget<UQuestTrackerRow>(GetOwningPlayer(), RowClass);
+		if (!Row) return nullptr;
+		List->AddChild(Row);
+	}
+	if (auto* VerticalSlot = Cast<UVerticalBoxSlot>(Row->Slot)) VerticalSlot->SetPadding(FMargin(0.f, Index == 0 ? 0.f : Spacing, 0.f, 0.f));
+	return Row;
+}
+
+namespace
+{
+	void TrimRows(UPanelWidget* List, int32 Count)
+	{
+		while (List && List->GetChildrenCount() > Count) List->RemoveChildAt(Count);
+	}
+}
+
 void UQuestConversationWidget::RefreshQuests()
 {
-	using namespace QuestTracker;
-	if (!Player || !HeistBody || !FavourBody) return;
+	if (!Player) return;
 	const ARobberGameState* GameState = GetWorld() ? GetWorld()->GetGameState<ARobberGameState>() : nullptr;
 	const APlayerController* PC = GetOwningPlayer();
 	const bool bHeist = GameState && PC;
@@ -375,6 +299,7 @@ void UQuestConversationWidget::RefreshQuests()
 	const FString Phase = bHeist ? RobberStage::GetDisplayName(Stage).ToString().ToUpper() : FString();
 	const float TimeLeft = bHeist ? GameState->GetPhaseTimeRemaining() : -1.f;
 	const int32 Seconds = TimeLeft >= 0.f ? FMath::CeilToInt(TimeLeft) : INDEX_NONE;
+	const FString Timer = Seconds != INDEX_NONE ? FString::Printf(TEXT("%d:%02d"), Seconds / 60, Seconds % 60) : FString();
 	const ARobberController* RobberController = Cast<ARobberController>(PC);
 	const FString Message = RobberController && RobberController->IsHeistMessageVisible() ? RobberController->GetHeistMessage().ToString() : FString();
 	const FString Objective = bHeist ? GameState->GetObjectiveText(PC->PlayerState).ToString() : FString();
@@ -398,7 +323,7 @@ void UQuestConversationWidget::RefreshQuests()
 	// Ticks every frame, so compare a plain-text summary before touching any widgets.
 	FString Summary = Phase;
 	if (!Message.IsEmpty()) Summary += TEXT("\n") + Message;
-	if (Seconds != INDEX_NONE) Summary += FString::Printf(TEXT("\nClosing in %d:%02d"), Seconds / 60, Seconds % 60);
+	if (!Timer.IsEmpty()) Summary += TEXT("\nClosing in ") + Timer;
 	Summary += TEXT("\n") + Objective;
 	for (const TPair<FString, int32>& Vote : Votes) Summary += FString::Printf(TEXT("\n%s: %d"), *Vote.Key, Vote.Value);
 	for (const FRobberJob& Job : Jobs)
@@ -409,67 +334,48 @@ void UQuestConversationWidget::RefreshQuests()
 	if (Summary == DisplayedText && !DisplayedText.IsEmpty()) return;
 	DisplayedText = Summary;
 
-	HeistBody->ClearChildren();
-	if (PhaseTag) PhaseTag->SetText(FText::FromString(Phase));
-	if (!Message.IsEmpty())
+	SetShown(HeistCard, bHeist);
+	if (PhaseText) PhaseText->SetText(FText::FromString(Phase));
+	if (MessageText) MessageText->SetText(FText::FromString(Message));
+	SetShown(MessageBox, !Message.IsEmpty());
+	if (TimerText)
 	{
-		UBorder* Callout = Box(WidgetTree, HeistAccent.CopyWithNewOpacity(0.16f), 6.f, FMargin(10.f, 8.f));
-		Callout->AddChild(Text(WidgetTree, Message, 12, Primary, TEXT("Bold")));
-		Add(HeistBody, Callout, FMargin(0.f, 0.f, 0.f, 10.f));
-	}
-	if (Seconds != INDEX_NONE)
-	{
-		const FLinearColor TimerColor = Seconds <= 10 ? FLinearColor(1.f, 0.38f, 0.32f) : Primary;
-		UHorizontalBox* Timer = WidgetTree->ConstructWidget<UHorizontalBox>();
-		Add(Timer, Text(WidgetTree, TEXT("CLOSING IN"), 9, Muted, TEXT("Bold"), 200), 1.f);
-		Add(Timer, Text(WidgetTree, FString::Printf(TEXT("%d:%02d"), Seconds / 60, Seconds % 60), 20, TimerColor, TEXT("Bold")));
-		Add(HeistBody, Timer, FMargin(0.f, 0.f, 0.f, 8.f));
-	}
-	if (!Objective.IsEmpty()) Add(HeistBody, Text(WidgetTree, Objective, 14, Primary));
-	if (!Votes.IsEmpty())
-	{
-		Add(HeistBody, Text(WidgetTree, TEXT("VOTES"), 9, Muted, TEXT("Bold"), 200), FMargin(0.f, 12.f, 0.f, 2.f));
-		const int32 Crew = FMath::Max(1, GameState->PlayerArray.Num());
-		for (const TPair<FString, int32>& Vote : Votes)
+		if (!bTimerColourCaptured)
 		{
-			UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>();
-			Add(Row, Text(WidgetTree, Vote.Key, 12, Primary), 1.f);
-			Add(Row, Text(WidgetTree, FString::FromInt(Vote.Value), 12, HeistAccent, TEXT("Bold")));
-			Add(HeistBody, Row, FMargin(0.f, 6.f, 0.f, 3.f));
-			Add(HeistBody, ProgressBar(WidgetTree, FMath::Clamp(float(Vote.Value) / Crew, 0.f, 1.f), HeistAccent));
+			bTimerColourCaptured = true;
+			TimerColor = TimerText->GetColorAndOpacity();
 		}
+		TimerText->SetText(FText::FromString(Timer));
+		TimerText->SetColorAndOpacity(Seconds != INDEX_NONE && Seconds <= TimerWarningSeconds ? TimerWarningColor : TimerColor);
 	}
-	if (!Jobs.IsEmpty())
-	{
-		Add(HeistBody, Text(WidgetTree, TEXT("JOBS"), 9, Muted, TEXT("Bold"), 200), FMargin(0.f, Objective.IsEmpty() ? 0.f : 12.f, 0.f, 2.f));
-		for (const FRobberJob& Job : Jobs)
-		{
-			UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>();
-			Add(Row, Checkbox(WidgetTree, Job.bDone))->SetPadding(FMargin(0.f, 0.f, 10.f, 0.f));
-			Add(Row, Text(WidgetTree, Job.Title.ToString(), 12, Job.bDone ? Muted : Primary), 1.f);
-			Add(HeistBody, Row, FMargin(0.f, 6.f, 0.f, 0.f));
-		}
-	}
-	HeistCard->SetVisibility(HeistBody->HasAnyChildren() || !Phase.IsEmpty() ?ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+	SetShown(TimerBox, !Timer.IsEmpty());
+	SetTextShown(ObjectiveText, Objective);
 
-	FavourBody->ClearChildren();
+	const int32 Crew = bHeist ? FMath::Max(1, GameState->PlayerArray.Num()) : 1;
+	for (int32 Index = 0; Index < Votes.Num(); ++Index)
+		if (UQuestTrackerRow* Row = RowAt(VotesList, VoteRowClass, RowSpacing, Index))
+			Row->SetRow(FText::FromString(Votes[Index].Key), FText::GetEmpty(), FText::AsNumber(Votes[Index].Value),
+				FMath::Clamp(float(Votes[Index].Value) / Crew, 0.f, 1.f), false);
+	TrimRows(VotesList, Votes.Num());
+	SetShown(VotesBox, !Votes.IsEmpty());
+
+	for (int32 Index = 0; Index < Jobs.Num(); ++Index)
+		if (UQuestTrackerRow* Row = RowAt(JobsList, JobRowClass, RowSpacing, Index))
+			Row->SetRow(Jobs[Index].Title, FText::GetEmpty(), FText::GetEmpty(), Jobs[Index].bDone ? 1.f : 0.f, Jobs[Index].bDone);
+	TrimRows(JobsList, Jobs.Num());
+	SetShown(JobsBox, !Jobs.IsEmpty());
+
 	for (int32 Index = 0; Index < Favours.Num(); ++Index)
 	{
 		const FPlayerQuest& Quest = *Favours[Index];
-		const bool bReady = Quest.State == EPlayerQuestState::ReadyToTurnIn;
 		const int32 Required = FMath::Max(1, Quest.Definition->RequiredAmount);
-		UVerticalBox* Entry = WidgetTree->ConstructWidget<UVerticalBox>();
-		Add(Entry, Text(WidgetTree, Quest.Definition->QuestName.ToString(), 13, Primary, TEXT("Bold")));
-		Add(Entry, Text(WidgetTree, Quest.Definition->ObjectiveText.ToString(), 11, Muted), FMargin(0.f, 2.f, 0.f, 0.f));
-		UHorizontalBox* Progress = WidgetTree->ConstructWidget<UHorizontalBox>();
-		Add(Progress, ProgressBar(WidgetTree, FMath::Clamp(float(Quest.Amount) / Required, 0.f, 1.f), bReady ? Done : FavourAccent), 1.f);
-		Add(Progress, Text(WidgetTree, FString::Printf(TEXT("%d / %d"), Quest.Amount, Required), 10, bReady ? Done : Muted, TEXT("Bold")))
-			->SetPadding(FMargin(10.f, 0.f, 0.f, 0.f));
-		Add(Entry, Progress, FMargin(0.f, 6.f, 0.f, 0.f));
-		if (bReady) Add(Entry, Text(WidgetTree, TEXT("Return to the quest giver"), 11, Done, TEXT("Bold")), FMargin(0.f, 4.f, 0.f, 0.f));
-		Add(FavourBody, Entry, FMargin(0.f, Index == 0 ? 0.f : 14.f, 0.f, 0.f));
+		if (UQuestTrackerRow* Row = RowAt(FavourList, FavourRowClass, FavourSpacing, Index))
+			Row->SetRow(Quest.Definition->QuestName, Quest.Definition->ObjectiveText,
+				FText::FromString(FString::Printf(TEXT("%d / %d"), Quest.Amount, Required)),
+				FMath::Clamp(float(Quest.Amount) / Required, 0.f, 1.f), Quest.State == EPlayerQuestState::ReadyToTurnIn);
 	}
-	FavourCard->SetVisibility(Favours.IsEmpty() ? ESlateVisibility::Collapsed : ESlateVisibility::HitTestInvisible);
+	TrimRows(FavourList, Favours.Num());
+	SetShown(FavourCard, !Favours.IsEmpty());
 }
 
 void UQuestConversationWidget::RefreshConversation()
@@ -481,7 +387,7 @@ void UQuestConversationWidget::RefreshConversation()
 		Dialogue = nullptr;
 		return;
 	}
-	FeedbackText->SetText(FText::GetEmpty());
+	if (FeedbackText) FeedbackText->SetText(FText::GetEmpty());
 	if (!Dialogue)
 	{
 		Dialogue = CreateWidget<UDialoguePresentationWidget>(GetOwningPlayer());

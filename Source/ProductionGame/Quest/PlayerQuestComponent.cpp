@@ -54,7 +54,15 @@ void UPlayerQuestComponent::RefreshDefaultUI()
 
 	if (!Widget)
 	{
-		Widget = CreateWidget<UQuestConversationWidget>(PC, WidgetClass ? WidgetClass.Get() : UQuestConversationWidget::StaticClass());
+		// The tracker layout lives in WBP_QuestTracker; the bare C++ class has no widgets of its own.
+		static const TSoftClassPtr<UQuestConversationWidget> DefaultClass(FSoftObjectPath(TEXT("/Game/OurStuff/Widgets/Quest/WBP_QuestTracker.WBP_QuestTracker_C")));
+		UClass* Class = WidgetClass ? WidgetClass.Get() : DefaultClass.LoadSynchronous();
+		if (!Class)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("WBP_QuestTracker is missing; the quest tracker will be empty."));
+			Class = UQuestConversationWidget::StaticClass();
+		}
+		Widget = CreateWidget<UQuestConversationWidget>(PC, Class);
 		if (Widget) Widget->AddToPlayerScreen(20);
 	}
 }
