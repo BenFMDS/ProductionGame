@@ -60,8 +60,15 @@ class PRODUCTIONGAME_API ARobberVoteStation : public ARobberInteractable
 	GENERATED_BODY()
 
 public:
+	/** Only for an entry in the same level (L_Ben). In L_GameLevel the entries are in the night, so use EntryId. */
 	UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Robber|Lobby")
 	TObjectPtr<ARobberEntryPoint> Entry;
+
+	/** Votes for the loaded night's entry with this id. The board is blank on nights without one. */
+	UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Robber|Lobby")
+	FName EntryId;
+
+	ARobberEntryPoint* GetEntry(const ARobberGameState* GameState) const;
 
 protected:
 	virtual void OnServerInteract(APawn* Pawn, APlayerState* Player, ARobberGameState* GameState) override;
@@ -101,4 +108,40 @@ public:
 protected:
 	virtual void OnServerInteract(APawn* Pawn, APlayerState* Player, ARobberGameState* GameState) override;
 	virtual FText GetPrompt(const ARobberGameState* GameState, const APlayerState* Viewer) const override;
+};
+
+/**
+ * A door that only a player holding its key can open (keys come from quests, UQuestDefinition::RewardKey).
+ * Once unlocked it stays open for the whole crew until the night is reloaded.
+ */
+UCLASS(Blueprintable)
+class PRODUCTIONGAME_API ARobberLockedDoor : public ARobberInteractable
+{
+	GENERATED_BODY()
+
+public:
+	ARobberLockedDoor();
+
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Robber|Door")
+	FName KeyId;
+
+	/** What the prompt calls the key, e.g. "Generator Room key". */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Robber|Door")
+	FText KeyName;
+
+	bool IsOpen() const { return bOpen; }
+
+protected:
+	virtual void OnServerInteract(APawn* Pawn, APlayerState* Player, ARobberGameState* GameState) override;
+	virtual FText GetPrompt(const ARobberGameState* GameState, const APlayerState* Viewer) const override;
+	virtual FText GetLabel(const ARobberGameState* GameState) const override;
+
+private:
+	UPROPERTY(ReplicatedUsing = OnRep_Open)
+	bool bOpen = false;
+
+	UFUNCTION()
+	void OnRep_Open();
 };

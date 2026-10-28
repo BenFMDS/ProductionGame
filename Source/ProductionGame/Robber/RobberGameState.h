@@ -100,6 +100,31 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Robber|Heist")
 	const TArray<FRobberJob>& GetJobs() const { return Jobs; }
 
+	// --- Nights ---
+	// Each night is a sublevel of L_GameLevel, streamed in at its own origin while the lobby stays loaded.
+
+	/**
+	 * Server only. Ends the night: Lose, Continue (more nights to go) or Win (that was the last one).
+	 * Everyone goes back to the lobby; a lost night reloads fresh, a won one swaps to the next.
+	 */
+	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Robber|Night")
+	void FinishNight(bool bWon);
+
+	/** Server only, from the lobby. NightIndex is into Nights (0 = Night 1). */
+	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Robber|Night")
+	void LoadNight(int32 NightIndex);
+
+	/** Server only, from the lobby. Finishing the tutorial moves on to Night 1. */
+	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Robber|Night")
+	void LoadTutorial();
+
+	/** Index into Nights of the loaded night; -1 for the tutorial or when no night is loaded. */
+	UFUNCTION(BlueprintPure, Category = "Robber|Night")
+	int32 GetCurrentNight() const { return CurrentNight; }
+
+	/** The loaded night's entry with this id, or null. */
+	ARobberEntryPoint* FindEntry(FName EntryId) const;
+
 	/** What Viewer should be doing right now, for the HUD. */
 	UFUNCTION(BlueprintPure, Category = "Robber|Stage")
 	FText GetObjectiveText(const APlayerState* Viewer) const;
@@ -130,6 +155,15 @@ private:
 	void BindLocalStageReaders();
 	void NotifyDevUIOfStageChange();
 
+	void ReturnToLobby();
+	bool CanStreamLevel(const TSoftObjectPtr<UWorld>& Level) const;
+	void SwapNightLevel(const TSoftObjectPtr<UWorld>& Level);
+	void LoadPendingNightLevel();
+	FText GetNightName(int32 NightIndex, bool bIsTutorial) const;
+
+	UFUNCTION()
+	void OnNightLevelUnloaded();
+
 	/** Soft so the Blueprint alarm can be resolved at runtime; ConstructorHelpers is only legal in constructors. */
 	UPROPERTY(EditDefaultsOnly, Category = "Robber|Alarm")
 	TSoftClassPtr<AActor> AlarmClass;
@@ -156,4 +190,27 @@ private:
 	/** Server world time the current phase timer ends at; 0 when none is running. */
 	UPROPERTY(Replicated)
 	double PhaseEndServerTime = 0.;
+
+	/** In play order. Each must be a streaming sublevel of the map (see HeistSliceSetup -GameLevel). */
+	UPROPERTY(EditDefaultsOnly, Category = "Robber|Night")
+	TArray<TSoftObjectPtr<UWorld>> Nights;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Robber|Night")
+	TSoftObjectPtr<UWorld> TutorialLevel;
+
+	UPROPERTY(Replicated)
+	int32 CurrentNight = INDEX_NONE;
+
+	UPROPERTY(Replicated)
+	bool bTutorial = false;
+
+	/** How the last night went, shown in the lobby until the next break-in. */
+	UPROPERTY(Replicated)
+	FText NightResultText;
+
+	/** Server only. Long package names of the night sublevel that is loaded and the one waiting to load. */
+	FName LoadedNightLevel;
+	FName PendingNightLevel;
+	FTimerHandle NightLoadTimer;
+	int32 NextLatentActionId = 1;
 };
