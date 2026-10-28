@@ -4,13 +4,16 @@
 
 #include "Blueprint/UserWidget.h"
 #include "Components/TextBlock.h"
+#include "Engine/Engine.h"
 #include "EngineUtils.h"
 #include "GameFramework/PlayerController.h"
+#include "GameFramework/PlayerStart.h"
 #include "GameFramework/PlayerState.h"
 #include "Heist/RobberEntryPoint.h"
 #include "Heist/RobberStage.h"
 #include "Kismet/GameplayStatics.h"
 #include "Net/UnrealNetwork.h"
+#include "Quest/PlayerQuestComponent.h"
 #include "Robber/RobberController.h"
 #include "UObject/UnrealType.h"
 
@@ -18,12 +21,52 @@ namespace
 {
 	const FName PowerJob(TEXT("Power"));
 	const FName GemJob(TEXT("Gem"));
+
+	// Dev shortcuts until the real win/lose conditions exist. Type them on the host.
+	void RunOnHostGameState(UWorld* World, TFunctionRef<void(ARobberGameState&)> Command)
+	{
+		ARobberGameState* GameState = World ? World->GetGameState<ARobberGameState>() : nullptr;
+		if (GameState && GameState->HasAuthority())
+		{
+			Command(*GameState);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("Robber night commands only work on the host."));
+		}
+	}
+
+	FAutoConsoleCommandWithWorldAndArgs FinishNightCommand(TEXT("Robber.FinishNight"),
+		TEXT("End the current night. 'Robber.FinishNight 1' wins it, 'Robber.FinishNight 0' loses it."),
+		FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
+		{
+			RunOnHostGameState(World, [&Args](ARobberGameState& GameState) { GameState.FinishNight(Args.Num() > 0 && Args[0].ToBool()); });
+		}));
+
+	FAutoConsoleCommandWithWorldAndArgs LoadNightCommand(TEXT("Robber.LoadNight"),
+		TEXT("From the lobby, load a night: 'Robber.LoadNight 2' for Night 2."),
+		FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
+		{
+			RunOnHostGameState(World, [&Args](ARobberGameState& GameState) { GameState.LoadNight(Args.Num() > 0 ? FCString::Atoi(*Args[0]) - 1 : 0); });
+		}));
+
+	FAutoConsoleCommandWithWorldAndArgs LoadTutorialCommand(TEXT("Robber.LoadTutorial"),
+		TEXT("From the lobby, load the tutorial."),
+		FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>&, UWorld* World)
+		{
+			RunOnHostGameState(World, [](ARobberGameState& GameState) { GameState.LoadTutorial(); });
+		}));
 }
 
 ARobberGameState::ARobberGameState()
 {
 	PrimaryActorTick.bCanEverTick = true;
 	AlarmClass = TSoftClassPtr<AActor>(FSoftObjectPath(TEXT("/Game/OurStuff/Blueprints/Props/BP_Alarm.BP_Alarm_C")));
+	for (int32 Night = 1; Night <= 7; ++Night)
+	{
+		Nights.Emplace(FSoftObjectPath(FString::Printf(TEXT("/Game/OurStuff/Maps/L_Night%d.L_Night%d"), Night, Night)));
+	}
+	TutorialLevel = TSoftObjectPtr<UWorld>(FSoftObjectPath(TEXT("/Game/OurStuff/Maps/L_Tutorial.L_Tutorial")));
 }
 
 void ARobberGameState::BeginPlay()
@@ -34,6 +77,8 @@ void ARobberGameState::BeginPlay()
 	if (HasAuthority())
 	{
 		SetGameStage(GetLegacyGameState());
+		// Maps without the night sublevels (the dev levels) keep everything in one level.
+		LoadNight(0);
 	}
 	else
 	{
@@ -83,7 +128,7 @@ bool ARobberGameState::IsPowerOn() const
 
 void ARobberGameState::CastVote(APlayerState* Voter, ARobberEntryPoint* Entry)
 {
-	if (!HasAuthority() || !Voter || !Entry || ReplicatedGameStage != RobberStage::Lobby)
+	if (!HasAuthority() || !Voter || !Entry || !RobberStage::IsInLobby(ReplicatedGameStage))
 	{
 		return;
 	}
@@ -129,12 +174,13 @@ ARobberEntryPoint* ARobberGameState::GetWinningEntry() const
 bool ARobberGameState::StartBreakIn()
 {
 	ARobberEntryPoint* Entry = GetWinningEntry();
-	if (!HasAuthority() || !Entry || ReplicatedGameStage != RobberStage::Lobby)
+	if (!HasAuthority() || !Entry || !RobberStage::IsInLobby(ReplicatedGameStage))
 	{
 		return false;
 	}
 
 	ActiveEntry = Entry;
+	NightResultText = FText::GetEmpty();
 	Crew.Reset();
 	int32 SpawnIndex = 0;
 	for (APlayerState* Player : PlayerArray)
@@ -267,7 +313,17 @@ FText ARobberGameState::GetObjectiveText(const APlayerState* Viewer) const
 	switch (ReplicatedGameStage)
 	{
 	case RobberStage::Lobby:
-		return NSLOCTEXT("RobberHeist", "LobbyObjective", "Vote for a way in, then walk through the museum door together.");
+	case RobberStage::Lose:
+	case RobberStage::Continue:
+	case RobberStage::Win:
+	{
+		FText Objective = NSLOCTEXT("RobberHeist", "LobbyObjective", "Vote for a way in, then walk through the museum door together.");
+		if (CurrentNight != INDEX_NONE || bTutorial)
+		{
+			Objective = FText::Format(NSLOCTEXT("RobberHeist", "UpNext", "Up next: {0}\n{1}"), GetNightName(CurrentNight, bTutorial), Objective);
+		}
+		return NightResultText.IsEmpty() ? Objective : FText::Format(NSLOCTEXT("RobberHeist", "WithResult", "{0}\n{1}"), NightResultText, Objective);
+	}
 	case RobberStage::BreakIn:
 		return ActiveEntry ? ActiveEntry->GetBreakInStatus(this, Viewer) : FText::GetEmpty();
 	case RobberStage::Investigate:
@@ -300,6 +356,181 @@ void ARobberGameState::ActivateAlarms()
 	}
 }
 
+void ARobberGameState::FinishNight(bool bWon)
+{
+	if (!HasAuthority() || RobberStage::IsInLobby(ReplicatedGameStage))
+	{
+		return;
+	}
+	const bool bLastNight = !bTutorial && CurrentNight >= Nights.Num() - 1;
+	SetGameStage(!bWon ? RobberStage::Lose : bLastNight ? RobberStage::Win : RobberStage::Continue);
+}
+
+void ARobberGameState::ReturnToLobby()
+{
+	const FText NightName = GetNightName(CurrentNight, bTutorial);
+	switch (ReplicatedGameStage)
+	{
+	case RobberStage::Lose:
+		NightResultText = FText::Format(NSLOCTEXT("RobberNight", "Lost", "{0} lost. Try it again."), NightName);
+		break;
+	case RobberStage::Continue:
+		NightResultText = FText::Format(NSLOCTEXT("RobberNight", "Won", "{0} done!"), NightName);
+		break;
+	default:
+		NightResultText = FText::Format(NSLOCTEXT("RobberNight", "WonLast", "{0} done! That was the last night."), NightName);
+		break;
+	}
+
+	if (ActiveEntry)
+	{
+		ActiveEntry->EndBreakIn(this);
+	}
+	ActiveEntry = nullptr;
+	Votes.Reset();
+	Crew.Reset();
+	Jobs.Reset();
+	OnRep_Jobs();
+	PhaseEndServerTime = 0.;
+	if (FBoolProperty* PowerProperty = FindFProperty<FBoolProperty>(GetClass(), TEXT("PowerOn?")))
+	{
+		PowerProperty->SetPropertyValue_InContainer(this, true);
+	}
+
+	// No transition yet: everyone just appears back in the lobby, one start each.
+	TArray<APlayerStart*> LobbyStarts;
+	for (TActorIterator<APlayerStart> It(GetWorld()); It; ++It)
+	{
+		if (It->PlayerStartTag == TEXT("Lobby"))
+		{
+			LobbyStarts.Add(*It);
+		}
+	}
+	int32 StartIndex = 0;
+	for (APlayerState* Player : PlayerArray)
+	{
+		const AController* PlayerController = Player ? Player->GetOwningController() : nullptr;
+		if (UPlayerQuestComponent* Quests = PlayerController ? PlayerController->FindComponentByClass<UPlayerQuestComponent>() : nullptr)
+		{
+			Quests->ResetForNight();
+		}
+		APawn* Pawn = Player ? Player->GetPawn() : nullptr;
+		if (Pawn && LobbyStarts.Num() > 0)
+		{
+			const APlayerStart* Start = LobbyStarts[StartIndex++ % LobbyStarts.Num()];
+			Pawn->TeleportTo(Start->GetActorLocation(), Start->GetActorRotation());
+			if (AController* Controller = Pawn->GetController())
+			{
+				Controller->ClientSetRotation(Start->GetActorRotation());
+			}
+		}
+	}
+
+	if (ReplicatedGameStage == RobberStage::Lose)
+	{
+		// Reloading gives a fresh copy, so nothing from the failed attempt carries over.
+		if (bTutorial)
+		{
+			LoadTutorial();
+		}
+		else
+		{
+			LoadNight(CurrentNight);
+		}
+	}
+	else
+	{
+		LoadNight(ReplicatedGameStage == RobberStage::Win || bTutorial ? 0 : CurrentNight + 1);
+	}
+	ForceNetUpdate();
+}
+
+void ARobberGameState::LoadNight(int32 NightIndex)
+{
+	if (!HasAuthority() || !RobberStage::IsInLobby(ReplicatedGameStage) || !Nights.IsValidIndex(NightIndex) || !CanStreamLevel(Nights[NightIndex]))
+	{
+		return;
+	}
+	CurrentNight = NightIndex;
+	bTutorial = false;
+	SwapNightLevel(Nights[NightIndex]);
+}
+
+void ARobberGameState::LoadTutorial()
+{
+	if (!HasAuthority() || !RobberStage::IsInLobby(ReplicatedGameStage) || !CanStreamLevel(TutorialLevel))
+	{
+		return;
+	}
+	CurrentNight = INDEX_NONE;
+	bTutorial = true;
+	SwapNightLevel(TutorialLevel);
+}
+
+bool ARobberGameState::CanStreamLevel(const TSoftObjectPtr<UWorld>& Level) const
+{
+	return !Level.IsNull() && UGameplayStatics::GetStreamingLevel(this, Level.ToSoftObjectPath().GetLongPackageFName()) != nullptr;
+}
+
+void ARobberGameState::SwapNightLevel(const TSoftObjectPtr<UWorld>& Level)
+{
+	// Votes point at the old night's entries.
+	Votes.Reset();
+	ForceNetUpdate();
+	PendingNightLevel = Level.ToSoftObjectPath().GetLongPackageFName();
+	GetWorldTimerManager().ClearTimer(NightLoadTimer);
+	if (LoadedNightLevel.IsNone())
+	{
+		LoadPendingNightLevel();
+		return;
+	}
+	FLatentActionInfo LatentInfo(0, NextLatentActionId++, TEXT("OnNightLevelUnloaded"), this);
+	UGameplayStatics::UnloadStreamLevel(this, LoadedNightLevel, LatentInfo, false);
+	LoadedNightLevel = NAME_None;
+}
+
+void ARobberGameState::OnNightLevelUnloaded()
+{
+	// An unloaded level that hasn't been garbage collected yet is reused as it was left, so a lost night
+	// would come back with the gem gone. Collect it first and give clients the same moment to.
+	GEngine->ForceGarbageCollection(true);
+	GetWorldTimerManager().SetTimer(NightLoadTimer, this, &ARobberGameState::LoadPendingNightLevel, 0.5f, false);
+}
+
+void ARobberGameState::LoadPendingNightLevel()
+{
+	if (PendingNightLevel.IsNone())
+	{
+		return;
+	}
+	FLatentActionInfo LatentInfo(0, NextLatentActionId++, TEXT(""), this);
+	UGameplayStatics::LoadStreamLevel(this, PendingNightLevel, true, false, LatentInfo);
+	LoadedNightLevel = PendingNightLevel;
+	PendingNightLevel = NAME_None;
+}
+
+FText ARobberGameState::GetNightName(int32 NightIndex, bool bIsTutorial) const
+{
+	return bIsTutorial ? NSLOCTEXT("RobberNight", "Tutorial", "The tutorial")
+		: FText::Format(NSLOCTEXT("RobberNight", "Night", "Night {0}"), NightIndex + 1);
+}
+
+ARobberEntryPoint* ARobberGameState::FindEntry(FName EntryId) const
+{
+	if (EntryId.IsNone() || !GetWorld())
+	{
+		return nullptr;
+	}
+	for (TActorIterator<ARobberEntryPoint> It(GetWorld()); It; ++It)
+	{
+		if (It->EntryId == EntryId && IsValid(*It))
+		{
+			return *It;
+		}
+	}
+	return nullptr;
+}
+
 void ARobberGameState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
@@ -309,16 +540,25 @@ void ARobberGameState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& Out
 	DOREPLIFETIME(ARobberGameState, Crew);
 	DOREPLIFETIME(ARobberGameState, Jobs);
 	DOREPLIFETIME(ARobberGameState, PhaseEndServerTime);
+	DOREPLIFETIME(ARobberGameState, CurrentNight);
+	DOREPLIFETIME(ARobberGameState, bTutorial);
+	DOREPLIFETIME(ARobberGameState, NightResultText);
 }
 
 void ARobberGameState::SetGameStage(uint8 NewGameStage)
 {
-	const bool bStageChanged = ReplicatedGameStage != NewGameStage;
+	const uint8 OldGameStage = ReplicatedGameStage;
+	const bool bStageChanged = OldGameStage != NewGameStage;
 	ReplicatedGameStage = NewGameStage;
 	SetLegacyGameState(NewGameStage);
 	if (HasAuthority())
 	{
 		ForceNetUpdate();
+		// Here rather than in FinishNight so a Blueprint setting the stage (WBP_GameUI's Lose) ends the night too.
+		if (bStageChanged && RobberStage::IsNightResult(NewGameStage) && !RobberStage::IsInLobby(OldGameStage))
+		{
+			ReturnToLobby();
+		}
 	}
 
 	// Clients react in OnRep; this covers the listen-server host.

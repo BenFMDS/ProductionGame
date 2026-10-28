@@ -17,6 +17,17 @@ namespace RobberStage
 	constexpr uint8 Win = 6;
 	constexpr uint8 Investigate = 7;
 
+	/** How a night ended. The crew is back in the lobby and can vote for the next one straight away. */
+	inline bool IsNightResult(uint8 Stage)
+	{
+		return Stage == Lose || Stage == Continue || Stage == Win;
+	}
+
+	inline bool IsInLobby(uint8 Stage)
+	{
+		return Stage == Lobby || IsNightResult(Stage);
+	}
+
 	inline FText GetDisplayName(uint8 Stage)
 	{
 		switch (Stage)

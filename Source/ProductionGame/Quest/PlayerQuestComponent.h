@@ -53,6 +53,8 @@ public:
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 	UPROPERTY(ReplicatedUsing=OnRep_Quests, BlueprintReadOnly, Category="Quest") TArray<FPlayerQuest> Quests;
 	UPROPERTY(ReplicatedUsing=OnRep_Conversation, BlueprintReadOnly, Category="Dialogue") FPlayerConversation Conversation;
+	/** Keys from turned-in quests (UQuestDefinition::RewardKey). Cleared with the quests when a night ends. */
+	UPROPERTY(Replicated, BlueprintReadOnly, Category="Quest") TArray<FName> Keys;
 	UPROPERTY(BlueprintAssignable) FPlayerQuestChanged OnQuestsChanged;
 	UPROPERTY(BlueprintAssignable) FPlayerQuestChanged OnConversationChanged;
 	/** Server only, once per turn-in. Connect future item rewards (keys, equipment, etc.) here. */
@@ -80,6 +82,9 @@ public:
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category="Quest") bool AddQuestProgress(FName QuestID, int32 Amount = 1);
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category="Quest") void ReportQuestEvent(FName Event, int32 Amount = 1);
 	UFUNCTION(BlueprintPure, Category="Quest") bool GetQuest(FName QuestID, FPlayerQuest& OutQuest) const;
+	UFUNCTION(BlueprintPure, Category="Quest") bool HasKey(FName KeyId) const { return !KeyId.IsNone() && Keys.Contains(KeyId); }
+	/** Server only. Each night's quest givers are fresh copies, so quests, keys and any open conversation go. */
+	void ResetForNight();
 	UFUNCTION(BlueprintCallable, Category="Dialogue") void TalkToLookedAtNPC();
 
 	bool CanAccept(UQuestDefinition* Definition, AActor* Giver) const;

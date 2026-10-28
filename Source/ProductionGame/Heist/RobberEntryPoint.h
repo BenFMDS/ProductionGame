@@ -22,6 +22,10 @@ class PRODUCTIONGAME_API ARobberEntryPoint : public AActor
 public:
 	ARobberEntryPoint();
 
+	/** Lobby vote stations find this entry by id, because the lobby can't point into a night level. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Robber|Entry")
+	FName EntryId;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Robber|Entry")
 	FText DisplayName = NSLOCTEXT("RobberEntry", "DefaultName", "Entry");
 

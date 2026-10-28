@@ -9,6 +9,8 @@
 #include "GameFramework/PlayerState.h"
 #include "Heist/RobberEntryPoint.h"
 #include "Heist/RobberStage.h"
+#include "Net/UnrealNetwork.h"
+#include "Quest/PlayerQuestComponent.h"
 #include "Robber/RobberController.h"
 #include "Robber/RobberGameState.h"
 #include "UObject/ConstructorHelpers.h"
@@ -71,27 +73,34 @@ void ARobberInteractable::Tick(float DeltaSeconds)
 	}
 }
 
+ARobberEntryPoint* ARobberVoteStation::GetEntry(const ARobberGameState* GameState) const
+{
+	return Entry ? Entry.Get() : GameState->FindEntry(EntryId);
+}
+
 void ARobberVoteStation::OnServerInteract(APawn* Pawn, APlayerState* Player, ARobberGameState* GameState)
 {
-	GameState->CastVote(Player, Entry);
+	GameState->CastVote(Player, GetEntry(GameState));
 }
 
 FText ARobberVoteStation::GetPrompt(const ARobberGameState* GameState, const APlayerState* Viewer) const
 {
-	if (GameState->GetGameStage() != RobberStage::Lobby || !Entry)
+	const ARobberEntryPoint* Target = GetEntry(GameState);
+	if (!RobberStage::IsInLobby(GameState->GetGameStage()) || !Target)
 	{
 		return FText::GetEmpty();
 	}
-	return FText::Format(NSLOCTEXT("RobberLobby", "VotePrompt", "Vote: {0}"), Entry->DisplayName);
+	return FText::Format(NSLOCTEXT("RobberLobby", "VotePrompt", "Vote: {0}"), Target->DisplayName);
 }
 
 FText ARobberVoteStation::GetLabel(const ARobberGameState* GameState) const
 {
-	if (!Entry)
+	const ARobberEntryPoint* Target = GetEntry(GameState);
+	if (!Target)
 	{
-		return NSLOCTEXT("RobberLobby", "NoEntry", "No entry set");
+		return EntryId.IsNone() ? NSLOCTEXT("RobberLobby", "NoEntry", "No entry set") : NSLOCTEXT("RobberLobby", "NotTonight", "Not tonight");
 	}
-	return FText::Format(NSLOCTEXT("RobberLobby", "VoteLabel", "{0}\n{1} {1}|plural(one=vote,other=votes)"), Entry->DisplayName, GameState->GetVoteCount(Entry));
+	return FText::Format(NSLOCTEXT("RobberLobby", "VoteLabel", "{0}\n{1} {1}|plural(one=vote,other=votes)"), Target->DisplayName, GameState->GetVoteCount(Target));
 }
 
 ARobberTicketDesk::ARobberTicketDesk()
@@ -147,4 +156,70 @@ FText ARobberHidingSpot::GetPrompt(const ARobberGameState* GameState, const APla
 		return FText::GetEmpty();
 	}
 	return FText::Format(NSLOCTEXT("RobberTour", "HideIn", "Hide in the {0}"), Label);
+}
+
+namespace
+{
+	const UPlayerQuestComponent* FindQuests(const APlayerState* Player)
+	{
+		const AController* Controller = Player ? Player->GetOwningController() : nullptr;
+		return Controller ? Controller->FindComponentByClass<UPlayerQuestComponent>() : nullptr;
+	}
+}
+
+ARobberLockedDoor::ARobberLockedDoor()
+{
+	bReplicates = true;
+	Label = NSLOCTEXT("RobberDoor", "Label", "LOCKED");
+	KeyName = NSLOCTEXT("RobberDoor", "DefaultKey", "key");
+}
+
+void ARobberLockedDoor::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+	DOREPLIFETIME(ARobberLockedDoor, bOpen);
+}
+
+void ARobberLockedDoor::OnServerInteract(APawn* Pawn, APlayerState* Player, ARobberGameState* GameState)
+{
+	if (bOpen)
+	{
+		return;
+	}
+	const UPlayerQuestComponent* Quests = FindQuests(Player);
+	if (!Quests || !Quests->HasKey(KeyId))
+	{
+		if (ARobberController* Controller = Cast<ARobberController>(Pawn->GetController()))
+		{
+			Controller->ClientHeistMessage(FText::Format(NSLOCTEXT("RobberDoor", "NeedKey", "Locked. You need the {0}."), KeyName));
+		}
+		return;
+	}
+	bOpen = true;
+	OnRep_Open();
+	ForceNetUpdate();
+}
+
+FText ARobberLockedDoor::GetPrompt(const ARobberGameState* GameState, const APlayerState* Viewer) const
+{
+	if (bOpen)
+	{
+		return FText::GetEmpty();
+	}
+	const UPlayerQuestComponent* Quests = FindQuests(Viewer);
+	return Quests && Quests->HasKey(KeyId)
+		? FText::Format(NSLOCTEXT("RobberDoor", "Unlock", "Unlock with the {0}"), KeyName)
+		: FText::Format(NSLOCTEXT("RobberDoor", "Locked", "Locked (needs the {0})"), KeyName);
+}
+
+FText ARobberLockedDoor::GetLabel(const ARobberGameState* GameState) const
+{
+	return bOpen ? FText::GetEmpty() : Label;
+}
+
+void ARobberLockedDoor::OnRep_Open()
+{
+	// No door model yet: an open door just gets out of the way.
+	Mesh->SetHiddenInGame(bOpen, true);
+	Mesh->SetCollisionEnabled(bOpen ? ECollisionEnabled::NoCollision : ECollisionEnabled::QueryAndPhysics);
 }

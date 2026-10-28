@@ -20,6 +20,19 @@ void UPlayerQuestComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 	DOREPLIFETIME_CONDITION(UPlayerQuestComponent, Quests, COND_OwnerOnly);
 	DOREPLIFETIME_CONDITION(UPlayerQuestComponent, Conversation, COND_OwnerOnly);
+	DOREPLIFETIME_CONDITION(UPlayerQuestComponent, Keys, COND_OwnerOnly);
+}
+
+void UPlayerQuestComponent::ResetForNight()
+{
+	if (!GetOwner()->HasAuthority()) return;
+	if (IsValid(Conversation.NPC))
+		if (auto* Dialogue = Conversation.NPC->FindComponentByClass<UDialogueComponent>()) Dialogue->Release(this);
+	CloseConversation();
+	Quests.Reset();
+	Keys.Reset();
+	GetOwner()->ForceNetUpdate();
+	OnRep_Quests();
 }
 
 void UPlayerQuestComponent::BeginPlay()
@@ -183,6 +196,7 @@ bool UPlayerQuestComponent::TurnInQuest(UQuestDefinition* Definition, AActor* Gi
 		if (Quest.Definition != Definition) continue;
 		// Commit before callbacks so reentrant or duplicate requests cannot award twice.
 		Quest.State = EPlayerQuestState::Completed;
+		if (!Definition->RewardKey.IsNone()) Keys.AddUnique(Definition->RewardKey);
 		GetOwner()->ForceNetUpdate();
 		OnRep_Quests();
 		OnRewardGranted.Broadcast(Definition);

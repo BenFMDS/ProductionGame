@@ -88,7 +88,7 @@ ARobberLobbyExit::ARobberLobbyExit()
 
 void ARobberLobbyExit::ServerUpdate(ARobberGameState* GameState, int32 Inside, int32 Total)
 {
-	if (GameState->GetGameStage() == RobberStage::Lobby && Total > 0 && Inside == Total)
+	if (RobberStage::IsInLobby(GameState->GetGameStage()) && Total > 0 && Inside == Total)
 	{
 		GameState->StartBreakIn();
 	}
@@ -96,7 +96,7 @@ void ARobberLobbyExit::ServerUpdate(ARobberGameState* GameState, int32 Inside, i
 
 FText ARobberLobbyExit::GetLabel(const ARobberGameState* GameState, int32 Inside, int32 Total) const
 {
-	if (GameState->GetGameStage() != RobberStage::Lobby)
+	if (!RobberStage::IsInLobby(GameState->GetGameStage()))
 	{
 		return Label;
 	}
