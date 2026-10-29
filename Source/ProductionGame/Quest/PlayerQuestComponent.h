@@ -83,6 +83,8 @@ public:
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category="Quest") void ReportQuestEvent(FName Event, int32 Amount = 1);
 	UFUNCTION(BlueprintPure, Category="Quest") bool GetQuest(FName QuestID, FPlayerQuest& OutQuest) const;
 	UFUNCTION(BlueprintPure, Category="Quest") bool HasKey(FName KeyId) const { return !KeyId.IsNone() && Keys.Contains(KeyId); }
+	/** Server only. For keys found in the level rather than earned from a quest (e.g. the sewer crowbar). */
+	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category="Quest") void GiveKey(FName KeyId);
 	/** Server only. Each night's quest givers are fresh copies, so quests, keys and any open conversation go. */
 	void ResetForNight();
 	UFUNCTION(BlueprintCallable, Category="Dialogue") void TalkToLookedAtNPC();

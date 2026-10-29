@@ -5,9 +5,14 @@
 #include "RobberEntryPoint.generated.h"
 
 class APlayerState;
+class ARobberCrowbar;
 class ARobberGameState;
 class ARobberHidingSpot;
+class ARobberSewerGrate;
+class ARobberSewerWater;
+class ARobberSkylight;
 class UArrowComponent;
+class UBoxComponent;
 class UTextRenderComponent;
 
 /**
@@ -28,6 +33,10 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Robber|Entry")
 	FText DisplayName = NSLOCTEXT("RobberEntry", "DefaultName", "Entry");
+
+	/** Which lobby exit sends the crew in (ARobberLobbyExit::ExitId). None = the museum door. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Robber|Entry")
+	FName LobbyExit;
 
 	/** Shown on the HUD during Break In. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Robber|Entry", meta = (MultiLine = "true"))
@@ -77,4 +86,78 @@ public:
 	virtual void TickBreakIn(ARobberGameState* GameState) override;
 	virtual void EndBreakIn(ARobberGameState* GameState) override;
 	virtual FText GetBreakInStatus(const ARobberGameState* GameState, const APlayerState* Viewer) const override;
+};
+
+/**
+ * A way in where the crew has to physically get into the museum. Done when every player is inside
+ * InsideArea (however they got there: rope, grate, or falling through the glass).
+ */
+UCLASS(Abstract)
+class PRODUCTIONGAME_API ARobberSneakInEntryPoint : public ARobberEntryPoint
+{
+	GENERATED_BODY()
+
+public:
+	ARobberSneakInEntryPoint();
+
+	/** The museum's interior, in world space. Keep the roof and the tunnels outside it. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Robber|Entry")
+	TObjectPtr<UBoxComponent> InsideArea;
+
+	bool IsInside(const APawn* Pawn) const;
+
+	virtual void TickBreakIn(ARobberGameState* GameState) override;
+	virtual void EndBreakIn(ARobberGameState* GameState) override;
+	virtual FText GetBreakInStatus(const ARobberGameState* GameState, const APlayerState* Viewer) const override;
+
+protected:
+	/** Status for a player who isn't in yet. */
+	virtual FText GetOutsideStatus(const ARobberGameState* GameState, const APlayerState* Viewer) const { return BreakInObjective; }
+};
+
+/** Skylight: start on the roof, cut the glass without making too much noise, drop the rope, climb down it. */
+UCLASS(Blueprintable)
+class PRODUCTIONGAME_API ARobberSkylightEntryPoint : public ARobberSneakInEntryPoint
+{
+	GENERATED_BODY()
+
+public:
+	ARobberSkylightEntryPoint();
+
+	UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Robber|Entry")
+	TObjectPtr<ARobberSkylight> Skylight;
+
+	virtual void BeginBreakIn(ARobberGameState* GameState) override;
+	/** Nobody counts as in until the rope is down; the skylight sends early jumpers back up. */
+	virtual void TickBreakIn(ARobberGameState* GameState) override;
+
+protected:
+	virtual FText GetOutsideStatus(const ARobberGameState* GameState, const APlayerState* Viewer) const override;
+};
+
+/**
+ * Sewer: drop in through the manhole by the lobby, drain the flooded tunnel (two valves open at once), find the
+ * crowbar, pry the grate under the museum and climb up into the basement.
+ */
+UCLASS(Blueprintable)
+class PRODUCTIONGAME_API ARobberSewerEntryPoint : public ARobberSneakInEntryPoint
+{
+	GENERATED_BODY()
+
+public:
+	ARobberSewerEntryPoint();
+
+	UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Robber|Entry")
+	TObjectPtr<ARobberSewerWater> Water;
+
+	UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Robber|Entry")
+	TObjectPtr<ARobberSewerGrate> Grate;
+
+	UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Robber|Entry")
+	TObjectPtr<ARobberCrowbar> Crowbar;
+
+	virtual void BeginBreakIn(ARobberGameState* GameState) override;
+
+protected:
+	virtual FText GetOutsideStatus(const ARobberGameState* GameState, const APlayerState* Viewer) const override;
 };

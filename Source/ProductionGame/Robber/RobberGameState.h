@@ -83,6 +83,10 @@ public:
 	/** Server only. */
 	void GiveTicket(APlayerState* Player);
 	void SetHidingSpot(APlayerState* Player, AActor* HidingSpot);
+	void SetInside(APlayerState* Player);
+
+	/** Server only. Shows Message to every player. */
+	void TellCrew(const FText& Message) const;
 
 	// --- Investigate / Heist ---
 
@@ -118,9 +122,19 @@ public:
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Robber|Night")
 	void LoadTutorial();
 
+	/**
+	 * Server only, dev tool. Loads a night (INDEX_NONE = the tutorial) from any stage: a night in progress is
+	 * dropped and everyone goes back to the lobby first, with no result line.
+	 */
+	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Robber|Night")
+	void SwitchNight(int32 NightIndex);
+
 	/** Index into Nights of the loaded night; -1 for the tutorial or when no night is loaded. */
 	UFUNCTION(BlueprintPure, Category = "Robber|Night")
 	int32 GetCurrentNight() const { return CurrentNight; }
+
+	bool IsTutorial() const { return bTutorial; }
+	int32 GetNightCount() const { return Nights.Num(); }
 
 	/** The loaded night's entry with this id, or null. */
 	ARobberEntryPoint* FindEntry(FName EntryId) const;
@@ -156,6 +170,7 @@ private:
 	void NotifyDevUIOfStageChange();
 
 	void ReturnToLobby();
+	void ResetCrewToLobby();
 	bool CanStreamLevel(const TSoftObjectPtr<UWorld>& Level) const;
 	void SwapNightLevel(const TSoftObjectPtr<UWorld>& Level);
 	void LoadPendingNightLevel();

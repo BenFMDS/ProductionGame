@@ -35,6 +35,13 @@ void UPlayerQuestComponent::ResetForNight()
 	OnRep_Quests();
 }
 
+void UPlayerQuestComponent::GiveKey(FName KeyId)
+{
+	if (!GetOwner()->HasAuthority() || KeyId.IsNone()) return;
+	Keys.AddUnique(KeyId);
+	GetOwner()->ForceNetUpdate();
+}
+
 void UPlayerQuestComponent::BeginPlay()
 {
 	Super::BeginPlay();
