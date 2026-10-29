@@ -304,7 +304,7 @@ void UQuestConversationWidget::RefreshQuests()
 	const FString Message = RobberController && RobberController->IsHeistMessageVisible() ? RobberController->GetHeistMessage().ToString() : FString();
 	const FString Objective = bHeist ? GameState->GetObjectiveText(PC->PlayerState).ToString() : FString();
 	TArray<TPair<FString, int32>> Votes;
-	if (bHeist && Stage == RobberStage::Lobby)
+	if (bHeist && RobberStage::IsInLobby(Stage))
 	{
 		TArray<const ARobberEntryPoint*> Counted;
 		for (const FRobberEntryVote& Vote : GameState->GetVotes())
