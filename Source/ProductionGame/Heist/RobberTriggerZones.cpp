@@ -88,7 +88,8 @@ ARobberLobbyExit::ARobberLobbyExit()
 
 void ARobberLobbyExit::ServerUpdate(ARobberGameState* GameState, int32 Inside, int32 Total)
 {
-	if (RobberStage::IsInLobby(GameState->GetGameStage()) && Total > 0 && Inside == Total)
+	const ARobberEntryPoint* Winner = GameState->GetWinningEntry();
+	if (RobberStage::IsInLobby(GameState->GetGameStage()) && Winner && Winner->LobbyExit == ExitId && Total > 0 && Inside == Total)
 	{
 		GameState->StartBreakIn();
 	}
@@ -102,9 +103,69 @@ FText ARobberLobbyExit::GetLabel(const ARobberGameState* GameState, int32 Inside
 	}
 	if (const ARobberEntryPoint* Winner = GameState->GetWinningEntry())
 	{
+		if (Winner->LobbyExit != ExitId)
+		{
+			return FText::Format(NSLOCTEXT("RobberZone", "DoorOtherExit", "{0}\nNot this way for: {1}"), Label, Winner->DisplayName);
+		}
 		return FText::Format(NSLOCTEXT("RobberZone", "DoorReady", "{0}\nGoing in by: {1}\nEveryone walk in ({2}/{3})"), Label, Winner->DisplayName, Inside, Total);
 	}
 	return FText::Format(NSLOCTEXT("RobberZone", "DoorVote", "{0}\nVote for a way in first"), Label);
+}
+
+ARobberManhole::ARobberManhole()
+{
+	ExitId = TEXT("Manhole");
+	Label = NSLOCTEXT("RobberZone", "Manhole", "MANHOLE");
+	Box->SetBoxExtent(FVector(150, 150, 100));
+	static ConstructorHelpers::FObjectFinder<UStaticMesh> Cylinder(TEXT("/Engine/BasicShapes/Cylinder.Cylinder"));
+	if (Cylinder.Succeeded())
+	{
+		DoorMesh->SetStaticMesh(Cylinder.Object);
+	}
+	// A lid lying on the floor: the box's bottom is at -100.
+	DoorMesh->SetRelativeLocation(FVector(0, 0, -97));
+	DoorMesh->SetRelativeScale3D(FVector(2.4, 2.4, 0.05));
+	LabelText->SetRelativeLocation(FVector(-160, 0, 120));
+}
+
+ARobberEscapeExit::ARobberEscapeExit()
+{
+	Label = NSLOCTEXT("RobberZone", "WayOut", "WAY OUT");
+	// A pad on the floor rather than a door: the box's bottom is at -150.
+	DoorMesh->SetRelativeLocation(FVector(0, 0, -147));
+	DoorMesh->SetRelativeScale3D(FVector(2.f, 3.f, 0.05f));
+}
+
+bool ARobberEscapeExit::IsActive(const ARobberGameState* GameState) const
+{
+	return !OwningEntry || (GameState && GameState->GetActiveEntry() == OwningEntry);
+}
+
+void ARobberEscapeExit::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+	DoorMesh->SetVisibility(IsActive(GetWorld()->GetGameState<ARobberGameState>()));
+}
+
+void ARobberEscapeExit::ServerUpdate(ARobberGameState* GameState, int32 Inside, int32 Total)
+{
+	if (GameState->GetGameStage() == RobberStage::Escape && IsActive(GameState) && Total > 0 && Inside == Total)
+	{
+		GameState->FinishNight(true);
+	}
+}
+
+FText ARobberEscapeExit::GetLabel(const ARobberGameState* GameState, int32 Inside, int32 Total) const
+{
+	if (!IsActive(GameState))
+	{
+		return FText::GetEmpty();
+	}
+	if (GameState->GetGameStage() == RobberStage::Escape)
+	{
+		return FText::Format(NSLOCTEXT("RobberZone", "EscapeCount", "{0}\nEveryone out this way! ({1}/{2})"), Label, Inside, Total);
+	}
+	return Label;
 }
 
 ARobberGemRoomApproach::ARobberGemRoomApproach()

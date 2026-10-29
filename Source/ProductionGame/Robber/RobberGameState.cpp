@@ -44,17 +44,17 @@ namespace
 		}));
 
 	FAutoConsoleCommandWithWorldAndArgs LoadNightCommand(TEXT("Robber.LoadNight"),
-		TEXT("From the lobby, load a night: 'Robber.LoadNight 2' for Night 2."),
+		TEXT("Load a night, dropping any night in progress: 'Robber.LoadNight 2' for Night 2."),
 		FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
 		{
-			RunOnHostGameState(World, [&Args](ARobberGameState& GameState) { GameState.LoadNight(Args.Num() > 0 ? FCString::Atoi(*Args[0]) - 1 : 0); });
+			RunOnHostGameState(World, [&Args](ARobberGameState& GameState) { GameState.SwitchNight(Args.Num() > 0 ? FMath::Max(FCString::Atoi(*Args[0]) - 1, 0) : 0); });
 		}));
 
 	FAutoConsoleCommandWithWorldAndArgs LoadTutorialCommand(TEXT("Robber.LoadTutorial"),
-		TEXT("From the lobby, load the tutorial."),
+		TEXT("Load the tutorial, dropping any night in progress."),
 		FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>&, UWorld* World)
 		{
-			RunOnHostGameState(World, [](ARobberGameState& GameState) { GameState.LoadTutorial(); });
+			RunOnHostGameState(World, [](ARobberGameState& GameState) { GameState.SwitchNight(INDEX_NONE); });
 		}));
 }
 
@@ -210,7 +210,7 @@ void ARobberGameState::FinishBreakIn()
 	UE_LOG(LogTemp, Display, TEXT("Break-in finished with %.1fs left on the timer. Crew: %s"), GetPhaseTimeRemaining(),
 		*FString::JoinBy(Crew, TEXT(", "), [](const FRobberCrewStatus& Status)
 		{
-			return FString::Printf(TEXT("%s ticket=%d hidden=%d"), Status.Player ? *Status.Player->GetPlayerName() : TEXT("?"), Status.bHasTicket, Status.HidingSpot != nullptr);
+			return FString::Printf(TEXT("%s ticket=%d hidden=%d inside=%d"), Status.Player ? *Status.Player->GetPlayerName() : TEXT("?"), Status.bHasTicket, Status.HidingSpot != nullptr, Status.bInside);
 		}));
 	PhaseEndServerTime = 0.;
 	if (ActiveEntry)
@@ -270,6 +270,27 @@ void ARobberGameState::SetHidingSpot(APlayerState* Player, AActor* HidingSpot)
 	{
 		Status->HidingSpot = HidingSpot;
 		ForceNetUpdate();
+	}
+}
+
+void ARobberGameState::SetInside(APlayerState* Player)
+{
+	FRobberCrewStatus* Status = HasAuthority() ? FindOrAddCrewStatus(Player) : nullptr;
+	if (Status && !Status->bInside)
+	{
+		Status->bInside = true;
+		ForceNetUpdate();
+	}
+}
+
+void ARobberGameState::TellCrew(const FText& Message) const
+{
+	for (APlayerState* Player : PlayerArray)
+	{
+		if (ARobberController* Controller = Player ? Cast<ARobberController>(Player->GetOwningController()) : nullptr)
+		{
+			Controller->ClientHeistMessage(Message);
+		}
 	}
 }
 
@@ -382,6 +403,29 @@ void ARobberGameState::ReturnToLobby()
 		break;
 	}
 
+	ResetCrewToLobby();
+
+	if (ReplicatedGameStage == RobberStage::Lose)
+	{
+		// Reloading gives a fresh copy, so nothing from the failed attempt carries over.
+		if (bTutorial)
+		{
+			LoadTutorial();
+		}
+		else
+		{
+			LoadNight(CurrentNight);
+		}
+	}
+	else
+	{
+		LoadNight(ReplicatedGameStage == RobberStage::Win || bTutorial ? 0 : CurrentNight + 1);
+	}
+	ForceNetUpdate();
+}
+
+void ARobberGameState::ResetCrewToLobby()
+{
 	if (ActiveEntry)
 	{
 		ActiveEntry->EndBreakIn(this);
@@ -425,22 +469,28 @@ void ARobberGameState::ReturnToLobby()
 			}
 		}
 	}
+}
 
-	if (ReplicatedGameStage == RobberStage::Lose)
+void ARobberGameState::SwitchNight(int32 NightIndex)
+{
+	if (!HasAuthority())
 	{
-		// Reloading gives a fresh copy, so nothing from the failed attempt carries over.
-		if (bTutorial)
-		{
-			LoadTutorial();
-		}
-		else
-		{
-			LoadNight(CurrentNight);
-		}
+		return;
+	}
+	if (!RobberStage::IsInLobby(ReplicatedGameStage))
+	{
+		// Straight to Lobby, not via a result stage, so ReturnToLobby doesn't load a night of its own.
+		SetGameStage(RobberStage::Lobby);
+		ResetCrewToLobby();
+	}
+	NightResultText = FText::GetEmpty();
+	if (NightIndex == INDEX_NONE)
+	{
+		LoadTutorial();
 	}
 	else
 	{
-		LoadNight(ReplicatedGameStage == RobberStage::Win || bTutorial ? 0 : CurrentNight + 1);
+		LoadNight(NightIndex);
 	}
 	ForceNetUpdate();
 }

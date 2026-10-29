@@ -8,17 +8,26 @@
 #include "AchievementSubsystem.h"
 #include "Blueprint/UserWidget.h"
 #include "Components/Widget.h"
+#include "Engine/GameViewportClient.h"
 #include "EnhancedInputComponent.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/PlayerInput.h"
+#include "Heist/RobberStage.h"
 #include "InputAction.h"
 #include "InputMappingContext.h"
 #include "Kismet/GameplayStatics.h"
 #include "Kismet/KismetSystemLibrary.h"
+#include "Robber/RobberGameState.h"
 #include "Sound/SoundMix.h"
+#include "Styling/CoreStyle.h"
 #include "TimerManager.h"
 #include "UObject/ConstructorHelpers.h"
+#include "Widgets/Input/SButton.h"
+#include "Widgets/Layout/SBorder.h"
+#include "Widgets/Layout/SBox.h"
+#include "Widgets/SBoxPanel.h"
+#include "Widgets/Text/STextBlock.h"
 
 ARobberController::ARobberController()
 {
@@ -99,6 +108,13 @@ void ARobberController::BeginPlay()
 	BindAchievementNotifications();
 }
 
+void ARobberController::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	// Slate content outlives the controller otherwise and stays on screen after PIE ends.
+	CloseNightSwitcher();
+	Super::EndPlay(EndPlayReason);
+}
+
 void ARobberController::SetupInputComponent()
 {
 	Super::SetupInputComponent();
@@ -109,6 +125,9 @@ void ARobberController::SetupInputComponent()
 	}
 
 	InputComponent->BindKey(EKeys::P, IE_Pressed, this, &ARobberController::TogglePauseMenu);
+#if !UE_BUILD_SHIPPING
+	InputComponent->BindKey(EKeys::F10, IE_Pressed, this, &ARobberController::ToggleNightSwitcher);
+#endif
 	if (PauseInputAction)
 	{
 		if (UEnhancedInputComponent* EnhancedInput = Cast<UEnhancedInputComponent>(InputComponent))
@@ -116,6 +135,136 @@ void ARobberController::SetupInputComponent()
 			EnhancedInput->BindAction(PauseInputAction, ETriggerEvent::Started, this, &ARobberController::TogglePauseMenu);
 		}
 	}
+}
+
+void ARobberController::ToggleNightSwitcher()
+{
+#if !UE_BUILD_SHIPPING
+	if (NightSwitcher.IsValid())
+	{
+		CloseNightSwitcher();
+		return;
+	}
+	UGameViewportClient* Viewport = GetWorld() ? GetWorld()->GetGameViewport() : nullptr;
+	const ARobberGameState* RobberGameState = GetWorld() ? GetWorld()->GetGameState<ARobberGameState>() : nullptr;
+	if (!Viewport || !RobberGameState)
+	{
+		return;
+	}
+
+	TWeakObjectPtr<ARobberController> WeakThis(this);
+	auto MakeButton = [WeakThis](const FText& Label, int32 NightIndex) -> TSharedRef<SWidget>
+	{
+		return SNew(SBox)
+			.Padding(2.f)
+			[
+				SNew(SButton)
+				.IsFocusable(false)
+				.Text(Label)
+				.OnClicked_Lambda([WeakThis, NightIndex]()
+				{
+					if (WeakThis.IsValid())
+					{
+						WeakThis->ServerSwitchNight(NightIndex);
+					}
+					return FReply::Handled();
+				})
+			];
+	};
+
+	TSharedRef<SHorizontalBox> NightButtons = SNew(SHorizontalBox);
+	for (int32 NightIndex = 0; NightIndex < RobberGameState->GetNightCount(); ++NightIndex)
+	{
+		NightButtons->AddSlot().AutoWidth()[MakeButton(FText::AsNumber(NightIndex + 1), NightIndex)];
+	}
+
+	NightSwitcher = SNew(SBox)
+		.Visibility(EVisibility::SelfHitTestInvisible)
+		.HAlign(HAlign_Right)
+		.VAlign(VAlign_Top)
+		.Padding(FMargin(0.f, 80.f, 20.f, 0.f))
+		[
+			SNew(SBorder)
+			.BorderImage(FCoreStyle::Get().GetBrush("WhiteBrush"))
+			.BorderBackgroundColor(FLinearColor(0.f, 0.f, 0.f, 0.75f))
+			.Padding(10.f)
+			[
+				SNew(SVerticalBox)
+				+ SVerticalBox::Slot().AutoHeight().Padding(2.f)
+				[
+					SNew(STextBlock).Text(INVTEXT("Dev: switch night (F10)"))
+				]
+				+ SVerticalBox::Slot().AutoHeight().Padding(2.f)
+				[
+					SNew(STextBlock)
+					.ColorAndOpacity(FLinearColor(0.7f, 0.7f, 0.7f))
+					.Text_Lambda([WeakThis]()
+					{
+						const ARobberGameState* State = WeakThis.IsValid() ? WeakThis->GetWorld()->GetGameState<ARobberGameState>() : nullptr;
+						if (!State)
+						{
+							return FText::GetEmpty();
+						}
+						const FText Night = State->IsTutorial() ? INVTEXT("Tutorial")
+							: State->GetCurrentNight() == INDEX_NONE ? INVTEXT("No night")
+							: FText::Format(INVTEXT("Night {0}"), State->GetCurrentNight() + 1);
+						return FText::Format(INVTEXT("Now: {0} - {1}"), Night, RobberStage::GetDisplayName(State->GetGameStage()));
+					})
+				]
+				+ SVerticalBox::Slot().AutoHeight()
+				[
+					NightButtons
+				]
+				+ SVerticalBox::Slot().AutoHeight()
+				[
+					MakeButton(INVTEXT("Tutorial"), INDEX_NONE)
+				]
+			]
+		];
+	Viewport->AddViewportWidgetContent(NightSwitcher.ToSharedRef(), 100);
+
+	FInputModeGameAndUI InputMode;
+	InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+	InputMode.SetHideCursorDuringCapture(true);
+	SetInputMode(InputMode);
+	bShowMouseCursor = true;
+#endif
+}
+
+bool ARobberController::IsNightSwitcherOpen() const
+{
+#if !UE_BUILD_SHIPPING
+	return NightSwitcher.IsValid();
+#else
+	return false;
+#endif
+}
+
+void ARobberController::CloseNightSwitcher()
+{
+#if !UE_BUILD_SHIPPING
+	if (!NightSwitcher.IsValid())
+	{
+		return;
+	}
+	if (UGameViewportClient* Viewport = GetWorld() ? GetWorld()->GetGameViewport() : nullptr)
+	{
+		Viewport->RemoveViewportWidgetContent(NightSwitcher.ToSharedRef());
+	}
+	NightSwitcher.Reset();
+	SetInputMode(FInputModeGameOnly());
+	bShowMouseCursor = false;
+#endif
+}
+
+void ARobberController::ServerSwitchNight_Implementation(int32 NightIndex)
+{
+#if !UE_BUILD_SHIPPING
+	if (ARobberGameState* RobberGameState = GetWorld()->GetGameState<ARobberGameState>())
+	{
+		RobberGameState->SwitchNight(NightIndex);
+	}
+#endif
 }
 
 void ARobberController::TogglePauseMenu()

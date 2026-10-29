@@ -10,6 +10,7 @@
 class UAchievementDefinitionAsset;
 class UAchievementPopupWidget;
 class UInputAction;
+class SWidget;
 class USoundMix;
 class UUserWidget;
 
@@ -52,11 +53,26 @@ public:
 	UUserWidget* GetDevUIWidget() const { return DevUIRef; }
 	UUserWidget* GetGameUIWidget() const { return GameUIRef; }
 
+	/** Dev tool, F10: buttons for every night and the tutorial. Not in Shipping builds. */
+	void ToggleNightSwitcher();
+	bool IsNightSwitcherOpen() const;
+
+	/** What the night switcher's buttons send. NightIndex as ARobberGameState::SwitchNight. Ignored in Shipping. */
+	UFUNCTION(Server, Reliable)
+	void ServerSwitchNight(int32 NightIndex);
+
 protected:
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void SetupInputComponent() override;
 
 private:
+	void CloseNightSwitcher();
+
+#if !UE_BUILD_SHIPPING
+	TSharedPtr<SWidget> NightSwitcher;
+#endif
+
 	void TogglePauseMenu();
 	void OpenPauseMenu();
 	void UnmuteVoice();

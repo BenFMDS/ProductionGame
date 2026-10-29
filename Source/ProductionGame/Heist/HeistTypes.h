@@ -33,6 +33,10 @@ struct FRobberCrewStatus
 
 	UPROPERTY(BlueprintReadOnly, Category = "Robber|Heist")
 	TObjectPtr<AActor> HidingSpot = nullptr;
+
+	/** Sneak-in entries (skylight, sewer): this player has made it into the museum. */
+	UPROPERTY(BlueprintReadOnly, Category = "Robber|Heist")
+	bool bInside = false;
 };
 
 /** A main objective for the night, shared by the whole crew. */
