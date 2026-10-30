@@ -51,17 +51,33 @@ void ARobberInteractable::HandleInteract(AActor* InteractingPlayer)
 	}
 	APlayerState* Player = Pawn ? Pawn->GetPlayerState() : nullptr;
 	ARobberGameState* GameState = GetWorld()->GetGameState<ARobberGameState>();
-	if (Player && GameState)
+	if (!Player || !GameState || !IsActive(GameState))
 	{
-		OnServerInteract(Pawn, Player, GameState);
+		return;
 	}
+	const double Now = GetWorld()->GetTimeSeconds();
+	if (const double* Last = LastInteractTime.Find(Player); Last && Now - *Last < 0.2)
+	{
+		return;
+	}
+	LastInteractTime.Add(Player, Now);
+	OnServerInteract(Pawn, Player, GameState);
 }
 
 FString ARobberInteractable::GetInteractPrompt() const
 {
 	const APlayerController* LocalPlayer = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr;
 	const ARobberGameState* GameState = GetWorld() ? GetWorld()->GetGameState<ARobberGameState>() : nullptr;
-	return GameState ? GetPrompt(GameState, LocalPlayer ? LocalPlayer->PlayerState : nullptr).ToString() : Prompt.ToString();
+	if (!GameState)
+	{
+		return Prompt.ToString();
+	}
+	return IsActive(GameState) ? GetPrompt(GameState, LocalPlayer ? LocalPlayer->PlayerState : nullptr).ToString() : FString();
+}
+
+bool ARobberInteractable::IsActive(const ARobberGameState* GameState) const
+{
+	return !OwningEntry || (GameState && GameState->GetActiveEntry() == OwningEntry);
 }
 
 void ARobberInteractable::Tick(float DeltaSeconds)
@@ -69,7 +85,7 @@ void ARobberInteractable::Tick(float DeltaSeconds)
 	Super::Tick(DeltaSeconds);
 	if (const ARobberGameState* GameState = GetWorld()->GetGameState<ARobberGameState>())
 	{
-		LabelText->SetText(GetLabel(GameState));
+		LabelText->SetText(IsActive(GameState) ? GetLabel(GameState) : FText::GetEmpty());
 	}
 }
 
@@ -111,7 +127,7 @@ ARobberTicketDesk::ARobberTicketDesk()
 
 void ARobberTicketDesk::OnServerInteract(APawn* Pawn, APlayerState* Player, ARobberGameState* GameState)
 {
-	if (GameState->GetGameStage() == RobberStage::BreakIn)
+	if (GameState->GetGameStage() == RobberStage::BreakIn && Cast<ARobberTourEntryPoint>(GameState->GetActiveEntry()))
 	{
 		GameState->GiveTicket(Player);
 	}
@@ -119,7 +135,7 @@ void ARobberTicketDesk::OnServerInteract(APawn* Pawn, APlayerState* Player, ARob
 
 FText ARobberTicketDesk::GetPrompt(const ARobberGameState* GameState, const APlayerState* Viewer) const
 {
-	if (GameState->GetGameStage() != RobberStage::BreakIn)
+	if (GameState->GetGameStage() != RobberStage::BreakIn || !Cast<ARobberTourEntryPoint>(GameState->GetActiveEntry()))
 	{
 		return FText::GetEmpty();
 	}

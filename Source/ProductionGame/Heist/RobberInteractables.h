@@ -25,7 +25,8 @@ public:
 
 	/**
 	 * BPC_Interaction calls Interact locally and again on the server (twice on a listen-server host), so
-	 * only the server acts and every action has to be safe to repeat.
+	 * only the server acts, and a second press from the same player straight after the first is dropped
+	 * (toggles like the skylight would otherwise undo themselves).
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Robber|Interact")
 	void HandleInteract(AActor* InteractingPlayer);
@@ -34,6 +35,15 @@ public:
 	FString GetInteractPrompt() const;
 
 	virtual void Tick(float DeltaSeconds) override;
+
+	/**
+	 * The way in this prop belongs to. When set, it only works (and only shows its label) while that entry is
+	 * the one the crew voted for, so a night with several ways in only runs one of them.
+	 */
+	UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Robber|Interact")
+	TObjectPtr<ARobberEntryPoint> OwningEntry;
+
+	bool IsActive(const ARobberGameState* GameState) const;
 
 protected:
 	virtual void OnServerInteract(APawn* Pawn, APlayerState* Player, ARobberGameState* GameState) {}
@@ -51,6 +61,10 @@ protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Robber|Interact")
 	FText Label;
+
+private:
+	/** Server only. World time of each player's last handled press. */
+	TMap<TWeakObjectPtr<APlayerState>, double> LastInteractTime;
 };
 
 /** Lobby board. Interact to vote for this way in. */
