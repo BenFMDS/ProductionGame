@@ -8,6 +8,7 @@ class APlayerState;
 class ARobberCrowbar;
 class ARobberGameState;
 class ARobberHidingSpot;
+class ARobberRollUpDoor;
 class ARobberSewerGrate;
 class ARobberSewerWater;
 class ARobberSkylight;
@@ -155,6 +156,24 @@ public:
 
 	UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Robber|Entry")
 	TObjectPtr<ARobberCrowbar> Crowbar;
+
+	virtual void BeginBreakIn(ARobberGameState* GameState) override;
+
+protected:
+	virtual FText GetOutsideStatus(const ARobberGameState* GameState, const APlayerState* Viewer) const override;
+};
+
+/** Loading dock: start in the truck bay, lift the roll-up door without rattling it too long, and get everyone under it. */
+UCLASS(Blueprintable)
+class PRODUCTIONGAME_API ARobberLoadingDockEntryPoint : public ARobberSneakInEntryPoint
+{
+	GENERATED_BODY()
+
+public:
+	ARobberLoadingDockEntryPoint();
+
+	UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Robber|Entry")
+	TObjectPtr<ARobberRollUpDoor> RollUpDoor;
 
 	virtual void BeginBreakIn(ARobberGameState* GameState) override;
 

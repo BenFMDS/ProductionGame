@@ -263,3 +263,85 @@ protected:
 	virtual void OnServerInteract(APawn* Pawn, APlayerState* Player, ARobberGameState* GameState) override;
 	virtual FText GetPrompt(const ARobberGameState* GameState, const APlayerState* Viewer) const override;
 };
+
+/**
+ * The loading dock's roll-up door. Interact to lift it; it stays up while that player stays close and rolls back
+ * down when they walk off or press again, so whoever lifts it goes through last. It rattles while it's up: if the
+ * noise maxes out a guard hears it, it drops, and nobody can lift it again until it has gone quiet.
+ */
+UCLASS(Blueprintable)
+class PRODUCTIONGAME_API ARobberRollUpDoor : public ARobberInteractable
+{
+	GENERATED_BODY()
+
+public:
+	ARobberRollUpDoor();
+
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+	virtual void OnConstruction(const FTransform& Transform) override;
+	virtual void Tick(float DeltaSeconds) override;
+
+	/** Width and height of the doorway it fills. The actor sits at the bottom middle, across its local X. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Robber|RollUpDoor")
+	FVector2D DoorSize = FVector2D(1000., 400.);
+
+	/** Seconds from shut to fully up, and back down. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Robber|RollUpDoor", meta = (ClampMin = "0.1"))
+	float LiftSeconds = 2.5f;
+
+	/** Noise added per second while it's off the ground (1 = a guard hears it). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Robber|RollUpDoor")
+	float NoisePerSecond = 0.1f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Robber|RollUpDoor")
+	float QuietPerSecond = 0.25f;
+
+	/** After a guard hears it, nobody can lift it until the noise drops below this. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Robber|RollUpDoor")
+	float ResumeBelowNoise = 0.4f;
+
+	/** The holder lets go once further than this from the doorway. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Robber|RollUpDoor")
+	float HoldReach = 400.f;
+
+	float GetOpenness() const { return Openness; }
+	float GetNoise() const { return Noise; }
+	bool IsTooLoud() const { return bTooLoud; }
+	bool IsHolding(const APlayerState* Player) const { return Player && Holder == Player; }
+	bool IsHeld() const { return Holder != nullptr; }
+	/** Times a guard has heard it this night. */
+	int32 GetAlerts() const { return Alerts; }
+
+protected:
+	virtual void OnServerInteract(APawn* Pawn, APlayerState* Player, ARobberGameState* GameState) override;
+	virtual FText GetPrompt(const ARobberGameState* GameState, const APlayerState* Viewer) const override;
+	virtual FText GetLabel(const ARobberGameState* GameState) const override;
+
+	/** The door is scaled to DoorSize and shrinks upwards as it rolls up, so it hangs off an unscaled root. */
+	UPROPERTY(VisibleAnywhere, Category = "Robber|RollUpDoor")
+	TObjectPtr<USceneComponent> Root;
+
+private:
+	void ServerTick(float DeltaSeconds, ARobberGameState* GameState);
+	void Release();
+	FBox GetDoorwayBox() const;
+
+	/** 0 = shut, 1 = fully up. */
+	UPROPERTY(ReplicatedUsing = OnRep_Openness)
+	float Openness = 0.f;
+
+	UPROPERTY(Replicated)
+	float Noise = 0.f;
+
+	UPROPERTY(Replicated)
+	bool bTooLoud = false;
+
+	UPROPERTY(Replicated)
+	TObjectPtr<APlayerState> Holder;
+
+	UPROPERTY(Replicated)
+	int32 Alerts = 0;
+
+	UFUNCTION()
+	void OnRep_Openness();
+};

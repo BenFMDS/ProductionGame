@@ -145,7 +145,12 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Robber|Door")
 	FText KeyName;
 
+	/** The door's +Y side (local) is the inside: anyone there opens it without the key, like a staff door with a push bar. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Robber|Door")
+	bool bOpensFromInside = false;
+
 	bool IsOpen() const { return bOpen; }
+	bool IsInside(const APawn* Pawn) const;
 
 protected:
 	virtual void OnServerInteract(APawn* Pawn, APlayerState* Player, ARobberGameState* GameState) override;
@@ -158,4 +163,37 @@ private:
 
 	UFUNCTION()
 	void OnRep_Open();
+};
+
+/** A key lying somewhere in the museum. Whoever picks it up carries it (UPlayerQuestComponent::Keys) until the night ends. */
+UCLASS(Blueprintable)
+class PRODUCTIONGAME_API ARobberKeyPickup : public ARobberInteractable
+{
+	GENERATED_BODY()
+
+public:
+	ARobberKeyPickup();
+
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Robber|Door")
+	FName KeyId;
+
+	/** What the prompt and the crew message call it, e.g. "staff badge". */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Robber|Door")
+	FText KeyName;
+
+	bool IsTaken() const { return bTaken; }
+
+protected:
+	virtual void OnServerInteract(APawn* Pawn, APlayerState* Player, ARobberGameState* GameState) override;
+	virtual FText GetPrompt(const ARobberGameState* GameState, const APlayerState* Viewer) const override;
+	virtual FText GetLabel(const ARobberGameState* GameState) const override;
+
+private:
+	UPROPERTY(ReplicatedUsing = OnRep_Taken)
+	bool bTaken = false;
+
+	UFUNCTION()
+	void OnRep_Taken();
 };

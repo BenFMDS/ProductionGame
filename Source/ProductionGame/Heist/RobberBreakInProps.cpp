@@ -29,7 +29,7 @@ namespace
 		}
 	}
 
-	UPlayerQuestComponent* FindQuests(const APlayerState* Player)
+	UPlayerQuestComponent* FindPlayerQuests(const APlayerState* Player)
 	{
 		const AController* Controller = Player ? Player->GetOwningController() : nullptr;
 		return Controller ? Controller->FindComponentByClass<UPlayerQuestComponent>() : nullptr;
@@ -412,7 +412,7 @@ void ARobberCrowbar::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLi
 
 void ARobberCrowbar::OnServerInteract(APawn* Pawn, APlayerState* Player, ARobberGameState* GameState)
 {
-	UPlayerQuestComponent* Quests = FindQuests(Player);
+	UPlayerQuestComponent* Quests = FindPlayerQuests(Player);
 	if (bTaken || !Quests || !IsNightRunning(GameState))
 	{
 		return;
@@ -470,7 +470,7 @@ void ARobberSewerGrate::OnServerInteract(APawn* Pawn, APlayerState* Player, ARob
 		Pawn->TeleportTo(GetActorLocation() + FRotator(0, GetActorRotation().Yaw, 0).RotateVector(ClimbOffset), Pawn->GetActorRotation());
 		return;
 	}
-	const UPlayerQuestComponent* Quests = FindQuests(Player);
+	const UPlayerQuestComponent* Quests = FindPlayerQuests(Player);
 	if (!Quests || !Quests->HasKey(KeyId))
 	{
 		TellPlayer(Pawn, NSLOCTEXT("RobberSewer", "Rusted", "It's rusted shut. You need something to pry it with."));
@@ -492,7 +492,7 @@ FText ARobberSewerGrate::GetPrompt(const ARobberGameState* GameState, const APla
 	{
 		return NSLOCTEXT("RobberSewer", "ClimbUp", "Climb up into the museum");
 	}
-	const UPlayerQuestComponent* Quests = FindQuests(Viewer);
+	const UPlayerQuestComponent* Quests = FindPlayerQuests(Viewer);
 	return Quests && Quests->HasKey(KeyId)
 		? NSLOCTEXT("RobberSewer", "Pry", "Pry the grate open")
 		: NSLOCTEXT("RobberSewer", "NeedCrowbar", "Rusted shut (needs a crowbar)");
@@ -535,4 +535,158 @@ void ARobberLadder::OnServerInteract(APawn* Pawn, APlayerState* Player, ARobberG
 FText ARobberLadder::GetPrompt(const ARobberGameState* GameState, const APlayerState* Viewer) const
 {
 	return IsNightRunning(GameState) ? Prompt : FText::GetEmpty();
+}
+
+// --- Roll-up door ---
+
+ARobberRollUpDoor::ARobberRollUpDoor()
+{
+	bReplicates = true;
+	Label = NSLOCTEXT("RobberRollUpDoor", "Label", "ROLL-UP DOOR");
+	Prompt = NSLOCTEXT("RobberRollUpDoor", "Prompt", "Lift the door (stay close to hold it up)");
+
+	Root = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
+	RootComponent = Root;
+	Mesh->SetupAttachment(Root);
+	LabelText->SetupAttachment(Root);
+}
+
+void ARobberRollUpDoor::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+	DOREPLIFETIME(ARobberRollUpDoor, Openness);
+	DOREPLIFETIME(ARobberRollUpDoor, Noise);
+	DOREPLIFETIME(ARobberRollUpDoor, bTooLoud);
+	DOREPLIFETIME(ARobberRollUpDoor, Holder);
+	DOREPLIFETIME(ARobberRollUpDoor, Alerts);
+}
+
+void ARobberRollUpDoor::OnConstruction(const FTransform& Transform)
+{
+	Super::OnConstruction(Transform);
+	OnRep_Openness();
+	// Over the outside (-Y) face, below the lintel.
+	LabelText->SetRelativeLocation(FVector(0, -40, DoorSize.Y - 120));
+}
+
+FBox ARobberRollUpDoor::GetDoorwayBox() const
+{
+	return FBox(FVector(-DoorSize.X / 2, -10, 0), FVector(DoorSize.X / 2, 10, DoorSize.Y)).TransformBy(GetActorTransform());
+}
+
+void ARobberRollUpDoor::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+	ARobberGameState* GameState = GetWorld()->GetGameState<ARobberGameState>();
+	if (HasAuthority() && IsNightRunning(GameState) && IsActive(GameState))
+	{
+		ServerTick(DeltaSeconds, GameState);
+	}
+}
+
+void ARobberRollUpDoor::Release()
+{
+	Holder = nullptr;
+	ForceNetUpdate();
+}
+
+void ARobberRollUpDoor::ServerTick(float DeltaSeconds, ARobberGameState* GameState)
+{
+	const APawn* HolderPawn = Holder ? Holder->GetPawn() : nullptr;
+	if (Holder && (!HolderPawn || !GetDoorwayBox().ExpandBy(HoldReach).IsInside(HolderPawn->GetActorLocation())))
+	{
+		Release();
+	}
+
+	const float Target = Holder ? 1.f : 0.f;
+	const float NewOpenness = FMath::FInterpConstantTo(Openness, Target, DeltaSeconds, 1.f / LiftSeconds);
+	if (NewOpenness != Openness)
+	{
+		Openness = NewOpenness;
+		OnRep_Openness();
+	}
+
+	if (Openness > 0.f)
+	{
+		Noise = FMath::Min(1.f, Noise + DeltaSeconds * NoisePerSecond);
+	}
+	else
+	{
+		Noise = FMath::Max(0.f, Noise - DeltaSeconds * QuietPerSecond);
+	}
+
+	if (Noise >= 1.f && !bTooLoud)
+	{
+		bTooLoud = true;
+		++Alerts;
+		Release();
+		// Guards don't react to it yet; for now it's a warning and a forced pause.
+		UE_LOG(LogTemp, Warning, TEXT("Roll-up door: a guard heard it (%d time(s))"), Alerts);
+		GameState->TellCrew(NSLOCTEXT("RobberRollUpDoor", "Heard", "A guard heard the door rattling! Let it down and wait for it to go quiet."));
+	}
+	else if (bTooLoud && Openness <= 0.f && Noise < ResumeBelowNoise)
+	{
+		bTooLoud = false;
+		GameState->TellCrew(NSLOCTEXT("RobberRollUpDoor", "Quiet", "It's gone quiet. Try the door again."));
+	}
+}
+
+void ARobberRollUpDoor::OnServerInteract(APawn* Pawn, APlayerState* Player, ARobberGameState* GameState)
+{
+	if (!IsNightRunning(GameState))
+	{
+		return;
+	}
+	if (Holder == Player)
+	{
+		Release();
+		return;
+	}
+	if (bTooLoud)
+	{
+		TellPlayer(Pawn, NSLOCTEXT("RobberRollUpDoor", "WaitQuiet", "Too loud. Wait for it to go quiet."));
+		return;
+	}
+	if (Holder)
+	{
+		TellPlayer(Pawn, FText::Format(NSLOCTEXT("RobberRollUpDoor", "AlreadyHeld", "{0} is already holding it up."), FText::FromString(Holder->GetPlayerName())));
+		return;
+	}
+	Holder = Player;
+	ForceNetUpdate();
+}
+
+FText ARobberRollUpDoor::GetPrompt(const ARobberGameState* GameState, const APlayerState* Viewer) const
+{
+	if (!IsNightRunning(GameState))
+	{
+		return FText::GetEmpty();
+	}
+	if (IsHolding(Viewer))
+	{
+		return NSLOCTEXT("RobberRollUpDoor", "LetGo", "Let the door down");
+	}
+	if (bTooLoud)
+	{
+		return NSLOCTEXT("RobberRollUpDoor", "TooLoudPrompt", "Too loud, wait");
+	}
+	return Holder ? FText::GetEmpty() : Prompt;
+}
+
+FText ARobberRollUpDoor::GetLabel(const ARobberGameState* GameState) const
+{
+	if (!IsNightRunning(GameState))
+	{
+		return Label;
+	}
+	return FText::Format(NSLOCTEXT("RobberRollUpDoor", "Progress", "{0}\nUp {1}%   Noise {2}%{3}"), Label, Percent(Openness), Percent(Noise),
+		bTooLoud ? NSLOCTEXT("RobberRollUpDoor", "TooLoudLabel", "\nTOO LOUD - WAIT") : FText::GetEmpty());
+}
+
+void ARobberRollUpDoor::OnRep_Openness()
+{
+	// Rolls up into the lintel: the bottom edge rises, a strip always stays at the top.
+	const double Height = FMath::Max(20., DoorSize.Y * (1. - Openness));
+	Mesh->SetRelativeLocation(FVector(0, 0, DoorSize.Y - Height / 2));
+	Mesh->SetRelativeScale3D(FVector(DoorSize.X / 100., 0.2, Height / 100.));
 }
