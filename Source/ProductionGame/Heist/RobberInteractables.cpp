@@ -176,7 +176,7 @@ FText ARobberHidingSpot::GetPrompt(const ARobberGameState* GameState, const APla
 
 namespace
 {
-	const UPlayerQuestComponent* FindQuests(const APlayerState* Player)
+	const UPlayerQuestComponent* FindQuestsConst(const APlayerState* Player)
 	{
 		const AController* Controller = Player ? Player->GetOwningController() : nullptr;
 		return Controller ? Controller->FindComponentByClass<UPlayerQuestComponent>() : nullptr;
@@ -202,7 +202,7 @@ void ARobberLockedDoor::OnServerInteract(APawn* Pawn, APlayerState* Player, ARob
 	{
 		return;
 	}
-	const UPlayerQuestComponent* Quests = FindQuests(Player);
+	const UPlayerQuestComponent* Quests = FindQuestsConst(Player);
 	if (!Quests || !Quests->HasKey(KeyId))
 	{
 		if (ARobberController* Controller = Cast<ARobberController>(Pawn->GetController()))
@@ -222,7 +222,7 @@ FText ARobberLockedDoor::GetPrompt(const ARobberGameState* GameState, const APla
 	{
 		return FText::GetEmpty();
 	}
-	const UPlayerQuestComponent* Quests = FindQuests(Viewer);
+	const UPlayerQuestComponent* Quests = FindQuestsConst(Viewer);
 	return Quests && Quests->HasKey(KeyId)
 		? FText::Format(NSLOCTEXT("RobberDoor", "Unlock", "Unlock with the {0}"), KeyName)
 		: FText::Format(NSLOCTEXT("RobberDoor", "Locked", "Locked (needs the {0})"), KeyName);
