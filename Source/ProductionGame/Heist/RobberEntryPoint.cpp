@@ -272,3 +272,43 @@ FText ARobberSewerEntryPoint::GetOutsideStatus(const ARobberGameState* GameState
 	}
 	return NSLOCTEXT("RobberEntry", "SewerPry", "Bring the crowbar to the grate and pry it open.");
 }
+
+ARobberLoadingDockEntryPoint::ARobberLoadingDockEntryPoint()
+{
+	DisplayName = NSLOCTEXT("RobberEntry", "DockName", "Loading Dock");
+	BreakInObjective = NSLOCTEXT("RobberEntry", "DockObjective", "Lift the roll-up door from the truck bay and get everyone under it before it gets too loud.");
+	BreakInTimeLimit = 120.f;
+}
+
+void ARobberLoadingDockEntryPoint::BeginBreakIn(ARobberGameState* GameState)
+{
+	Super::BeginBreakIn(GameState);
+	GameState->TellCrew(NSLOCTEXT("RobberEntry", "DockStart", "You're in the truck bay. One of you lifts the door, everyone else gets under it fast."));
+}
+
+FText ARobberLoadingDockEntryPoint::GetOutsideStatus(const ARobberGameState* GameState, const APlayerState* Viewer) const
+{
+	if (!RollUpDoor)
+	{
+		return BreakInObjective;
+	}
+	if (RollUpDoor->IsTooLoud())
+	{
+		return NSLOCTEXT("RobberEntry", "DockLoud", "A guard heard the door! Wait for it to go quiet.");
+	}
+	FText Action;
+	if (RollUpDoor->IsHolding(Viewer))
+	{
+		Action = NSLOCTEXT("RobberEntry", "DockHolding", "You're holding the door up. Go through last; it drops when you walk away.");
+	}
+	else if (RollUpDoor->IsHeld())
+	{
+		Action = NSLOCTEXT("RobberEntry", "DockHeld", "The door's going up. Get under it!");
+	}
+	else
+	{
+		Action = NSLOCTEXT("RobberEntry", "DockIdle", "Interact with the roll-up door to lift it.");
+	}
+	return FText::Format(NSLOCTEXT("RobberEntry", "DockProgress", "{0}\nDoor up {1}%, noise {2}%"), Action,
+		FMath::RoundToInt(RollUpDoor->GetOpenness() * 100.f), FMath::RoundToInt(RollUpDoor->GetNoise() * 100.f));
+}
