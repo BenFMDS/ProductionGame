@@ -203,7 +203,7 @@ void ARobberLockedDoor::OnServerInteract(APawn* Pawn, APlayerState* Player, ARob
 		return;
 	}
 	const UPlayerQuestComponent* Quests = FindQuests(Player);
-	if (!Quests || !Quests->HasKey(KeyId))
+	if (!IsInside(Pawn) && (!Quests || !Quests->HasKey(KeyId)))
 	{
 		if (ARobberController* Controller = Cast<ARobberController>(Pawn->GetController()))
 		{
@@ -222,6 +222,10 @@ FText ARobberLockedDoor::GetPrompt(const ARobberGameState* GameState, const APla
 	{
 		return FText::GetEmpty();
 	}
+	if (IsInside(Viewer ? Viewer->GetPawn() : nullptr))
+	{
+		return NSLOCTEXT("RobberDoor", "OpenInside", "Open the door");
+	}
 	const UPlayerQuestComponent* Quests = FindQuests(Viewer);
 	return Quests && Quests->HasKey(KeyId)
 		? FText::Format(NSLOCTEXT("RobberDoor", "Unlock", "Unlock with the {0}"), KeyName)
@@ -238,4 +242,54 @@ void ARobberLockedDoor::OnRep_Open()
 	// No door model yet: an open door just gets out of the way.
 	Mesh->SetHiddenInGame(bOpen, true);
 	Mesh->SetCollisionEnabled(bOpen ? ECollisionEnabled::NoCollision : ECollisionEnabled::QueryAndPhysics);
+}
+
+bool ARobberLockedDoor::IsInside(const APawn* Pawn) const
+{
+	return bOpensFromInside && Pawn && FVector::DotProduct(Pawn->GetActorLocation() - GetActorLocation(), GetActorRightVector()) > 0.;
+}
+
+ARobberKeyPickup::ARobberKeyPickup()
+{
+	bReplicates = true;
+	Label = NSLOCTEXT("RobberDoor", "KeyLabel", "KEY");
+	KeyName = NSLOCTEXT("RobberDoor", "DefaultKey", "key");
+}
+
+void ARobberKeyPickup::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+	DOREPLIFETIME(ARobberKeyPickup, bTaken);
+}
+
+void ARobberKeyPickup::OnServerInteract(APawn* Pawn, APlayerState* Player, ARobberGameState* GameState)
+{
+	const AController* Controller = Player ? Player->GetOwningController() : nullptr;
+	UPlayerQuestComponent* Quests = Controller ? Controller->FindComponentByClass<UPlayerQuestComponent>() : nullptr;
+	if (bTaken || !Quests || RobberStage::IsInLobby(GameState->GetGameStage()))
+	{
+		return;
+	}
+	Quests->GiveKey(KeyId);
+	bTaken = true;
+	OnRep_Taken();
+	ForceNetUpdate();
+	GameState->TellCrew(FText::Format(NSLOCTEXT("RobberDoor", "FoundKey", "{0} found the {1}."), FText::FromString(Player->GetPlayerName()), KeyName));
+}
+
+FText ARobberKeyPickup::GetPrompt(const ARobberGameState* GameState, const APlayerState* Viewer) const
+{
+	return bTaken || RobberStage::IsInLobby(GameState->GetGameStage()) ? FText::GetEmpty()
+		: FText::Format(NSLOCTEXT("RobberDoor", "TakeKey", "Take the {0}"), KeyName);
+}
+
+FText ARobberKeyPickup::GetLabel(const ARobberGameState* GameState) const
+{
+	return bTaken ? FText::GetEmpty() : Label;
+}
+
+void ARobberKeyPickup::OnRep_Taken()
+{
+	Mesh->SetHiddenInGame(bTaken, true);
+	Mesh->SetCollisionEnabled(bTaken ? ECollisionEnabled::NoCollision : ECollisionEnabled::QueryAndPhysics);
 }
