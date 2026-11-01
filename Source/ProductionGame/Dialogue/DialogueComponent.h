@@ -10,6 +10,9 @@ class UPlayerQuestComponent;
 class APlayerState;
 class APawn;
 
+/** Server only: an NPC (Talker) started a conversation with Player. */
+DECLARE_MULTICAST_DELEGATE_TwoParams(FOnConversationStarted, AActor* /*Talker*/, APlayerState* /*Player*/);
+
 /** Add to a replicated NPC. Never give NPC ownership to a client. */
 UCLASS(ClassGroup=(Dialogue), BlueprintType, meta=(BlueprintSpawnableComponent, DisplayName="Talker Component"))
 class PRODUCTIONGAME_API UDialogueComponent : public UActorComponent
@@ -17,6 +20,8 @@ class PRODUCTIONGAME_API UDialogueComponent : public UActorComponent
 	GENERATED_BODY()
 public:
 	UDialogueComponent();
+	/** Any talker, any world; listeners check the world themselves (the vault door's code hints use it). */
+	static FOnConversationStarted OnConversationStarted;
 	/** The one dialogue asset this actor speaks. A conversation cannot begin without it. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Dialogue", meta=(DisplayName="Dialogue Asset")) TObjectPtr<UDialogueDefinition> Dialogue;
 	/** Optional quests offered through this conversation. New talkers use this instead of a separate Quest Giver Component. */
@@ -33,6 +38,8 @@ public:
 	void Choose(UPlayerQuestComponent* Player, int32 ChoiceID, int32 Revision);
 	void Release(UPlayerQuestComponent* Player);
 	bool IsParticipant(const UPlayerQuestComponent* Player) const;
+	/** Server only. The line the talker is on right now (the greeting, just after TryStart). */
+	FText GetCurrentLine() const;
 	bool CanReach(const UPlayerQuestComponent* Player) const;
 	void Refresh();
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;

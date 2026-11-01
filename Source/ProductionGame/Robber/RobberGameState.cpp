@@ -6,11 +6,15 @@
 #include "Components/TextBlock.h"
 #include "Engine/Engine.h"
 #include "EngineUtils.h"
+#include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/PlayerStart.h"
 #include "GameFramework/PlayerState.h"
+#include "Components/LightComponent.h"
 #include "Heist/RobberEntryPoint.h"
 #include "Heist/RobberStage.h"
+#include "Heist/RobberJournal.h"
+#include "Heist/RobberVault.h"
 #include "Kismet/GameplayStatics.h"
 #include "Net/UnrealNetwork.h"
 #include "Quest/PlayerQuestComponent.h"
@@ -21,6 +25,7 @@ namespace
 {
 	const FName PowerJob(TEXT("Power"));
 	const FName GemJob(TEXT("Gem"));
+	const FName PowerLightTag(TEXT("PowerLight"));
 
 	// Dev shortcuts until the real win/lose conditions exist. Type them on the host.
 	void RunOnHostGameState(UWorld* World, TFunctionRef<void(ARobberGameState&)> Command)
@@ -62,7 +67,9 @@ ARobberGameState::ARobberGameState()
 {
 	PrimaryActorTick.bCanEverTick = true;
 	AlarmClass = TSoftClassPtr<AActor>(FSoftObjectPath(TEXT("/Game/OurStuff/Blueprints/Props/BP_Alarm.BP_Alarm_C")));
-	for (int32 Night = 1; Night <= 7; ++Night)
+	// The museum greybox is Night 1 and L_NightN is Night N. L_Night1 isn't played (its game loop was lost in a map merge).
+	Nights.Emplace(FSoftObjectPath(TEXT("/Game/OurStuff/Maps/DevLevels/L_MuseumGreybox.L_MuseumGreybox")));
+	for (int32 Night = 2; Night <= 7; ++Night)
 	{
 		Nights.Emplace(FSoftObjectPath(FString::Printf(TEXT("/Game/OurStuff/Maps/L_Night%d.L_Night%d"), Night, Night)));
 	}
@@ -100,6 +107,7 @@ void ARobberGameState::Tick(float DeltaSeconds)
 	if (HasAuthority())
 	{
 		TickPhase();
+		TickHeat(DeltaSeconds);
 	}
 }
 
@@ -117,6 +125,113 @@ void ARobberGameState::TickPhase()
 	if (ReplicatedGameStage == RobberStage::Heist && !IsPowerOn())
 	{
 		CompleteJob(PowerJob);
+	}
+	if (!RobberStage::IsInLobby(ReplicatedGameStage) && !IsPowerOn() && !bPowerCut)
+	{
+		bPowerCut = true;
+		ForceNetUpdate();
+		ApplyPowerCut();
+	}
+	if (bAlarmRaised && !RobberStage::IsInLobby(ReplicatedGameStage) && GuardsArriveServerTime > 0. && GetServerWorldTimeSeconds() >= GuardsArriveServerTime)
+	{
+		GuardsArriveServerTime = 0.;
+		TellCrew(NSLOCTEXT("RobberHeist", "GuardsArrived", "The guards got here first."));
+		FinishNight(false);
+	}
+}
+
+void ARobberGameState::TickHeat(float DeltaSeconds)
+{
+	// Cools once the crew has been quiet a while; stays full once the alarm's up.
+	if (Heat > 0.f && !bAlarmRaised && GetWorld()->GetTimeSeconds() - LastHeatTime > HeatCoolDelay)
+	{
+		Heat = FMath::Max(0.f, Heat - HeatCoolPerSecond * DeltaSeconds);
+	}
+}
+
+void ARobberGameState::AddHeat(float Amount, const TCHAR* Source)
+{
+	if (!HasAuthority() || Amount <= 0.f || bAlarmRaised || RobberStage::IsInLobby(ReplicatedGameStage))
+	{
+		return;
+	}
+	Heat = FMath::Min(MaxHeat, Heat + Amount);
+	LastHeatTime = GetWorld()->GetTimeSeconds();
+	ForceNetUpdate();
+	UE_LOG(LogTemp, Verbose, TEXT("Heat +%.1f from %s: %.1f"), Amount, Source, Heat);
+	if (Heat >= MaxHeat)
+	{
+		RaiseAlarm(FText::Format(NSLOCTEXT("RobberHeat", "TooHot", "Too much noise: the alarm's gone off! Guards in {0} seconds."), FMath::RoundToInt(GuardsArriveSeconds)));
+	}
+}
+
+void ARobberGameState::RaiseAlarm(const FText& Why)
+{
+	if (!HasAuthority() || bAlarmRaised)
+	{
+		return;
+	}
+	bAlarmRaised = true;
+	Heat = MaxHeat;
+	GuardsArriveServerTime = GetServerWorldTimeSeconds() + GuardsArriveSeconds;
+	ForceNetUpdate();
+	ActivateAlarms();
+	TellCrew(Why);
+}
+
+float ARobberGameState::GetGuardsTimeRemaining() const
+{
+	return bAlarmRaised && GuardsArriveServerTime > 0. ? FMath::Max(0., GuardsArriveServerTime - GetServerWorldTimeSeconds()) : -1.f;
+}
+
+void ARobberGameState::TripLaser(APawn* Pawn)
+{
+	const bool bInMuseum = ReplicatedGameStage == RobberStage::Heist || ReplicatedGameStage == RobberStage::Escape;
+	if (!HasAuthority() || !bInMuseum || bAlarmRaised || bPowerCut)
+	{
+		return;
+	}
+	const APlayerState* Player = Pawn ? Pawn->GetPlayerState() : nullptr;
+	RaiseAlarm(FText::Format(NSLOCTEXT("RobberHeist", "LaserTripped", "{0} walked into a laser! Guards in {1} seconds."),
+		Player ? FText::FromString(Player->GetPlayerName()) : NSLOCTEXT("RobberHeist", "Someone", "Someone"), FMath::RoundToInt(GuardsArriveSeconds)));
+}
+
+void ARobberGameState::OnRep_AlarmRaised()
+{
+	if (bAlarmRaised)
+	{
+		ActivateAlarms();
+	}
+}
+
+void ARobberGameState::OnRep_PowerCut()
+{
+	if (bPowerCut)
+	{
+		ApplyPowerCut();
+	}
+}
+
+void ARobberGameState::ApplyPowerCut()
+{
+	// Each night's room lights are tagged PowerLight; they drop to a dim red emergency glow. The retag stops a second
+	// call dimming them again; a reloaded night brings fresh lights.
+	for (TActorIterator<AActor> It(GetWorld()); It; ++It)
+	{
+		if (!It->Tags.Contains(PowerLightTag))
+		{
+			continue;
+		}
+		for (UActorComponent* Component : It->GetComponents())
+		{
+			if (ULightComponent* Light = Cast<ULightComponent>(Component))
+			{
+				Light->SetIntensity(Light->Intensity * 0.12f);
+				Light->SetLightColor(FLinearColor(1.f, 0.12f, 0.08f));
+			}
+		}
+		It->Tags.Remove(PowerLightTag);
+		It->Tags.Add(TEXT("PowerLightCut"));
 	}
 }
 
@@ -309,6 +424,15 @@ void ARobberGameState::StartHeist()
 		{ PowerJob, NSLOCTEXT("RobberHeist", "PowerJob", "Turn off the power"), false },
 		{ GemJob, NSLOCTEXT("RobberHeist", "GemJob", "Steal the gem"), false },
 	};
+	// A night with a vault door has the crew crack it first.
+	for (TActorIterator<ARobberVaultDoor> It(GetWorld()); It; ++It)
+	{
+		if (!It->IsOpen())
+		{
+			Jobs.Insert({ ARobberVaultDoor::JobId, NSLOCTEXT("RobberHeist", "VaultJob", "Open the vault (the exhibits know the code)"), false }, 0);
+			break;
+		}
+	}
 	OnRep_Jobs();
 	SetGameStage(RobberStage::Heist);
 }
@@ -350,9 +474,11 @@ FText ARobberGameState::GetObjectiveText(const APlayerState* Viewer) const
 	case RobberStage::Investigate:
 		return NSLOCTEXT("RobberHeist", "InvestigateObjective", "Sneak to the gem room door. The exhibits won't talk to you yet.");
 	case RobberStage::Heist:
-		return NSLOCTEXT("RobberHeist", "HeistObjective", "Do the jobs. The exhibits will talk now.");
+		return bAlarmRaised ? NSLOCTEXT("RobberHeist", "HeistTripped", "The alarm's gone off! Grab the gem and get out before the guards arrive.")
+			: NSLOCTEXT("RobberHeist", "HeistObjective", "Do the jobs. The exhibits will talk now.");
 	case RobberStage::Escape:
-		return NSLOCTEXT("RobberHeist", "EscapeObjective", "Get out the way you came in!");
+		return bAlarmRaised ? NSLOCTEXT("RobberHeist", "EscapeTripped", "Get out the way you came in, before the guards arrive!")
+			: NSLOCTEXT("RobberHeist", "EscapeObjective", "Get out the way you came in!");
 	default:
 		return FText::GetEmpty();
 	}
@@ -436,6 +562,17 @@ void ARobberGameState::ResetCrewToLobby()
 	Jobs.Reset();
 	OnRep_Jobs();
 	PhaseEndServerTime = 0.;
+	bPowerCut = false;
+	bAlarmRaised = false;
+	Heat = 0.f;
+	GuardsArriveServerTime = 0.;
+	for (APlayerState* Player : PlayerArray)
+	{
+		if (URobberJournalComponent* Journal = Player && Player->GetOwningController() ? Player->GetOwningController()->FindComponentByClass<URobberJournalComponent>() : nullptr)
+		{
+			Journal->ResetForNight();
+		}
+	}
 	if (FBoolProperty* PowerProperty = FindFProperty<FBoolProperty>(GetClass(), TEXT("PowerOn?")))
 	{
 		PowerProperty->SetPropertyValue_InContainer(this, true);
@@ -593,6 +730,10 @@ void ARobberGameState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& Out
 	DOREPLIFETIME(ARobberGameState, CurrentNight);
 	DOREPLIFETIME(ARobberGameState, bTutorial);
 	DOREPLIFETIME(ARobberGameState, NightResultText);
+	DOREPLIFETIME(ARobberGameState, bPowerCut);
+	DOREPLIFETIME(ARobberGameState, bAlarmRaised);
+	DOREPLIFETIME(ARobberGameState, Heat);
+	DOREPLIFETIME(ARobberGameState, GuardsArriveServerTime);
 }
 
 void ARobberGameState::SetGameStage(uint8 NewGameStage)

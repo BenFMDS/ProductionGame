@@ -7,9 +7,28 @@
 #include "Heist/HeistTypes.h"
 #include "RobberGameState.generated.h"
 
+class APawn;
 class APlayerState;
 class ARobberController;
 class ARobberEntryPoint;
+
+/**
+ * How much heat (of 100) each kind of noise costs; one place to tune them. Getting heard by a guard twice puts the crew
+ * at HOT, a third time sets the alarm off. Guards and cameras will add their own later.
+ */
+namespace RobberHeatCosts
+{
+	/** A prop's noise meter filled up ("a guard heard..."). */
+	constexpr float Heard = 20.f;
+	/** Per second the roll-up door is up. */
+	constexpr float RattlePerSecond = 2.f;
+	/** Per second per player cutting the skylight. */
+	constexpr float CuttingPerSecond = 1.5f;
+	/** A sewer valve springing open. */
+	constexpr float Clank = 4.f;
+	/** Prying the sewer grate. */
+	constexpr float Prise = 12.f;
+}
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FRobberStageChangedSignature, uint8, NewGameStage);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FRobberJobsChangedSignature);
@@ -104,6 +123,31 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Robber|Heist")
 	const TArray<FRobberJob>& GetJobs() const { return Jobs; }
 
+	/** The generator's been switched off this night: room lights are on emergency red and the lasers are down. */
+	UFUNCTION(BlueprintPure, Category = "Robber|Heist")
+	bool IsPowerCut() const { return bPowerCut; }
+
+	// --- Heat: how much the museum has noticed, crew-wide, 0-100. Full heat raises the alarm. ---
+
+	static constexpr float MaxHeat = 100.f;
+
+	UFUNCTION(BlueprintPure, Category = "Robber|Heat")
+	float GetHeat() const { return Heat; }
+
+	/** Server only. Noise from the crew (Source names it for the log). Ignored in the lobby and once the alarm's up. */
+	void AddHeat(float Amount, const TCHAR* Source);
+
+	/** The alarm's gone off (full heat or a laser): the night is lost if the crew isn't out by the guards timer. */
+	UFUNCTION(BlueprintPure, Category = "Robber|Heat")
+	bool IsAlarmRaised() const { return bAlarmRaised; }
+
+	/** Seconds until the guards arrive, or -1 when the alarm isn't up. */
+	UFUNCTION(BlueprintPure, Category = "Robber|Heat")
+	float GetGuardsTimeRemaining() const;
+
+	/** Server only. Someone crossed a live laser: straight to full heat. */
+	void TripLaser(APawn* Pawn);
+
 	// --- Nights ---
 	// Each night is a sublevel of L_GameLevel, streamed in at its own origin while the lobby stays loaded.
 
@@ -178,6 +222,41 @@ private:
 
 	UFUNCTION()
 	void OnNightLevelUnloaded();
+
+	UFUNCTION()
+	void OnRep_PowerCut();
+
+	UFUNCTION()
+	void OnRep_AlarmRaised();
+
+	void ApplyPowerCut();
+	void RaiseAlarm(const FText& Why);
+	void TickHeat(float DeltaSeconds);
+
+	UPROPERTY(ReplicatedUsing = OnRep_PowerCut)
+	bool bPowerCut = false;
+
+	UPROPERTY(ReplicatedUsing = OnRep_AlarmRaised)
+	bool bAlarmRaised = false;
+
+	UPROPERTY(Replicated)
+	float Heat = 0.f;
+
+	/** Server world time the guards arrive; 0 when the alarm isn't up. Separate from the phase timer (the break-in uses that). */
+	UPROPERTY(Replicated)
+	double GuardsArriveServerTime = 0.;
+
+	/** Server only: when heat last went up. It starts cooling HeatCoolDelay seconds after. */
+	double LastHeatTime = 0.;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Robber|Heat")
+	float GuardsArriveSeconds = 60.f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Robber|Heat")
+	float HeatCoolDelay = 5.f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Robber|Heat")
+	float HeatCoolPerSecond = 2.f;
 
 	/** Soft so the Blueprint alarm can be resolved at runtime; ConstructorHelpers is only legal in constructors. */
 	UPROPERTY(EditDefaultsOnly, Category = "Robber|Alarm")

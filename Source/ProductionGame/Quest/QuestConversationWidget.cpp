@@ -331,10 +331,13 @@ void UQuestConversationWidget::RefreshQuests()
 	for (const FPlayerQuest* Quest : Favours)
 		Summary += FString::Printf(TEXT("\n%s\n%s %d / %d%s"), *Quest->Definition->QuestName.ToString(), *Quest->Definition->ObjectiveText.ToString(),
 			Quest->Amount, Quest->Definition->RequiredAmount, Quest->State == EPlayerQuestState::ReadyToTurnIn ? TEXT(" (return to the quest giver)") : TEXT(""));
+	// So the heist card hides as soon as the Case File HUD turns up, even if nothing else changed.
+	if (RobberController && RobberController->GetCaseFileHUD()) Summary += TEXT("\n(case file)");
 	if (Summary == DisplayedText && !DisplayedText.IsEmpty()) return;
 	DisplayedText = Summary;
 
-	SetShown(HeistCard, bHeist);
+	// The Case File HUD has its own note, paper and messages; this card stays for maps without it.
+	SetShown(HeistCard, bHeist && !(RobberController && RobberController->GetCaseFileHUD()));
 	if (PhaseText) PhaseText->SetText(FText::FromString(Phase));
 	if (MessageText) MessageText->SetText(FText::FromString(Message));
 	SetShown(MessageBox, !Message.IsEmpty());

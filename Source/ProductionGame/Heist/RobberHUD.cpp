@@ -54,7 +54,9 @@ TArray<FString> ARobberHUD::BuildLines() const
 void ARobberHUD::DrawHUD()
 {
 	Super::DrawHUD();
-	if (!Canvas)
+	// The Case File HUD shows all of this now; the text stays as a fallback without it.
+	const ARobberController* Robber = Cast<ARobberController>(GetOwningPlayerController());
+	if (!Canvas || (Robber && Robber->GetCaseFileHUD()))
 	{
 		return;
 	}

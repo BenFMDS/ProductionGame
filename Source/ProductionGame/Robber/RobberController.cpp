@@ -13,6 +13,9 @@
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/PlayerInput.h"
+#include "Heist/RobberCaseFileUI.h"
+#include "Heist/RobberJournal.h"
+#include "Heist/RobberMapTable.h"
 #include "Heist/RobberStage.h"
 #include "InputAction.h"
 #include "InputMappingContext.h"
@@ -31,6 +34,8 @@
 
 ARobberController::ARobberController()
 {
+	Journal = CreateDefaultSubobject<URobberJournalComponent>(TEXT("Journal"));
+
 	static ConstructorHelpers::FObjectFinder<UInputMappingContext> DefaultMappingContext(
 		TEXT("/Game/Input/IMC_Default.IMC_Default"));
 	static ConstructorHelpers::FObjectFinder<UInputMappingContext> MouseLookMappingContext(
@@ -63,6 +68,8 @@ ARobberController::ARobberController()
 	PauseMenuWidgetClass = TSoftClassPtr<UUserWidget>(FSoftObjectPath(TEXT("/Game/OurStuff/Widgets/Menus/WBP_PauseMenu.WBP_PauseMenu_C")));
 	GameUIWidgetClass = TSoftClassPtr<UUserWidget>(FSoftObjectPath(TEXT("/Game/OurStuff/Widgets/WBP_GameUI.WBP_GameUI_C")));
 	DevUIWidgetClass = TSoftClassPtr<UUserWidget>(FSoftObjectPath(TEXT("/Game/OurStuff/Widgets/WBP_DevUI.WBP_DevUI_C")));
+	CaseFileHUDClass = TSoftClassPtr<URobberCaseFileHUD>(FSoftObjectPath(TEXT("/Game/OurStuff/UI/CaseFile/WBP_CaseFileHUD.WBP_CaseFileHUD_C")));
+	JournalWidgetClass = TSoftClassPtr<URobberJournalWidget>(FSoftObjectPath(TEXT("/Game/OurStuff/UI/CaseFile/WBP_Journal.WBP_Journal_C")));
 	AchievementPopupClass = TSoftClassPtr<UAchievementPopupWidget>(FSoftObjectPath(TEXT("/AchievementPlugin/Widgets/WBP_AchievementPopUp.WBP_AchievementPopUp_C")));
 	MuteVoiceSoundMix = MuteVoice.Object;
 	UnmuteVoiceSoundMix = UnmuteVoice.Object;
@@ -105,7 +112,67 @@ void ARobberController::BeginPlay()
 		}
 	}
 
+	// The Case File HUD sits under the interaction prompt and dev UI; it takes over the debug text and the tracker's heist card.
+	// Without WBP_CaseFileHUD (not made yet) ARobberHUD's debug text and the tracker's heist card stay instead.
+	if (UClass* HUDClass = CaseFileHUDClass.LoadSynchronous())
+	{
+		CaseFileHUD = CreateWidget<URobberCaseFileHUD>(this, HUDClass);
+		if (CaseFileHUD)
+		{
+			CaseFileHUD->AddToViewport(-1);
+		}
+	}
+
 	BindAchievementNotifications();
+}
+
+void ARobberController::ToggleJournal()
+{
+	if (!IsLocalController())
+	{
+		return;
+	}
+	if (IsJournalOpen())
+	{
+		CloseJournal();
+		return;
+	}
+	if (!JournalWidget)
+	{
+		if (UClass* JournalClass = JournalWidgetClass.LoadSynchronous())
+		{
+			JournalWidget = CreateWidget<URobberJournalWidget>(this, JournalClass);
+		}
+	}
+	if (!JournalWidget)
+	{
+		return;
+	}
+	JournalWidget->AddToViewport(20);
+	JournalWidget->OnOpened();
+	// The heist carries on: you can still walk, but the mouse is for the tabs.
+	SetIgnoreLookInput(true);
+	FInputModeGameAndUI Mode;
+	Mode.SetHideCursorDuringCapture(false);
+	SetInputMode(Mode);
+	SetShowMouseCursor(true);
+}
+
+void ARobberController::CloseJournal()
+{
+	if (!IsJournalOpen())
+	{
+		return;
+	}
+	JournalWidget->RemoveFromParent();
+	SetIgnoreLookInput(false);
+	SetShowMouseCursor(false);
+	SetInputMode(FInputModeGameOnly());
+}
+
+bool ARobberController::IsJournalOpen() const
+{
+	return JournalWidget && JournalWidget->IsInViewport();
 }
 
 void ARobberController::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -128,6 +195,13 @@ void ARobberController::SetupInputComponent()
 #if !UE_BUILD_SHIPPING
 	InputComponent->BindKey(EKeys::F10, IE_Pressed, this, &ARobberController::ToggleNightSwitcher);
 #endif
+	// Not consumed: Space is still jump and Esc still the menu when nobody's at the map.
+	for (const FKey& Key : { EKeys::SpaceBar, EKeys::Escape })
+	{
+		InputComponent->BindKey(Key, IE_Pressed, this, &ARobberController::OnStepBackKey).bConsumeInput = false;
+	}
+	InputComponent->BindKey(EKeys::LeftMouseButton, IE_Pressed, this, &ARobberController::ClickMap).bConsumeInput = false;
+	InputComponent->BindKey(EKeys::J, IE_Pressed, this, &ARobberController::ToggleJournal);
 	if (PauseInputAction)
 	{
 		if (UEnhancedInputComponent* EnhancedInput = Cast<UEnhancedInputComponent>(InputComponent))
@@ -338,6 +412,91 @@ void ARobberController::BindAchievementNotifications()
 		AchievementSubsystem->OnAchievementCompleted.AddUniqueDynamic(this, &ARobberController::ShowAchievementCompletePopup);
 		AchievementSubsystem->OnAchievementMilestoneReached.AddUniqueDynamic(this, &ARobberController::ShowAchievementProgressPopup);
 	}
+}
+
+void ARobberController::ClientToggleMapView_Implementation(ARobberMapTable* Table)
+{
+	if (!Table || ViewedMapTable == Table)
+	{
+		StepBackFromMap();
+		return;
+	}
+	if (!ViewedMapTable)
+	{
+		// The camera stays put and the mouse moves a cursor instead of the view.
+		SetIgnoreMoveInput(true);
+		SetIgnoreLookInput(true);
+		FInputModeGameAndUI Mode;
+		Mode.SetHideCursorDuringCapture(false);
+		Mode.SetLockMouseToViewportBehavior(EMouseLockMode::LockAlways);
+		SetInputMode(Mode);
+		SetShowMouseCursor(true);
+		int32 SizeX = 0, SizeY = 0;
+		GetViewportSize(SizeX, SizeY);
+		SetMouseLocation(SizeX / 2, SizeY / 2);
+	}
+	ViewedMapTable = Table;
+	Table->AimViewCamera();
+	SetViewTargetWithBlend(Table, 0.5f, VTBlend_EaseInOut, 2.f);
+}
+
+void ARobberController::StepBackFromMap()
+{
+	if (!ViewedMapTable)
+	{
+		return;
+	}
+	ViewedMapTable = nullptr;
+	SetIgnoreMoveInput(false);
+	SetIgnoreLookInput(false);
+	SetShowMouseCursor(false);
+	SetInputMode(FInputModeGameOnly());
+	if (APawn* MyPawn = GetPawn())
+	{
+		SetViewTargetWithBlend(MyPawn, 0.4f, VTBlend_EaseInOut, 2.f);
+	}
+}
+
+ARobberMapObject* ARobberController::GetMapPieceUnderCursor() const
+{
+	if (!ViewedMapTable)
+	{
+		return nullptr;
+	}
+	FVector2D Cursor;
+	if (MapCursorOverride.IsSet())
+	{
+		Cursor = MapCursorOverride.GetValue();
+	}
+	else if (!GetMousePosition(Cursor.X, Cursor.Y))
+	{
+		return nullptr;
+	}
+	FHitResult Hit;
+	return GetHitResultAtScreenPosition(Cursor, ECC_Visibility, false, Hit) ? Cast<ARobberMapObject>(Hit.GetActor()) : nullptr;
+}
+
+void ARobberController::ClickMap()
+{
+	if (ARobberMapObject* Piece = GetMapPieceUnderCursor())
+	{
+		ServerVoteOnMap(Piece);
+	}
+}
+
+void ARobberController::ServerVoteOnMap_Implementation(ARobberMapObject* Piece)
+{
+	// The same path as pressing Interact on the piece, so the usual checks (lobby only, entry tonight) apply.
+	if (Piece && GetPawn())
+	{
+		Piece->HandleInteract(GetPawn());
+	}
+}
+
+void ARobberController::OnStepBackKey()
+{
+	StepBackFromMap();
+	CloseJournal();
 }
 
 void ARobberController::SetHeistFrozen(bool bFrozen)
