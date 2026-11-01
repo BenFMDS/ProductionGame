@@ -160,6 +160,7 @@ void ARobberSkylight::ServerTick(float DeltaSeconds, ARobberGameState* GameState
 	{
 		CutProgress = FMath::Min(1.f, CutProgress + DeltaSeconds * CutterCount / CutSeconds);
 		Noise += DeltaSeconds * CutterCount * NoisePerCutterPerSecond;
+		GameState->AddHeat(DeltaSeconds * CutterCount * RobberHeatCosts::CuttingPerSecond, TEXT("skylight cutting"));
 	}
 	else
 	{
@@ -182,6 +183,7 @@ void ARobberSkylight::ServerTick(float DeltaSeconds, ARobberGameState* GameState
 		// Guards don't react to it yet; for now it's a warning and a forced pause.
 		UE_LOG(LogTemp, Warning, TEXT("Skylight: a guard heard the cutting (%d time(s))"), Alerts);
 		GameState->TellCrew(NSLOCTEXT("RobberSkylight", "Heard", "A guard heard the glass! Stop and wait for it to go quiet."));
+		GameState->AddHeat(RobberHeatCosts::Heard, TEXT("skylight heard"));
 	}
 	else if (bTooLoud && Noise < ResumeBelowNoise)
 	{
@@ -304,6 +306,7 @@ void ARobberSewerValve::OnServerInteract(APawn* Pawn, APlayerState* Player, ARob
 	}
 	OpenUntil = GameState->GetServerWorldTimeSeconds() + OpenSeconds;
 	ForceNetUpdate();
+	GameState->AddHeat(RobberHeatCosts::Clank, TEXT("sewer valve"));
 	TellPlayer(Pawn, FText::Format(NSLOCTEXT("RobberSewer", "Opened", "It springs shut in {0} seconds. Someone has to open the other valve at the same time!"), FMath::RoundToInt(OpenSeconds)));
 }
 
@@ -480,6 +483,7 @@ void ARobberSewerGrate::OnServerInteract(APawn* Pawn, APlayerState* Player, ARob
 	OnRep_Open();
 	ForceNetUpdate();
 	GameState->TellCrew(FText::Format(NSLOCTEXT("RobberSewer", "Pried", "{0} pried the grate open."), FText::FromString(Player->GetPlayerName())));
+	GameState->AddHeat(RobberHeatCosts::Prise, TEXT("sewer grate"));
 }
 
 FText ARobberSewerGrate::GetPrompt(const ARobberGameState* GameState, const APlayerState* Viewer) const
@@ -609,6 +613,7 @@ void ARobberRollUpDoor::ServerTick(float DeltaSeconds, ARobberGameState* GameSta
 	if (Openness > 0.f)
 	{
 		Noise = FMath::Min(1.f, Noise + DeltaSeconds * NoisePerSecond);
+		GameState->AddHeat(DeltaSeconds * RobberHeatCosts::RattlePerSecond, TEXT("roll-up door rattle"));
 	}
 	else
 	{
@@ -623,6 +628,7 @@ void ARobberRollUpDoor::ServerTick(float DeltaSeconds, ARobberGameState* GameSta
 		// Guards don't react to it yet; for now it's a warning and a forced pause.
 		UE_LOG(LogTemp, Warning, TEXT("Roll-up door: a guard heard it (%d time(s))"), Alerts);
 		GameState->TellCrew(NSLOCTEXT("RobberRollUpDoor", "Heard", "A guard heard the door rattling! Let it down and wait for it to go quiet."));
+		GameState->AddHeat(RobberHeatCosts::Heard, TEXT("roll-up door heard"));
 	}
 	else if (bTooLoud && Openness <= 0.f && Noise < ResumeBelowNoise)
 	{

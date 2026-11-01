@@ -5,6 +5,7 @@
 #include "Quest/QuestGiverComponent.h"
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/Pawn.h"
+#include "GameFramework/PlayerState.h"
 #include "Engine/World.h"
 #include "TimerManager.h"
 #include "Net/UnrealNetwork.h"
@@ -92,7 +93,16 @@ bool UDialogueComponent::TryStart(UPlayerQuestComponent* Player)
 	GetOwner()->ForceNetUpdate();
 	GetWorld()->GetTimerManager().SetTimer(SessionTimer, this, &UDialogueComponent::ValidateSession, 0.25f, true);
 	PublishNode();
+	OnConversationStarted.Broadcast(GetOwner(), PC->PlayerState);
 	return true;
+}
+
+FOnConversationStarted UDialogueComponent::OnConversationStarted;
+
+FText UDialogueComponent::GetCurrentLine() const
+{
+	const FDialogueNode* Node = Dialogue ? Dialogue->FindNode(CurrentNode) : nullptr;
+	return Node ? Node->Text : FText::GetEmpty();
 }
 
 void UDialogueComponent::ValidateSession()

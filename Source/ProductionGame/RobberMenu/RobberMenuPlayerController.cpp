@@ -15,6 +15,22 @@ ARobberMenuPlayerController::ARobberMenuPlayerController()
 	{
 		InputProfileControllerClass = MenuInputProfile.Class;
 	}
+	// Soft, like ARobberController, because the widget references the controller.
+	InteractionWidgetClass = TSoftClassPtr<UUserWidget>(FSoftObjectPath(TEXT("/Game/OurStuff/Core/InteractionSystem/WBP_Interaction.WBP_Interaction_C")));
+}
+
+void ARobberMenuPlayerController::BeginPlay()
+{
+	Super::BeginPlay();
+
+	if (IsLocalPlayerController() && !InteractionWidgetClass.IsNull() && !InteractWidgetRef)
+	{
+		InteractWidgetRef = CreateWidget<UUserWidget>(this, InteractionWidgetClass.LoadSynchronous());
+		if (InteractWidgetRef)
+		{
+			InteractWidgetRef->AddToViewport();
+		}
+	}
 }
 
 void ARobberMenuPlayerController::Tick(float DeltaSeconds)
