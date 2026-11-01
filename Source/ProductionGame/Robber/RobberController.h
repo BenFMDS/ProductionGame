@@ -7,6 +7,11 @@
 #include "ProductionGamePlayerController.h"
 #include "RobberController.generated.h"
 
+class ARobberMapObject;
+class ARobberMapTable;
+class URobberCaseFileHUD;
+class URobberJournalComponent;
+class URobberJournalWidget;
 class UAchievementDefinitionAsset;
 class UAchievementPopupWidget;
 class UInputAction;
@@ -60,6 +65,37 @@ public:
 	/** What the night switcher's buttons send. NightIndex as ARobberGameState::SwitchNight. Ignored in Shipping. */
 	UFUNCTION(Server, Reliable)
 	void ServerSwitchNight(int32 NightIndex);
+
+	/** From the planning table's interact: lean over Table, or step back if already looking at it. */
+	UFUNCTION(Client, Reliable)
+	void ClientToggleMapView(ARobberMapTable* Table);
+
+	/** Local only. Back to the pawn's own view. */
+	void StepBackFromMap();
+
+	ARobberMapTable* GetViewedMapTable() const { return ViewedMapTable; }
+
+	/** Local only, while leaning over a map: the piece under the mouse cursor, or null. */
+	ARobberMapObject* GetMapPieceUnderCursor() const;
+
+	/** Local only. Left click while leaning over a map: votes for the piece under the cursor. */
+	void ClickMap();
+
+	/** For automation: stands in for the mouse position over the map (unset = the real mouse). */
+	void SetMapCursorOverride(const TOptional<FVector2D>& Cursor) { MapCursorOverride = Cursor; }
+
+	UFUNCTION(Server, Reliable)
+	void ServerVoteOnMap(ARobberMapObject* Piece);
+
+	/** J: open or close the robber's journal over the running game. */
+	void ToggleJournal();
+	void CloseJournal();
+	bool IsJournalOpen() const;
+
+	/** The Case File HUD (null on non-local controllers); while it exists, the old debug text and heist card stay hidden. */
+	URobberCaseFileHUD* GetCaseFileHUD() const { return CaseFileHUD; }
+	URobberJournalWidget* GetJournalWidget() const { return JournalWidget; }
+	URobberJournalComponent* GetJournal() const { return Journal; }
 
 protected:
 	virtual void BeginPlay() override;
@@ -122,4 +158,26 @@ private:
 	TObjectPtr<UInputAction> PauseInputAction;
 
 	FTimerHandle VoiceUnmuteTimerHandle;
+
+	void OnStepBackKey();
+
+	UPROPERTY(Transient)
+	TObjectPtr<ARobberMapTable> ViewedMapTable;
+
+	TOptional<FVector2D> MapCursorOverride;
+
+	UPROPERTY(VisibleAnywhere, Category = "Robber|Journal")
+	TObjectPtr<URobberJournalComponent> Journal;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Robber|UI")
+	TSoftClassPtr<URobberCaseFileHUD> CaseFileHUDClass;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Robber|UI")
+	TSoftClassPtr<URobberJournalWidget> JournalWidgetClass;
+
+	UPROPERTY(Transient)
+	TObjectPtr<URobberCaseFileHUD> CaseFileHUD;
+
+	UPROPERTY(Transient)
+	TObjectPtr<URobberJournalWidget> JournalWidget;
 };
