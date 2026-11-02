@@ -13,6 +13,7 @@
 #include "Heist/RobberStage.h"
 #include "GameFramework/Controller.h"
 #include "Net/UnrealNetwork.h"
+#include "Quest/PlayerQuestComponent.h"
 #include "Robber/RobberGameState.h"
 #include "UObject/ConstructorHelpers.h"
 
@@ -98,50 +99,7 @@ void ARobberVaultDoor::BeginPlay()
 			Code.Add(FMath::RandRange(0, 9));
 		}
 	} while (!Code.ContainsByPredicate([](int32 Digit) { return Digit != 0; }));
-	ConversationHandle = UDialogueComponent::OnConversationStarted.AddUObject(this, &ARobberVaultDoor::OnConversationStarted);
 	UpdateSign();
-}
-
-void ARobberVaultDoor::EndPlay(const EEndPlayReason::Type EndPlayReason)
-{
-	UDialogueComponent::OnConversationStarted.Remove(ConversationHandle);
-	Super::EndPlay(EndPlayReason);
-}
-
-void ARobberVaultDoor::OnConversationStarted(AActor* Talker, APlayerState* Player)
-{
-	ARobberGameState* GameState = GetWorld()->GetGameState<ARobberGameState>();
-	if (!Talker || Talker->GetWorld() != GetWorld() || bOpen || !RobberVault::InHeist(GameState))
-	{
-		return;
-	}
-	// Every talker in this night, in a fixed order; talker N knows digits N, N + count, ...
-	TArray<AActor*> Talkers;
-	for (TActorIterator<AActor> It(GetWorld()); It; ++It)
-	{
-		if (It->GetLevel() == GetLevel() && It->FindComponentByClass<UDialogueComponent>())
-		{
-			Talkers.Add(*It);
-		}
-	}
-	Talkers.Sort([](const AActor& A, const AActor& B) { return A.GetName() < B.GetName(); });
-	const int32 Which = Talkers.IndexOfByKey(Talker);
-	if (Which == INDEX_NONE)
-	{
-		return;
-	}
-	const AController* Asker = Player ? Player->GetOwningController() : nullptr;
-	URobberJournalComponent* Journal = Asker ? Asker->FindComponentByClass<URobberJournalComponent>() : nullptr;
-	if (!Journal)
-	{
-		return;
-	}
-	const UDialogueComponent* Dialogue = Talker->FindComponentByClass<UDialogueComponent>();
-	const FText Speaker = Dialogue && Dialogue->Dialogue && !Dialogue->Dialogue->SpeakerName.IsEmpty() ? Dialogue->Dialogue->SpeakerName : NSLOCTEXT("RobberVault", "AnExhibit", "An exhibit");
-	for (int32 Index = Which; Index < CodeLength; Index += Talkers.Num())
-	{
-		Journal->LearnVaultDigit(Talker, Speaker, Index, Code[Index], CodeLength);
-	}
 }
 
 void ARobberVaultDoor::CheckDials()

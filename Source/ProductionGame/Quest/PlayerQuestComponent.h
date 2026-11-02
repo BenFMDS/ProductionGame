@@ -10,6 +10,7 @@ class UQuestConversationWidget;
 class USoundBase;
 class UTexture2D;
 class AQuestSequenceStep;
+class UPlayerQuestComponent;
 
 UENUM(BlueprintType)
 enum class EPlayerQuestState : uint8 { Active, ReadyToTurnIn, Completed };
@@ -18,10 +19,16 @@ USTRUCT(BlueprintType)
 struct FPlayerQuest
 {
 	GENERATED_BODY()
+	/** Server only for quests the night director generated: those objects don't exist on clients. Use the copies below on clients. */
 	UPROPERTY(BlueprintReadOnly) TObjectPtr<UQuestDefinition> Definition;
 	UPROPERTY(BlueprintReadOnly) TObjectPtr<AActor> Giver;
 	UPROPERTY(BlueprintReadOnly) int32 Amount = 0;
 	UPROPERTY(BlueprintReadOnly) EPlayerQuestState State = EPlayerQuestState::Active;
+	UPROPERTY(BlueprintReadOnly) FName QuestID;
+	UPROPERTY(BlueprintReadOnly) FName ProgressEvent;
+	UPROPERTY(BlueprintReadOnly) FText QuestName;
+	UPROPERTY(BlueprintReadOnly) FText ObjectiveText;
+	UPROPERTY(BlueprintReadOnly) int32 RequiredAmount = 1;
 };
 
 /** One atomic replicated snapshot prevents choices from targeting a different dialogue node. */
@@ -42,6 +49,8 @@ struct FPlayerConversation
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FPlayerQuestChanged);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FQuestRewardGranted, UQuestDefinition*, Quest);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FConversationRejected, FText, Reason);
+/** Server only: Player turned a quest in to Giver. */
+DECLARE_MULTICAST_DELEGATE_TwoParams(FOnQuestTurnedIn, AActor* /*Giver*/, UPlayerQuestComponent* /*Player*/);
 
 /** Lives on the owning player controller. All mutations and NPC arbitration run on the server. */
 UCLASS(ClassGroup=(Quest), BlueprintType, meta=(BlueprintSpawnableComponent))
@@ -50,10 +59,14 @@ class PRODUCTIONGAME_API UPlayerQuestComponent : public UActorComponent
 	GENERATED_BODY()
 public:
 	UPlayerQuestComponent();
+	/** Any player, any world; listeners check the world themselves (the night director pays rewards on it). */
+	static FOnQuestTurnedIn OnQuestTurnedIn;
+	/** Same, when a player takes a quest on. */
+	static FOnQuestTurnedIn OnQuestAccepted;
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 	UPROPERTY(ReplicatedUsing=OnRep_Quests, BlueprintReadOnly, Category="Quest") TArray<FPlayerQuest> Quests;
 	UPROPERTY(ReplicatedUsing=OnRep_Conversation, BlueprintReadOnly, Category="Dialogue") FPlayerConversation Conversation;
-	/** Keys from turned-in quests (UQuestDefinition::RewardKey). Cleared with the quests when a night ends. */
+	/** Keys from turned-in quests and pickups. Cleared with the quests when a night ends. */
 	UPROPERTY(Replicated, BlueprintReadOnly, Category="Quest") TArray<FName> Keys;
 	UPROPERTY(BlueprintAssignable) FPlayerQuestChanged OnQuestsChanged;
 	UPROPERTY(BlueprintAssignable) FPlayerQuestChanged OnConversationChanged;

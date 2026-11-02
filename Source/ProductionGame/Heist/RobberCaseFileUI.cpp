@@ -479,7 +479,7 @@ void URobberJournalWidget::Refresh()
 		{
 			const FName Key = It->GetFName();
 			Unasked += It->GetLevel() != World->PersistentLevel && It->FindComponentByClass<UDialogueComponent>()
-				&& !Entries.ContainsByPredicate([Key](const FRobberJournalEntry& Entry) { return Entry.TalkerName == Key; });
+				&& !(Journal && Journal->HasAsked(Key));
 		}
 	}
 	Show(Find(TEXT("UnaskedText")), Unasked > 0);

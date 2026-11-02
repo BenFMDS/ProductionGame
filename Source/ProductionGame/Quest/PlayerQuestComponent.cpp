@@ -150,7 +150,7 @@ void UPlayerQuestComponent::ServerActivateQuestPuzzle_Implementation(AActor* Puz
 bool UPlayerQuestComponent::GetQuest(FName QuestID, FPlayerQuest& OutQuest) const
 {
 	for (const FPlayerQuest& Quest : Quests)
-		if (IsValid(Quest.Definition) && Quest.Definition->QuestID == QuestID) { OutQuest = Quest; return true; }
+		if (Quest.QuestID == QuestID) { OutQuest = Quest; return true; }
 	OutQuest = FPlayerQuest();
 	return false;
 }
@@ -187,9 +187,15 @@ bool UPlayerQuestComponent::AcceptQuest(UQuestDefinition* Definition, AActor* Gi
 	FPlayerQuest Quest;
 	Quest.Definition = Definition;
 	Quest.Giver = Giver;
+	Quest.QuestID = Definition->QuestID;
+	Quest.ProgressEvent = Definition->ProgressEvent;
+	Quest.QuestName = Definition->QuestName;
+	Quest.ObjectiveText = Definition->ObjectiveText;
+	Quest.RequiredAmount = Definition->RequiredAmount;
 	Quests.Add(Quest);
 	GetOwner()->ForceNetUpdate();
 	OnRep_Quests();
+	OnQuestAccepted.Broadcast(Giver, this);
 	return true;
 }
 
@@ -203,14 +209,17 @@ bool UPlayerQuestComponent::TurnInQuest(UQuestDefinition* Definition, AActor* Gi
 		if (Quest.Definition != Definition) continue;
 		// Commit before callbacks so reentrant or duplicate requests cannot award twice.
 		Quest.State = EPlayerQuestState::Completed;
-		if (!Definition->RewardKey.IsNone()) Keys.AddUnique(Definition->RewardKey);
 		GetOwner()->ForceNetUpdate();
 		OnRep_Quests();
 		OnRewardGranted.Broadcast(Definition);
+		OnQuestTurnedIn.Broadcast(Giver, this);
 		return true;
 	}
 	return false;
 }
+
+FOnQuestTurnedIn UPlayerQuestComponent::OnQuestTurnedIn;
+FOnQuestTurnedIn UPlayerQuestComponent::OnQuestAccepted;
 
 bool UPlayerQuestComponent::ProgressQuest(UQuestDefinition* Definition, AActor* Giver, int32 Amount)
 {
@@ -223,8 +232,8 @@ bool UPlayerQuestComponent::AddQuestProgress(FName QuestID, int32 Amount)
 	if (!GetOwner()->HasAuthority() || Amount <= 0) return false;
 	for (FPlayerQuest& Quest : Quests)
 	{
-		if (!IsValid(Quest.Definition) || Quest.Definition->QuestID != QuestID || Quest.State != EPlayerQuestState::Active) continue;
-		const int32 Required = Quest.Definition->RequiredAmount;
+		if (Quest.QuestID != QuestID || Quest.State != EPlayerQuestState::Active) continue;
+		const int32 Required = Quest.RequiredAmount;
 		if (Required <= 0) return false;
 		Quest.Amount += FMath::Min(Amount, Required - Quest.Amount);
 		if (Quest.Amount >= Required) Quest.State = EPlayerQuestState::ReadyToTurnIn;
@@ -242,7 +251,7 @@ void UPlayerQuestComponent::ReportQuestEvent(FName Event, int32 Amount)
 	if (!GetOwner()->HasAuthority() || Event.IsNone() || Amount <= 0) return;
 	TArray<FName> Matches;
 	for (const FPlayerQuest& Quest : Quests)
-		if (IsValid(Quest.Definition) && Quest.Definition->ProgressEvent == Event) Matches.Add(Quest.Definition->QuestID);
+		if (Quest.ProgressEvent == Event) Matches.Add(Quest.QuestID);
 	for (FName ID : Matches) AddQuestProgress(ID, Amount);
 }
 

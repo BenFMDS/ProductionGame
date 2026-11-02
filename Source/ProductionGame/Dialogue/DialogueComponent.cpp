@@ -7,8 +7,11 @@
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerState.h"
 #include "Engine/World.h"
+#include "EngineUtils.h"
 #include "TimerManager.h"
 #include "Net/UnrealNetwork.h"
+
+namespace { constexpr int32 ErrandChoiceBase = 200000; }
 
 UDialogueComponent::UDialogueComponent() { SetIsReplicatedByDefault(true); }
 
@@ -105,6 +108,26 @@ FText UDialogueComponent::GetCurrentLine() const
 	return Node ? Node->Text : FText::GetEmpty();
 }
 
+AActor* UDialogueComponent::FindErrandItem(const FDialogueErrand& Errand) const
+{
+	for (TActorIterator<AActor> It(GetWorld()); It; ++It)
+	{
+		if (IsValid(*It) && It->Tags.Contains(Errand.RequiredNearbyTag)
+			&& FVector::DistSquared(It->GetActorLocation(), GetOwner()->GetActorLocation()) <= FMath::Square(FMath::Max(1.f, InteractionDistance)))
+		{
+			return *It;
+		}
+	}
+	return nullptr;
+}
+
+bool UDialogueComponent::CanDoErrand(const UPlayerQuestComponent* Player, const FDialogueErrand& Errand) const
+{
+	FPlayerQuest Quest;
+	return IsValid(Errand.Quest) && Player->GetQuest(Errand.Quest->QuestID, Quest) && Quest.State == EPlayerQuestState::Active
+		&& (Errand.RequiredNearbyTag.IsNone() || FindErrandItem(Errand));
+}
+
 void UDialogueComponent::ValidateSession()
 {
 	if (!GetOwner()->HasAuthority() || !bIsInConversation) return;
@@ -122,6 +145,7 @@ void UDialogueComponent::Release(UPlayerQuestComponent* Player)
 	StartingPawn.Reset();
 	TalkingPlayer = nullptr;
 	bIsInConversation = false;
+	ErrandLine = FText::GetEmpty();
 	VisibleChoiceIDs.Reset();
 	GetWorld()->GetTimerManager().ClearTimer(SessionTimer);
 	GetOwner()->ForceNetUpdate();
@@ -175,6 +199,16 @@ void UDialogueComponent::PublishNode()
 			}
 		}
 	}
+	if (!ErrandLine.IsEmpty()) Snapshot.Text = ErrandLine;
+	for (int32 Index = 0; Index < Errands.Num(); ++Index)
+	{
+		if (CanDoErrand(Player, Errands[Index]))
+		{
+			// First, so it isn't buried under an exhibit's other options.
+			Snapshot.Choices.Insert(Errands[Index].Choice, 0);
+			Snapshot.ChoiceIDs.Insert(ErrandChoiceBase + Index, 0);
+		}
+	}
 	VisibleChoiceIDs = Snapshot.ChoiceIDs;
 	Player->SetConversation(Snapshot);
 }
@@ -185,7 +219,20 @@ void UDialogueComponent::Choose(UPlayerQuestComponent* Player, int32 ChoiceID, i
 	ValidateSession();
 	if (!IsParticipant(Player) || !VisibleChoiceIDs.Contains(ChoiceID)) return;
 	LastActivity = GetWorld()->GetTimeSeconds();
-	if (Dialogue && ChoiceID < 100000)
+	ErrandLine = FText::GetEmpty();
+	if (ChoiceID >= ErrandChoiceBase)
+	{
+		if (!Errands.IsValidIndex(ChoiceID - ErrandChoiceBase)) return;
+		const FDialogueErrand Errand = Errands[ChoiceID - ErrandChoiceBase];
+		if (!CanDoErrand(Player, Errand)) return;
+		if (!Errand.RequiredNearbyTag.IsNone())
+			// It may still be in the player's hands, and the physics carry holds on to what it's carrying, so it isn't destroyed.
+			if (AActor* Item = FindErrandItem(Errand)) Item->Tags.Remove(Errand.RequiredNearbyTag);
+		// Set first: progress refreshes this conversation.
+		ErrandLine = Errand.Reply;
+		Player->AddQuestProgress(Errand.Quest->QuestID, 1);
+	}
+	else if (Dialogue && ChoiceID < 100000)
 	{
 		const FDialogueNode* Node = Dialogue->FindNode(CurrentNode);
 		if (!Node || !Node->Choices.IsValidIndex(ChoiceID)) return;

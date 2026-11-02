@@ -165,6 +165,33 @@ void ARobberGameState::AddHeat(float Amount, const TCHAR* Source)
 	}
 }
 
+void ARobberGameState::CoolHeat(float Amount)
+{
+	if (!HasAuthority() || Amount <= 0.f || bAlarmRaised)
+	{
+		return;
+	}
+	Heat = FMath::Max(0.f, Heat - Amount);
+	ForceNetUpdate();
+}
+
+void ARobberGameState::AddGuardsTime(float Seconds)
+{
+	if (!HasAuthority() || Seconds <= 0.f)
+	{
+		return;
+	}
+	if (bAlarmRaised)
+	{
+		GuardsArriveServerTime += Seconds;
+		ForceNetUpdate();
+	}
+	else
+	{
+		BonusGuardsSeconds += Seconds;
+	}
+}
+
 void ARobberGameState::RaiseAlarm(const FText& Why)
 {
 	if (!HasAuthority() || bAlarmRaised)
@@ -173,7 +200,7 @@ void ARobberGameState::RaiseAlarm(const FText& Why)
 	}
 	bAlarmRaised = true;
 	Heat = MaxHeat;
-	GuardsArriveServerTime = GetServerWorldTimeSeconds() + GuardsArriveSeconds;
+	GuardsArriveServerTime = GetServerWorldTimeSeconds() + GuardsArriveSeconds + BonusGuardsSeconds;
 	ForceNetUpdate();
 	ActivateAlarms();
 	TellCrew(Why);
@@ -566,6 +593,7 @@ void ARobberGameState::ResetCrewToLobby()
 	bAlarmRaised = false;
 	Heat = 0.f;
 	GuardsArriveServerTime = 0.;
+	BonusGuardsSeconds = 0.f;
 	for (APlayerState* Player : PlayerArray)
 	{
 		if (URobberJournalComponent* Journal = Player && Player->GetOwningController() ? Player->GetOwningController()->FindComponentByClass<URobberJournalComponent>() : nullptr)

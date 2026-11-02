@@ -6,14 +6,15 @@
 #include "RobberVault.generated.h"
 
 class ARobberVaultDial;
+class UPlayerQuestComponent;
 class UStaticMeshComponent;
 class UTextRenderComponent;
 
 /**
  * The gem vault's door: shut until the crew sets its dials (BP_VaultDial) to a 4-digit code that's new each night.
- * Nobody starts with the code; each talking exhibit in the night lets slip some of its digits into the journal of
- * whoever asked (URobberJournalComponent), so the crew has to pool what they heard. Swings open (outward) when the
- * dials match, which finishes the "Open the vault" job.
+ * Nobody starts with the code; ARobberNightDirector puts its digits on random quests, and turning one in writes them
+ * into that player's journal, so the crew has to pool what they earned. Swings open (outward) when the dials match,
+ * which finishes the "Open the vault" job.
  *
  * Local frame: +X faces out of the vault, the door spans Width along Y, hinged at -Y.
  */
@@ -58,10 +59,8 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
-	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 private:
-	void OnConversationStarted(AActor* Talker, APlayerState* Player);
 	void UpdateSign();
 
 	UFUNCTION()
@@ -88,7 +87,6 @@ private:
 
 	TArray<int32> Code;
 	double OpenStartTime = -1.;
-	FDelegateHandle ConversationHandle;
 };
 
 /** One of the vault door's dials. Interact turns it to the next digit. */
