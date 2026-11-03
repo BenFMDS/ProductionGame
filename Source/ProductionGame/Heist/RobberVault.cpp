@@ -1,4 +1,5 @@
 #include "Heist/RobberVault.h"
+#include "Robber/RobberAchievementTracker.h"
 
 #include "Components/StaticMeshComponent.h"
 #include "Components/TextRenderComponent.h"
@@ -125,6 +126,7 @@ void ARobberVaultDoor::CheckDials()
 	{
 		GameState->CompleteJob(JobId);
 		GameState->TellCrew(NSLOCTEXT("RobberVault", "Opened", "Clunk. The vault's open!"));
+		RobberAchievements::AwardCrew(GetWorld(), TEXT("CodeCracked"));
 	}
 }
 

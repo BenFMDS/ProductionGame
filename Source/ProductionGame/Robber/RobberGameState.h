@@ -197,6 +197,7 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void Tick(float DeltaSeconds) override;
 
 	UFUNCTION()
@@ -247,6 +248,12 @@ private:
 
 	UPROPERTY(Replicated)
 	float Heat = 0.f;
+
+	/** Server only: the hottest it's been tonight. */
+	float PeakHeat = 0.f;
+
+	FDelegateHandle AchievementTalkHandle;
+	FDelegateHandle AchievementQuestHandle;
 
 	/** Server world time the guards arrive; 0 when the alarm isn't up. Separate from the phase timer (the break-in uses that). */
 	UPROPERTY(Replicated)

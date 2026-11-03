@@ -1,4 +1,5 @@
 #include "Heist/RobberInteractables.h"
+#include "Robber/RobberAchievementTracker.h"
 
 #include "Components/StaticMeshComponent.h"
 #include "Components/TextRenderComponent.h"
@@ -210,6 +211,10 @@ void ARobberLockedDoor::OnServerInteract(APawn* Pawn, APlayerState* Player, ARob
 			Controller->ClientHeistMessage(FText::Format(NSLOCTEXT("RobberDoor", "NeedKey", "Locked. You need the {0}."), KeyName));
 		}
 		return;
+	}
+	if (KeyId == TEXT("Crowbar"))
+	{
+		RobberAchievements::AwardPlayer(Player, TEXT("DoorWhatDoor"));
 	}
 	bOpen = true;
 	OnRep_Open();

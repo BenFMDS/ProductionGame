@@ -34,6 +34,18 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Achievement", meta = (ClampMin = "1", EditCondition = "Type == EAchievementType::Number", EditConditionHides))
 	int32 RequiredAmount = 1;
 
+	/** Hidden until earned: lists show LockedHint in place of the title and description. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Achievement")
+	bool bSecret = false;
+
+	/** Shown instead of Description once earned. Empty keeps Description. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Achievement", meta = (MultiLine = "true"))
+	FText EarnedText;
+
+	/** What a locked secret shows. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Achievement", meta = (EditCondition = "bSecret"))
+	FText LockedHint;
+
 	UFUNCTION(BlueprintPure, Category = "Achievement")
 	FAchievementDefinition GetDefinitionSnapshot() const;
 

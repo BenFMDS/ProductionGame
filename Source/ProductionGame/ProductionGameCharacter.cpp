@@ -8,7 +8,9 @@
 #include "EnhancedInputComponent.h"
 #include "InputActionValue.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "Engine/GameInstance.h"
 #include "ProductionGame.h"
+#include "RobberMenu/RobberSettings.h"
 
 AProductionGameCharacter::AProductionGameCharacter()
 {
@@ -89,11 +91,41 @@ void AProductionGameCharacter::LookInput(const FInputActionValue& Value)
 
 void AProductionGameCharacter::DoAim(float Yaw, float Pitch)
 {
-	if (GetController())
+	if (!GetController())
 	{
-		// pass the rotation inputs
-		AddControllerYawInput(Yaw);
-		AddControllerPitchInput(Pitch);
+		return;
+	}
+
+	const UGameInstance* GameInstance = GetGameInstance();
+	const URobberSettingsSubsystem* SettingsSystem = GameInstance ? GameInstance->GetSubsystem<URobberSettingsSubsystem>() : nullptr;
+	const URobberSettingsSave* Settings = SettingsSystem ? SettingsSystem->GetSettings() : nullptr;
+	if (Settings)
+	{
+		Yaw *= Settings->LookSensitivity;
+		Pitch *= Settings->LookSensitivity * (Settings->bInvertLook ? -1.f : 1.f);
+		if (Settings->bSmoothMouse)
+		{
+			PendingLook += FVector2D(Yaw, Pitch);
+			return;
+		}
+	}
+
+	// pass the rotation inputs
+	AddControllerYawInput(Yaw);
+	AddControllerPitchInput(Pitch);
+}
+
+void AProductionGameCharacter::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+
+	if (!PendingLook.IsNearlyZero(0.001))
+	{
+		// About 30 ms behind the hand, whatever the frame rate.
+		const FVector2D Step = PendingLook * (1.f - FMath::Exp(-DeltaSeconds * 30.f));
+		PendingLook -= Step;
+		AddControllerYawInput(Step.X);
+		AddControllerPitchInput(Step.Y);
 	}
 }
 

@@ -10,6 +10,9 @@ FAchievementDefinition UAchievementDefinitionAsset::GetDefinitionSnapshot() cons
 	Definition.LockedImage = LockedImage;
 	Definition.UnlockedImage = UnlockedImage;
 	Definition.RequiredAmount = RequiredAmount;
+	Definition.bSecret = bSecret;
+	Definition.EarnedText = EarnedText;
+	Definition.LockedHint = LockedHint;
 	return Definition;
 }
 
@@ -22,4 +25,7 @@ void UAchievementDefinitionAsset::ApplyDefinitionSnapshot(const FAchievementDefi
 	LockedImage = Definition.LockedImage;
 	UnlockedImage = Definition.UnlockedImage;
 	RequiredAmount = Definition.RequiredAmount;
+	bSecret = Definition.bSecret;
+	EarnedText = Definition.EarnedText;
+	LockedHint = Definition.LockedHint;
 }

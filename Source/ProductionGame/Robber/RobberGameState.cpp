@@ -1,6 +1,9 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Robber/RobberGameState.h"
+#include "Dialogue/DialogueComponent.h"
+#include "Quest/PlayerQuestComponent.h"
+#include "Robber/RobberAchievementTracker.h"
 
 #include "Blueprint/UserWidget.h"
 #include "Components/TextBlock.h"
@@ -76,9 +79,22 @@ ARobberGameState::ARobberGameState()
 	TutorialLevel = TSoftObjectPtr<UWorld>(FSoftObjectPath(TEXT("/Game/OurStuff/Maps/L_Tutorial.L_Tutorial")));
 }
 
+void ARobberGameState::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	UDialogueComponent::OnConversationStarted.Remove(AchievementTalkHandle);
+	UPlayerQuestComponent::OnQuestTurnedIn.Remove(AchievementQuestHandle);
+	Super::EndPlay(EndPlayReason);
+}
+
 void ARobberGameState::BeginPlay()
 {
 	Super::BeginPlay();
+
+	if (HasAuthority())
+	{
+		AchievementTalkHandle = UDialogueComponent::OnConversationStarted.AddStatic(&RobberAchievements::OnConversationStarted);
+		AchievementQuestHandle = UPlayerQuestComponent::OnQuestTurnedIn.AddStatic(&RobberAchievements::OnQuestTurnedIn);
+	}
 
 	PlayerControllerRef = Cast<ARobberController>(UGameplayStatics::GetPlayerController(this, 0));
 	if (HasAuthority())
@@ -131,6 +147,7 @@ void ARobberGameState::TickPhase()
 		bPowerCut = true;
 		ForceNetUpdate();
 		ApplyPowerCut();
+		RobberAchievements::AwardCrew(GetWorld(), TEXT("LightsOut"));
 	}
 	if (bAlarmRaised && !RobberStage::IsInLobby(ReplicatedGameStage) && GuardsArriveServerTime > 0. && GetServerWorldTimeSeconds() >= GuardsArriveServerTime)
 	{
@@ -156,6 +173,7 @@ void ARobberGameState::AddHeat(float Amount, const TCHAR* Source)
 		return;
 	}
 	Heat = FMath::Min(MaxHeat, Heat + Amount);
+	PeakHeat = FMath::Max(PeakHeat, Heat);
 	LastHeatTime = GetWorld()->GetTimeSeconds();
 	ForceNetUpdate();
 	UE_LOG(LogTemp, Verbose, TEXT("Heat +%.1f from %s: %.1f"), Amount, Source, Heat);
@@ -219,6 +237,7 @@ void ARobberGameState::TripLaser(APawn* Pawn)
 		return;
 	}
 	const APlayerState* Player = Pawn ? Pawn->GetPlayerState() : nullptr;
+	RobberAchievements::AwardPlayer(Player, TEXT("TrippedUp"));
 	RaiseAlarm(FText::Format(NSLOCTEXT("RobberHeist", "LaserTripped", "{0} walked into a laser! Guards in {1} seconds."),
 		Player ? FText::FromString(Player->GetPlayerName()) : NSLOCTEXT("RobberHeist", "Someone", "Someone"), FMath::RoundToInt(GuardsArriveSeconds)));
 }
@@ -537,6 +556,10 @@ void ARobberGameState::FinishNight(bool bWon)
 		return;
 	}
 	const bool bLastNight = !bTutorial && CurrentNight >= Nights.Num() - 1;
+	if (bWon)
+	{
+		RobberAchievements::OnNightWon(this, bTutorial, CurrentNight + 1, PeakHeat, bAlarmRaised, ActiveEntry ? ActiveEntry->EntryId : NAME_None);
+	}
 	SetGameStage(!bWon ? RobberStage::Lose : bLastNight ? RobberStage::Win : RobberStage::Continue);
 }
 
@@ -592,6 +615,7 @@ void ARobberGameState::ResetCrewToLobby()
 	bPowerCut = false;
 	bAlarmRaised = false;
 	Heat = 0.f;
+	PeakHeat = 0.f;
 	GuardsArriveServerTime = 0.;
 	BonusGuardsSeconds = 0.f;
 	for (APlayerState* Player : PlayerArray)
