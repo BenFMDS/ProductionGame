@@ -17,6 +17,7 @@ void URobberJournalComponent::GetLifetimeReplicatedProps(TArray<FLifetimePropert
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 	DOREPLIFETIME_CONDITION(URobberJournalComponent, Entries, COND_OwnerOnly);
+	DOREPLIFETIME_CONDITION(URobberJournalComponent, Asked, COND_OwnerOnly);
 	DOREPLIFETIME_CONDITION(URobberJournalComponent, VaultDigits, COND_OwnerOnly);
 	DOREPLIFETIME_CONDITION(URobberJournalComponent, DigitSources, COND_OwnerOnly);
 	DOREPLIFETIME_CONDITION(URobberJournalComponent, Revision, COND_OwnerOnly);
@@ -45,8 +46,15 @@ void URobberJournalComponent::OnConversationStarted(AActor* Talker, APlayerState
 		return;
 	}
 	const UDialogueComponent* Dialogue = Talker->FindComponentByClass<UDialogueComponent>();
-	const FText Speaker = Dialogue && Dialogue->Dialogue && !Dialogue->Dialogue->SpeakerName.IsEmpty() ? Dialogue->Dialogue->SpeakerName : NSLOCTEXT("RobberJournal", "AnExhibit", "An exhibit");
-	Hear(Talker, Speaker, Dialogue ? Dialogue->GetCurrentLine() : FText::GetEmpty());
+	Asked.AddUnique(Talker->GetFName());
+	if (Dialogue && !Dialogue->bNotedInJournal)
+	{
+		GetOwner()->ForceNetUpdate();
+		OnRep_Journal();
+		return;
+	}
+	const FText Speaker =Dialogue && Dialogue->Dialogue && !Dialogue->Dialogue->SpeakerName.IsEmpty() ? Dialogue->Dialogue->SpeakerName : NSLOCTEXT("RobberJournal", "AnExhibit", "An exhibit");
+	Hear(Talker, Speaker, !Dialogue ? FText::GetEmpty() : !Dialogue->JournalQuote.IsEmpty() ? Dialogue->JournalQuote : Dialogue->GetCurrentLine());
 }
 
 FRobberJournalEntry& URobberJournalComponent::FindOrAdd(AActor* Talker, const FText& Speaker)
@@ -95,13 +103,42 @@ void URobberJournalComponent::LearnVaultDigit(AActor* Talker, const FText& Speak
 	// One sentence per exhibit: "Vault code: number 1 is 6, number 3 is 5."
 	const FText Part = FText::Format(NSLOCTEXT("RobberJournal", "DigitPart", "number {0} is {1}"), Index + 1, Digit);
 	Entry.CluePartsText.Add(Part.ToString());
-	Entry.Clue = FText::Format(NSLOCTEXT("RobberJournal", "Digits", "Vault code: {0}."), FText::FromString(FString::Join(Entry.CluePartsText, TEXT(", "))));
+	JoinClue(Entry);
 	Changed(Speaker);
+}
+
+void URobberJournalComponent::LearnFact(AActor* Talker, const FText& Speaker, const FText& Fact)
+{
+	if (!GetOwner()->HasAuthority() || !Talker || Fact.IsEmpty())
+	{
+		return;
+	}
+	const FName Key = Talker->GetFName();
+	const FRobberJournalEntry* Existing = Entries.FindByPredicate([Key](const FRobberJournalEntry& Each) { return Each.TalkerName == Key; });
+	if (Existing && Existing->Facts.Contains(Fact.ToString()))
+	{
+		return;
+	}
+	FRobberJournalEntry& Entry = FindOrAdd(Talker, Speaker);
+	Entry.Facts.Add(Fact.ToString());
+	JoinClue(Entry);
+	Changed(Speaker);
+}
+
+void URobberJournalComponent::JoinClue(FRobberJournalEntry& Entry)
+{
+	TArray<FString> Sentences = Entry.Facts;
+	if (!Entry.CluePartsText.IsEmpty())
+	{
+		Sentences.Add(FText::Format(NSLOCTEXT("RobberJournal", "Digits", "Vault code: {0}."), FText::FromString(FString::Join(Entry.CluePartsText, TEXT(", ")))).ToString());
+	}
+	Entry.Clue = FText::FromString(FString::Join(Sentences, TEXT(" ")));
 }
 
 void URobberJournalComponent::ResetForNight()
 {
 	Entries.Reset();
+	Asked.Reset();
 	VaultDigits.Reset();
 	DigitSources.Reset();
 	++Revision;

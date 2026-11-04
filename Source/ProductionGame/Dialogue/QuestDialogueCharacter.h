@@ -5,6 +5,7 @@
 
 class UDialogueComponent;
 class UDialogueDefinition;
+class UMaterialInterface;
 class UQuestGiverComponent;
 class UQuestDefinition;
 
@@ -20,6 +21,9 @@ public:
 	/** Legacy compatibility field. It is copied to the Dialogue Component only when that component has no assigned asset. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Dialogue", meta=(DisplayName="Dialogue Asset (Legacy)")) TObjectPtr<UDialogueDefinition> NativeDialogueDefinition;
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Quest", meta=(DisplayName="Available Quests")) TArray<TObjectPtr<UQuestDefinition>> NativeQuestDefinitions;
+	/** Placeholder colour for the Model Mesh until this NPC has real art. Leave empty to keep the mesh's own material. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Dialogue", meta=(DisplayName="Temp Cube Material")) TObjectPtr<UMaterialInterface> TempCubeMaterial;
+	virtual void OnConstruction(const FTransform& Transform) override;
 protected:
 	virtual void BeginPlay() override;
 };

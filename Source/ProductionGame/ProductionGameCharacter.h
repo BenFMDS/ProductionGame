@@ -80,7 +80,12 @@ protected:
 
 	/** Set up input action bindings */
 	virtual void SetupPlayerInputComponent(UInputComponent* InputComponent) override;
-	
+
+	/** Feeds out look input held back by the player's mouse smoothing setting. */
+	virtual void Tick(float DeltaSeconds) override;
+
+	FVector2D PendingLook = FVector2D::ZeroVector;
+
 
 public:
 

@@ -137,6 +137,12 @@ public:
 	/** Server only. Noise from the crew (Source names it for the log). Ignored in the lobby and once the alarm's up. */
 	void AddHeat(float Amount, const TCHAR* Source);
 
+	/** Server only. Something's drawn the guards off. Too late once the alarm's up. */
+	void CoolHeat(float Amount);
+
+	/** Server only. Pushes the guards' arrival back, including an alarm that hasn't gone off yet. */
+	void AddGuardsTime(float Seconds);
+
 	/** The alarm's gone off (full heat or a laser): the night is lost if the crew isn't out by the guards timer. */
 	UFUNCTION(BlueprintPure, Category = "Robber|Heat")
 	bool IsAlarmRaised() const { return bAlarmRaised; }
@@ -191,6 +197,7 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void Tick(float DeltaSeconds) override;
 
 	UFUNCTION()
@@ -242,9 +249,18 @@ private:
 	UPROPERTY(Replicated)
 	float Heat = 0.f;
 
+	/** Server only: the hottest it's been tonight. */
+	float PeakHeat = 0.f;
+
+	FDelegateHandle AchievementTalkHandle;
+	FDelegateHandle AchievementQuestHandle;
+
 	/** Server world time the guards arrive; 0 when the alarm isn't up. Separate from the phase timer (the break-in uses that). */
 	UPROPERTY(Replicated)
 	double GuardsArriveServerTime = 0.;
+
+	/** Server only: extra seconds earned before the alarm went off. */
+	float BonusGuardsSeconds = 0.f;
 
 	/** Server only: when heat last went up. It starts cooling HeatCoolDelay seconds after. */
 	double LastHeatTime = 0.;

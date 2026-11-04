@@ -318,7 +318,7 @@ void UQuestConversationWidget::RefreshQuests()
 	const TArray<FRobberJob>& Jobs = bHeist ? GameState->GetJobs() : NoJobs;
 	TArray<const FPlayerQuest*> Favours;
 	for (const FPlayerQuest& Quest : Player->Quests)
-		if (IsValid(Quest.Definition) && Quest.State != EPlayerQuestState::Completed) Favours.Add(&Quest);
+		if (!Quest.QuestID.IsNone() && Quest.State != EPlayerQuestState::Completed) Favours.Add(&Quest);
 
 	// Ticks every frame, so compare a plain-text summary before touching any widgets.
 	FString Summary = Phase;
@@ -329,8 +329,8 @@ void UQuestConversationWidget::RefreshQuests()
 	for (const FRobberJob& Job : Jobs)
 		Summary += FString::Printf(TEXT("\n[%s] %s"), Job.bDone ? TEXT("x") : TEXT(" "), *Job.Title.ToString());
 	for (const FPlayerQuest* Quest : Favours)
-		Summary += FString::Printf(TEXT("\n%s\n%s %d / %d%s"), *Quest->Definition->QuestName.ToString(), *Quest->Definition->ObjectiveText.ToString(),
-			Quest->Amount, Quest->Definition->RequiredAmount, Quest->State == EPlayerQuestState::ReadyToTurnIn ? TEXT(" (return to the quest giver)") : TEXT(""));
+		Summary += FString::Printf(TEXT("\n%s\n%s %d / %d%s"), *Quest->QuestName.ToString(), *Quest->ObjectiveText.ToString(),
+			Quest->Amount, Quest->RequiredAmount, Quest->State == EPlayerQuestState::ReadyToTurnIn ? TEXT(" (return to the quest giver)") : TEXT(""));
 	// So the heist card hides as soon as the Case File HUD turns up, even if nothing else changed.
 	if (RobberController && RobberController->GetCaseFileHUD()) Summary += TEXT("\n(case file)");
 	if (Summary == DisplayedText && !DisplayedText.IsEmpty()) return;
@@ -371,9 +371,9 @@ void UQuestConversationWidget::RefreshQuests()
 	for (int32 Index = 0; Index < Favours.Num(); ++Index)
 	{
 		const FPlayerQuest& Quest = *Favours[Index];
-		const int32 Required = FMath::Max(1, Quest.Definition->RequiredAmount);
+		const int32 Required = FMath::Max(1, Quest.RequiredAmount);
 		if (UQuestTrackerRow* Row = RowAt(FavourList, FavourRowClass, FavourSpacing, Index))
-			Row->SetRow(Quest.Definition->QuestName, Quest.Definition->ObjectiveText,
+			Row->SetRow(Quest.QuestName, Quest.ObjectiveText,
 				FText::FromString(FString::Printf(TEXT("%d / %d"), Quest.Amount, Required)),
 				FMath::Clamp(float(Quest.Amount) / Required, 0.f, 1.f), Quest.State == EPlayerQuestState::ReadyToTurnIn);
 	}

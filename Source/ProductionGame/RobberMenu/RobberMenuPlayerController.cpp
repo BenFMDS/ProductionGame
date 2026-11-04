@@ -4,6 +4,8 @@
 #include "Engine/LocalPlayer.h"
 #include "ProductionGamePlayerController.h"
 #include "Blueprint/UserWidget.h"
+#include "Engine/GameInstance.h"
+#include "RobberMenu/RobberParty.h"
 #include "UObject/ConstructorHelpers.h"
 #include "UObject/UObjectIterator.h"
 
@@ -29,6 +31,20 @@ void ARobberMenuPlayerController::BeginPlay()
 		if (InteractWidgetRef)
 		{
 			InteractWidgetRef->AddToViewport();
+		}
+	}
+
+	// Making or leaving a party reopens this map, so put the Play menu back where the player was.
+	const UGameInstance* GameInstance = GetGameInstance();
+	URobberPartySubsystem* Party = GameInstance ? GameInstance->GetSubsystem<URobberPartySubsystem>() : nullptr;
+	if (IsLocalPlayerController() && Party && Party->ConsumeReopenPlayMenu())
+	{
+		if (UClass* PlayMenuClass = LoadClass<UUserWidget>(nullptr, TEXT("/Game/OurStuff/UI/CaseFile/Menus/WBP_RobberPlayMenu.WBP_RobberPlayMenu_C")))
+		{
+			if (UUserWidget* PlayMenu = CreateWidget<UUserWidget>(this, PlayMenuClass))
+			{
+				PlayMenu->AddToViewport();
+			}
 		}
 	}
 }

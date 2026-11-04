@@ -1,6 +1,8 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Robber/RobberController.h"
+#include "Robber/RobberAchievementTracker.h"
+#include "RobberMenu/RobberSettings.h"
 
 #include "AchievementBlueprintFunctionLibrary.h"
 #include "AchievementDefinitionAsset.h"
@@ -65,7 +67,7 @@ ARobberController::ARobberController()
 	// These widgets directly reference the controller. Keep the references soft
 	// in the CDO to avoid an async-load cycle during editor startup.
 	InteractionWidgetClass = TSoftClassPtr<UUserWidget>(FSoftObjectPath(TEXT("/Game/OurStuff/Core/InteractionSystem/WBP_Interaction.WBP_Interaction_C")));
-	PauseMenuWidgetClass = TSoftClassPtr<UUserWidget>(FSoftObjectPath(TEXT("/Game/OurStuff/Widgets/Menus/WBP_PauseMenu.WBP_PauseMenu_C")));
+	PauseMenuWidgetClass = TSoftClassPtr<UUserWidget>(FSoftObjectPath(TEXT("/Game/OurStuff/UI/CaseFile/Menus/WBP_RobberPauseMenu.WBP_RobberPauseMenu_C")));
 	GameUIWidgetClass = TSoftClassPtr<UUserWidget>(FSoftObjectPath(TEXT("/Game/OurStuff/Widgets/WBP_GameUI.WBP_GameUI_C")));
 	DevUIWidgetClass = TSoftClassPtr<UUserWidget>(FSoftObjectPath(TEXT("/Game/OurStuff/Widgets/WBP_DevUI.WBP_DevUI_C")));
 	CaseFileHUDClass = TSoftClassPtr<URobberCaseFileHUD>(FSoftObjectPath(TEXT("/Game/OurStuff/UI/CaseFile/WBP_CaseFileHUD.WBP_CaseFileHUD_C")));
@@ -179,6 +181,10 @@ void ARobberController::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	// Slate content outlives the controller otherwise and stays on screen after PIE ends.
 	CloseNightSwitcher();
+	if (URobberSettingsSubsystem* SettingsSystem = GetGameInstance() ? GetGameInstance()->GetSubsystem<URobberSettingsSubsystem>() : nullptr)
+	{
+		SettingsSystem->OnControlsChanged.Remove(ControlsChangedHandle);
+	}
 	Super::EndPlay(EndPlayReason);
 }
 
@@ -191,7 +197,21 @@ void ARobberController::SetupInputComponent()
 		return;
 	}
 
-	InputComponent->BindKey(EKeys::P, IE_Pressed, this, &ARobberController::TogglePauseMenu);
+	if (IsLocalPlayerController())
+	{
+		if (!PlayerKeysInput)
+		{
+			PlayerKeysInput = NewObject<UInputComponent>(this, TEXT("PlayerKeysInput"));
+			PlayerKeysInput->RegisterComponent();
+			PushInputComponent(PlayerKeysInput);
+		}
+		BindPlayerKeys();
+		if (URobberSettingsSubsystem* SettingsSystem = GetGameInstance() ? GetGameInstance()->GetSubsystem<URobberSettingsSubsystem>() : nullptr)
+		{
+			SettingsSystem->OnControlsChanged.Remove(ControlsChangedHandle);
+			ControlsChangedHandle = SettingsSystem->OnControlsChanged.AddUObject(this, &ARobberController::BindPlayerKeys);
+		}
+	}
 #if !UE_BUILD_SHIPPING
 	InputComponent->BindKey(EKeys::F10, IE_Pressed, this, &ARobberController::ToggleNightSwitcher);
 #endif
@@ -201,13 +221,32 @@ void ARobberController::SetupInputComponent()
 		InputComponent->BindKey(Key, IE_Pressed, this, &ARobberController::OnStepBackKey).bConsumeInput = false;
 	}
 	InputComponent->BindKey(EKeys::LeftMouseButton, IE_Pressed, this, &ARobberController::ClickMap).bConsumeInput = false;
-	InputComponent->BindKey(EKeys::J, IE_Pressed, this, &ARobberController::ToggleJournal);
 	if (PauseInputAction)
 	{
 		if (UEnhancedInputComponent* EnhancedInput = Cast<UEnhancedInputComponent>(InputComponent))
 		{
 			EnhancedInput->BindAction(PauseInputAction, ETriggerEvent::Started, this, &ARobberController::TogglePauseMenu);
 		}
+	}
+}
+
+void ARobberController::BindPlayerKeys()
+{
+	const URobberSettingsSubsystem* SettingsSystem = GetGameInstance() ? GetGameInstance()->GetSubsystem<URobberSettingsSubsystem>() : nullptr;
+	if (!PlayerKeysInput || !SettingsSystem)
+	{
+		return;
+	}
+	PlayerKeysInput->KeyBindings.Reset();
+	PlayerKeysInput->BindKey(SettingsSystem->GetKey(TEXT("Pause")), IE_Pressed, this, &ARobberController::TogglePauseMenu);
+	PlayerKeysInput->BindKey(SettingsSystem->GetKey(TEXT("Journal")), IE_Pressed, this, &ARobberController::ToggleJournal);
+}
+
+void ARobberController::ClientAchievement_Implementation(FName AchievementId, ERobberAchievementStep Step, FName Detail, int32 Amount)
+{
+	if (URobberAchievementTracker* Tracker = GetGameInstance() ? GetGameInstance()->GetSubsystem<URobberAchievementTracker>() : nullptr)
+	{
+		Tracker->Apply(AchievementId, Step, Detail, Amount);
 	}
 }
 

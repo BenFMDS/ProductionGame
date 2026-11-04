@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "AchievementTypes.h"
 #include "ProductionGamePlayerController.h"
+#include "Robber/RobberAchievementTracker.h"
 #include "RobberController.generated.h"
 
 class ARobberMapObject;
@@ -44,6 +45,10 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "Robber|Achievements")
 	void ShowAchievementProgressPopup(UAchievementDefinitionAsset* AchievementAsset, FAchievementProgressState ProgressState);
+
+	/** Achievements save on each player's machine, so the server sends the news here. See RobberAchievements. */
+	UFUNCTION(Client, Reliable)
+	void ClientAchievement(FName AchievementId, ERobberAchievementStep Step, FName Detail, int32 Amount);
 
 	/** Server only. Stops (or restores) this player's movement, e.g. while hiding during a break-in. */
 	void SetHeistFrozen(bool bFrozen);
@@ -111,6 +116,14 @@ private:
 
 	void TogglePauseMenu();
 	void OpenPauseMenu();
+	/** Journal and Pause are bound here, not in the input mapping context, and follow the player's key settings. */
+	void BindPlayerKeys();
+
+	/** A component of its own so rebinding can clear just these keys. */
+	UPROPERTY(Transient)
+	TObjectPtr<UInputComponent> PlayerKeysInput;
+
+	FDelegateHandle ControlsChangedHandle;
 	void UnmuteVoice();
 	void BindAchievementNotifications();
 	void ApplyHeistFrozen(bool bFrozen);

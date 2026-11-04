@@ -31,6 +31,10 @@ struct FRobberJournalEntry
 	UPROPERTY(NotReplicated)
 	TArray<FString> CluePartsText;
 
+	/** Server only: other things they told you, also joined into Clue. */
+	UPROPERTY(NotReplicated)
+	TArray<FString> Facts;
+
 	UPROPERTY(BlueprintReadOnly, Category = "Robber|Journal")
 	float HeardAt = 0.f;
 
@@ -71,6 +75,10 @@ public:
 	void Hear(AActor* Talker, const FText& Speaker, const FText& Quote);
 	/** Server only. Talker let slip digit Index of a CodeLength-digit vault code. */
 	void LearnVaultDigit(AActor* Talker, const FText& Speaker, int32 Index, int32 Digit, int32 CodeLength);
+	/** Server only. Talker told this player something worth writing down. Hearing it again adds nothing. */
+	void LearnFact(AActor* Talker, const FText& Speaker, const FText& Fact);
+	/** This player has spoken to the talker tonight, including those with nothing worth writing down. */
+	bool HasAsked(FName TalkerName) const { return Asked.Contains(TalkerName); }
 	/** Server only. A fresh night. */
 	void ResetForNight();
 
@@ -83,6 +91,7 @@ protected:
 
 private:
 	FRobberJournalEntry& FindOrAdd(AActor* Talker, const FText& Speaker);
+	void JoinClue(FRobberJournalEntry& Entry);
 	void Changed(const FText& Speaker);
 	void OnConversationStarted(AActor* Talker, APlayerState* Player);
 
@@ -91,6 +100,9 @@ private:
 
 	UPROPERTY(ReplicatedUsing = OnRep_Journal)
 	TArray<FRobberJournalEntry> Entries;
+
+	UPROPERTY(ReplicatedUsing = OnRep_Journal)
+	TArray<FName> Asked;
 
 	UPROPERTY(ReplicatedUsing = OnRep_Journal)
 	TArray<int32> VaultDigits;

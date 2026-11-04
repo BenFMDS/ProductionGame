@@ -23,7 +23,12 @@ public class ProductionGame : ModuleRules
 			"SlateCore"
 		});
 
-		PrivateDependencyModuleNames.AddRange(new string[] { });
+		PrivateDependencyModuleNames.AddRange(new string[] {
+			"OnlineSubsystem",
+			"OnlineSubsystemUtils",
+			"AdvancedSessions",
+			"AdvancedSteamSessions"
+		});
 
 		PublicIncludePaths.AddRange(new string[] {
 			"ProductionGame",

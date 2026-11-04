@@ -44,10 +44,6 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Quest")
 	FName ProgressEvent;
 
-	/** Key the player gets on turn-in. A locked door with the same Key Id opens for them. None gives no key. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Quest|Reward")
-	FName RewardKey;
-
 	/** Optional HUD or journal icon. It is loaded only when the UI needs it. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Quest")
 	TSoftObjectPtr<UTexture2D> QuestIcon;
