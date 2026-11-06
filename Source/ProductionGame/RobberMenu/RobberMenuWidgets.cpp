@@ -640,7 +640,7 @@ void URobberSettingsMenu::RefreshAudio()
 	const auto Row = [this](const FString& Name, float Value, const FText& Note)
 	{
 		if (UProgressBar* Fill = Find<UProgressBar>(Name + TEXT("Fill"))) Fill->SetPercent(Value);
-		SetText(Find<UTextBlock>(Name + TEXT("Value")), Percent(Value));
+		SetText(Find<UTextBlock>(Name + TEXT("Value")), RobberMenuDetail::Percent(Value));
 		SetText(Find<UTextBlock>(Name + TEXT("Note")), Note);
 	};
 	Row(TEXT("Music"), Settings->MusicVolume, AudioNote(Settings->MusicVolume,
