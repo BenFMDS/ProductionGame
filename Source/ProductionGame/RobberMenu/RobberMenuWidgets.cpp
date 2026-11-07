@@ -58,7 +58,7 @@ namespace RobberMenuDetail
 		}
 	}
 
-	FText Percent(float Value)
+	FText MenuPercent(float Value)
 	{
 		return FText::AsNumber(FMath::RoundToInt(Value * 100.f));
 	}
@@ -542,6 +542,7 @@ void URobberSettingsMenu::NativeOnInitialized()
 	if (UButton* Button = Find<UButton>(TEXT("KeyDrop"))) Button->OnClicked.AddUniqueDynamic(this, &URobberSettingsMenu::OnKeyDrop);
 	if (UButton* Button = Find<UButton>(TEXT("KeyJournal"))) Button->OnClicked.AddUniqueDynamic(this, &URobberSettingsMenu::OnKeyJournal);
 	if (UButton* Button = Find<UButton>(TEXT("KeyPause"))) Button->OnClicked.AddUniqueDynamic(this, &URobberSettingsMenu::OnKeyPause);
+	if (UButton* Button = Find<UButton>(TEXT("KeySprint"))) Button->OnClicked.AddUniqueDynamic(this, &URobberSettingsMenu::OnKeySprint);
 
 	UKismetSystemLibrary::GetSupportedFullscreenResolutions(Resolutions);
 	if (Resolutions.Num() == 0)
@@ -640,7 +641,7 @@ void URobberSettingsMenu::RefreshAudio()
 	const auto Row = [this](const FString& Name, float Value, const FText& Note)
 	{
 		if (UProgressBar* Fill = Find<UProgressBar>(Name + TEXT("Fill"))) Fill->SetPercent(Value);
-		SetText(Find<UTextBlock>(Name + TEXT("Value")), Percent(Value));
+		SetText(Find<UTextBlock>(Name + TEXT("Value")), MenuPercent(Value));
 		SetText(Find<UTextBlock>(Name + TEXT("Note")), Note);
 	};
 	Row(TEXT("Music"), Settings->MusicVolume, AudioNote(Settings->MusicVolume,
@@ -885,6 +886,7 @@ void URobberSettingsMenu::OnKeyThrow() { StartListening(TEXT("Throw")); }
 void URobberSettingsMenu::OnKeyDrop() { StartListening(TEXT("Drop")); }
 void URobberSettingsMenu::OnKeyJournal() { StartListening(TEXT("Journal")); }
 void URobberSettingsMenu::OnKeyPause() { StartListening(TEXT("Pause")); }
+void URobberSettingsMenu::OnKeySprint() { StartListening(TEXT("Sprint")); }
 
 void URobberSettingsMenu::CaptureKey(const FKey& Key)
 {
@@ -1245,8 +1247,19 @@ void URobberPauseMenu::OnQuit()
 	}
 }
 
+void URobberPauseMenu::ShowQuitCheckOnly()
+{
+	bQuitCheckOnly = true;
+	OnQuit();
+}
+
 void URobberPauseMenu::OnStay()
 {
+	if (bQuitCheckOnly)
+	{
+		CloseMenu();
+		return;
+	}
 	if (UWidgetSwitcher* Switcher = Find<UWidgetSwitcher>(TEXT("PauseSwitcher")))
 	{
 		Switcher->SetActiveWidgetIndex(0);

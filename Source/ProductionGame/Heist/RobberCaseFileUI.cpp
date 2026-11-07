@@ -1,7 +1,13 @@
 #include "Heist/RobberCaseFileUI.h"
 
+#include "Blueprint/WidgetTree.h"
+#include "Brushes/SlateRoundedBoxBrush.h"
 #include "Components/Border.h"
 #include "Components/Button.h"
+#include "Components/CanvasPanel.h"
+#include "Components/CanvasPanelSlot.h"
+#include "Components/SizeBox.h"
+#include "ProductionGameCharacter.h"
 #include "Components/PanelWidget.h"
 #include "Components/ProgressBar.h"
 #include "Components/TextBlock.h"
@@ -59,8 +65,7 @@ int32 URobberCaseFileWidgetBase::HeatLevel(const ARobberGameState* State)
 	{
 		return 0;
 	}
-	const float Heat = State->GetHeat();
-	return State->IsAlarmRaised() || Heat >= ARobberGameState::MaxHeat ? 3 : Heat >= 50.f ? 2 : Heat >= 25.f ? 1 : 0;
+	return static_cast<int32>(State->GetHeatTier());
 }
 
 FLinearColor URobberCaseFileWidgetBase::HeatColour(int32 Level) const
@@ -214,9 +219,67 @@ FText URobberCaseFileHUD::GetCodeLine() const
 	return CaseFileDigits(Journal ? Journal->GetVaultDigits() : TArray<int32>(), ARobberVaultDoor::CodeLength);
 }
 
+void URobberCaseFileHUD::NativeOnInitialized()
+{
+	Super::NativeOnInitialized();
+	UCanvasPanel* Root = Cast<UCanvasPanel>(GetRootWidget());
+	if (Find(TEXT("SprintBar")) || !Root || !WidgetTree)
+	{
+		return;
+	}
+	// The WBP has no sprint bar of its own: build the default one. Adding SprintPanel/SprintBar in the WBP replaces it.
+	UProgressBar* Bar = WidgetTree->ConstructWidget<UProgressBar>(UProgressBar::StaticClass(), TEXT("SprintBar"));
+	FProgressBarStyle Style;
+	Style.SetBackgroundImage(FSlateRoundedBoxBrush(FLinearColor(FColor(0xfd, 0xf6, 0xe3)), 5.f));
+	Style.SetFillImage(FSlateRoundedBoxBrush(FLinearColor::White, 5.f));
+	Style.SetMarqueeImage(FSlateRoundedBoxBrush(FLinearColor::White, 5.f));
+	Bar->SetWidgetStyle(Style);
+	Bar->SetFillColorAndOpacity(SprintColour);
+	Bar->SetPercent(1.f);
+
+	// Ink outline round the bar, like the rest of the Case File pieces.
+	UBorder* Outline = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("SprintOutline"));
+	Outline->SetBrush(FSlateRoundedBoxBrush(TextColour, 8.f));
+	Outline->SetPadding(FMargin(3.f));
+	Outline->SetContent(Bar);
+
+	USizeBox* Panel = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass(), TEXT("SprintPanel"));
+	Panel->SetWidthOverride(320.f);
+	Panel->SetHeightOverride(20.f);
+	Panel->SetContent(Outline);
+	Panel->SetVisibility(ESlateVisibility::HitTestInvisible);
+	Panel->SetRenderOpacity(0.f);
+
+	UCanvasPanelSlot* PanelSlot = Root->AddChildToCanvas(Panel);
+	PanelSlot->SetAnchors(FAnchors(0.5f, 1.f));
+	PanelSlot->SetAlignment(FVector2D(0.5f, 1.f));
+	PanelSlot->SetAutoSize(true);
+	PanelSlot->SetPosition(FVector2D(0.f, -110.f));
+}
+
+void URobberCaseFileHUD::UpdateSprint(float DeltaTime)
+{
+	const AProductionGameCharacter* Character = Cast<AProductionGameCharacter>(GetOwningPlayerPawn());
+	UWidget* Panel = Find(TEXT("SprintPanel"));
+	UProgressBar* Bar = Find<UProgressBar>(TEXT("SprintBar"));
+	if (Bar)
+	{
+		Bar->SetPercent(Character ? Character->GetStamina() : 1.f);
+		Bar->SetFillColorAndOpacity(Character && Character->IsWinded() ? WindedColour : SprintColour);
+	}
+	if (Panel)
+	{
+		// Out of the way while full; back as soon as it's being used.
+		const bool bWanted = Character && (Character->GetStamina() < 0.999f || Character->IsSprinting());
+		const float Target = bWanted ? 1.f : 0.f;
+		Panel->SetRenderOpacity(FMath::FInterpConstantTo(Panel->GetRenderOpacity(), Target, DeltaTime, bWanted ? 6.f : 1.5f));
+	}
+}
+
 void URobberCaseFileHUD::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 {
 	Super::NativeTick(MyGeometry, InDeltaTime);
+	UpdateSprint(InDeltaTime);
 	const ARobberGameState* State = GetRobberState();
 	if (!State)
 	{

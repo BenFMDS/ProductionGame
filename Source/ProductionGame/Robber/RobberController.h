@@ -6,6 +6,7 @@
 #include "AchievementTypes.h"
 #include "ProductionGamePlayerController.h"
 #include "Robber/RobberAchievementTracker.h"
+#include "Heist/RobberHideout.h"
 #include "RobberController.generated.h"
 
 class ARobberMapObject;
@@ -75,6 +76,13 @@ public:
 	UFUNCTION(Client, Reliable)
 	void ClientToggleMapView(ARobberMapTable* Table);
 
+	/** From a hideout object in the lobby: opens its screen (settings, achievements, or the quit check) for this player. */
+	UFUNCTION(Client, Reliable)
+	void ClientOpenLobbyMenu(ERobberLobbyMenu Menu);
+
+	/** The settings or achievements screen a lobby object opened, while it's up. */
+	UUserWidget* GetLobbyMenu() const { return LobbyMenu; }
+
 	/** Local only. Back to the pawn's own view. */
 	void StepBackFromMap();
 
@@ -95,12 +103,24 @@ public:
 	/** J: open or close the robber's journal over the running game. */
 	void ToggleJournal();
 	void CloseJournal();
+
+	/** Sprint key held / let go: passed to the pawn. */
+	void OnSprintPressed();
+	void OnSprintReleased();
 	bool IsJournalOpen() const;
 
 	/** The Case File HUD (null on non-local controllers); while it exists, the old debug text and heist card stay hidden. */
 	URobberCaseFileHUD* GetCaseFileHUD() const { return CaseFileHUD; }
 	URobberJournalWidget* GetJournalWidget() const { return JournalWidget; }
 	URobberJournalComponent* GetJournal() const { return Journal; }
+
+	/** A code typed into a code lock's screen. The server checks it, so the answer never has to reach a client. Defined in RobberPuzzle.cpp. */
+	UFUNCTION(Server, Reliable)
+	void ServerSubmitPuzzleCode(AActor* Lock, const FString& Typed);
+
+	/** The server's verdict on that code, back to the screen that sent it. */
+	UFUNCTION(Client, Reliable)
+	void ClientPuzzleCodeResult(AActor* Lock, bool bCorrect);
 
 protected:
 	virtual void BeginPlay() override;
@@ -151,6 +171,15 @@ private:
 
 	UPROPERTY(EditDefaultsOnly, Category = "Robber|UI")
 	TSoftClassPtr<UUserWidget> PauseMenuWidgetClass;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Robber|UI")
+	TSoftClassPtr<UUserWidget> LobbySettingsClass;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Robber|UI")
+	TSoftClassPtr<UUserWidget> LobbyAchievementsClass;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UUserWidget> LobbyMenu;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Robber|UI")
 	TSoftClassPtr<UUserWidget> GameUIWidgetClass;

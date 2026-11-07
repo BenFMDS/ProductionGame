@@ -11,6 +11,7 @@
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/PlayerState.h"
 #include "Heist/RobberJournal.h"
+#include "Heist/RobberPuzzle.h"
 #include "Heist/RobberVault.h"
 #include "Net/UnrealNetwork.h"
 #include "Quest/PlayerQuestComponent.h"
@@ -85,6 +86,36 @@ namespace ExhibitTalk
 	URobberJournalComponent* JournalOf(const UPlayerQuestComponent* Player)
 	{
 		return Player && Player->GetOwner() ? Player->GetOwner()->FindComponentByClass<URobberJournalComponent>() : nullptr;
+	}
+
+	constexpr int32 CodeLockDigits = 4;
+
+	/** {object} for a puzzle: its own name, or what kind of puzzle it is. */
+	FText PuzzleName(const URobberPuzzleComponent* Puzzle)
+	{
+		if (!Puzzle)
+		{
+			return FText::GetEmpty();
+		}
+		if (!Puzzle->PuzzleName.IsEmpty())
+		{
+			return Puzzle->PuzzleName;
+		}
+		switch (Puzzle->PuzzleType)
+		{
+		case ERobberPuzzleType::Wire: return NSLOCTEXT("ExhibitTalk", "PuzzleWire", "fuse box wires");
+		case ERobberPuzzleType::Combination: return NSLOCTEXT("ExhibitTalk", "PuzzleCombination", "combination lock");
+		case ERobberPuzzleType::CodeLock: return NSLOCTEXT("ExhibitTalk", "PuzzleCodeLock", "code lock");
+		case ERobberPuzzleType::PressurePlate: return NSLOCTEXT("ExhibitTalk", "PuzzlePlates", "pressure plates");
+		case ERobberPuzzleType::Scale: return NSLOCTEXT("ExhibitTalk", "PuzzleScale", "scale");
+		default: return NSLOCTEXT("ExhibitTalk", "PuzzleAny", "puzzle");
+		}
+	}
+
+	bool ImplementsSolver(const AActor* Actor)
+	{
+		UClass* Interface = URobberPuzzleComponent::GetSolverInterface();
+		return Actor && Interface && Actor->GetClass()->ImplementsInterface(Interface);
 	}
 }
 
@@ -214,6 +245,7 @@ void ARobberNightDirector::BeginPlay()
 	AcceptedHandle = UPlayerQuestComponent::OnQuestAccepted.AddUObject(this, &ARobberNightDirector::OnQuestAccepted);
 	TurnedInHandle = UPlayerQuestComponent::OnQuestTurnedIn.AddUObject(this, &ARobberNightDirector::OnQuestTurnedIn);
 	ConversationHandle = UDialogueComponent::OnConversationStarted.AddUObject(this, &ARobberNightDirector::OnConversationStarted);
+	PuzzleHandle = URobberPuzzleComponent::OnExhibitPuzzleSolved.AddUObject(this, &ARobberNightDirector::OnExhibitPuzzleSolved);
 	// A streamed level's actors can begin play over several frames, and the deal needs every exhibit and the vault's code.
 	GetWorldTimerManager().SetTimer(DealTimer, this, &ARobberNightDirector::TryDeal, 0.1f, true);
 }
@@ -223,6 +255,7 @@ void ARobberNightDirector::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	UPlayerQuestComponent::OnQuestAccepted.Remove(AcceptedHandle);
 	UPlayerQuestComponent::OnQuestTurnedIn.Remove(TurnedInHandle);
 	UDialogueComponent::OnConversationStarted.Remove(ConversationHandle);
+	URobberPuzzleComponent::OnExhibitPuzzleSolved.Remove(PuzzleHandle);
 	Super::EndPlay(EndPlayReason);
 }
 
@@ -260,6 +293,27 @@ TArray<FName> ARobberNightDirector::KeysNeededAt(const AActor* Actor) const
 	return Room ? Room->RequiredKeys : TArray<FName>();
 }
 
+TArray<FName> ARobberNightDirector::KeysNeededAt(const URobberPuzzleComponent* Puzzle) const
+{
+	const ARobberRoomInfo* Room = Puzzle ? FindRoom(Puzzle->GetPuzzleLocation()) : nullptr;
+	return Room ? Room->RequiredKeys : TArray<FName>();
+}
+
+FText ARobberNightDirector::PuzzleHintLine(const URobberPuzzleComponent* Puzzle) const
+{
+	const FText Hint = Puzzle ? Puzzle->GetHintText() : FText::GetEmpty();
+	if (Hint.IsEmpty())
+	{
+		return FText::GetEmpty();
+	}
+	const ARobberRoomInfo* Room = FindRoom(Puzzle->GetPuzzleLocation());
+	FFormatNamedArguments Slots;
+	Slots.Add(TEXT("object"), ExhibitTalk::PuzzleName(Puzzle));
+	Slots.Add(TEXT("room"), Room ? Room->RoomName : NSLOCTEXT("ExhibitTalk", "SomeRoom", "the museum"));
+	Slots.Add(TEXT("clue"), Hint);
+	return ExhibitTalk::Fill(NSLOCTEXT("ExhibitTalk", "PuzzleHintLine", "The {object} in the {room}: {clue}."), Slots);
+}
+
 void ARobberNightDirector::TryDeal()
 {
 	if (bDealt || !GetLevel() || !GetLevel()->bIsVisible)
@@ -271,11 +325,16 @@ void ARobberNightDirector::TryDeal()
 	TArray<AActor*> Exhibits;
 	TArray<ARobberQuestSpot*> Spots;
 	Rooms.Reset();
+	LevelPuzzles.Reset();
 	for (TActorIterator<AActor> It(GetWorld()); It; ++It)
 	{
 		if (It->GetLevel() != GetLevel())
 		{
 			continue;
+		}
+		if (URobberPuzzleComponent* Puzzle = It->FindComponentByClass<URobberPuzzleComponent>())
+		{
+			LevelPuzzles.Add(Puzzle);
 		}
 		if (It->FindComponentByClass<UDialogueComponent>())
 		{
@@ -298,6 +357,36 @@ void ARobberNightDirector::TryDeal()
 	{
 		UE_LOG(LogExhibitTalk, Error, TEXT("%s is missing a data table; exhibits keep their own dialogue tonight."), *GetName());
 		return;
+	}
+
+	// A fresh code lock code every night, so hints are worth having and nobody can learn it across nights.
+	// Rolled before the deal: hints are written from it.
+	for (URobberPuzzleComponent* Puzzle : LevelPuzzles)
+	{
+		if (Puzzle->PuzzleType == ERobberPuzzleType::CodeLock)
+		{
+			FString Code;
+			for (int32 Digit = 0; Digit < ExhibitTalk::CodeLockDigits; ++Digit)
+			{
+				Code.AppendInt(FMath::RandRange(0, 9));
+			}
+			Puzzle->SetAnswer(Code);
+		}
+	}
+	// A chest is dealt something when a puzzle opens it.
+	ChestDeals.Reset();
+	for (URobberPuzzleComponent* Puzzle : LevelPuzzles)
+	{
+		for (AActor* Target : Puzzle->SolveTargets)
+		{
+			ARobberPuzzleChest* Chest = Cast<ARobberPuzzleChest>(Target);
+			if (Chest && !ChestDeals.ContainsByPredicate([Chest](const FRobberChestDeal& Each) { return Each.Chest == Chest; }))
+			{
+				FRobberChestDeal& Deal = ChestDeals.AddDefaulted_GetRef();
+				Deal.Chest = Chest;
+				Deal.Opener = Puzzle;
+			}
+		}
 	}
 
 	bool bSolvable = false;
@@ -343,6 +432,28 @@ void ARobberNightDirector::TryDeal()
 			}
 		}
 	}
+	for (FRobberChestDeal& Deal : ChestDeals)
+	{
+		if (Deal.Reward.Kind == ERobberRewardKind::TipOff && Facts.IsValidIndex(NextFact))
+		{
+			TellFact(Facts[NextFact++], Deal.JournalClue);
+		}
+	}
+	// A hint is the puzzle's answer, not a fact from the pool, so it's written straight from the puzzle.
+	for (FRobberExhibitAssignment& Each : Assignments)
+	{
+		if (Each.Role == ERobberExhibitRole::Quest && Each.Reward.Kind == ERobberRewardKind::PuzzleHint)
+		{
+			Each.JournalClue = PuzzleHintLine(Each.Reward.HintPuzzle);
+		}
+	}
+	for (FRobberChestDeal& Deal : ChestDeals)
+	{
+		if (Deal.Reward.Kind == ERobberRewardKind::PuzzleHint)
+		{
+			Deal.JournalClue = PuzzleHintLine(Deal.Reward.HintPuzzle);
+		}
+	}
 
 	for (FRobberExhibitAssignment& Each : Assignments)
 	{
@@ -366,6 +477,15 @@ void ARobberNightDirector::TryDeal()
 			break;
 		}
 	}
+	// The quest's exhibit hears about the solve the same way a door does: it goes on the puzzle's list for the night.
+	for (const FRobberExhibitAssignment& Each : Assignments)
+	{
+		if (Each.Puzzle)
+		{
+			Each.Puzzle->SolveTargets.AddUnique(Each.Exhibit);
+		}
+	}
+	FillChests();
 	bDealt = true;
 	UE_LOG(LogExhibitTalk, Display, TEXT("Dealt %d exhibits in %d attempt(s), %d facts for %d helpful."), Assignments.Num(), DealAttempts, Facts.Num(), HelpfulCount);
 }
@@ -451,9 +571,16 @@ bool ARobberNightDirector::DealOnce(const TArray<AActor*>& Exhibits, const TArra
 	{
 		AddKeyReward(Tool, ERobberRewardKind::Tool);
 	}
-	if (Pay.Num() > Givers.Num())
+	// Chests a puzzle opens take rewards from the same pool as quests.
+	for (FRobberChestDeal& Deal : ChestDeals)
 	{
-		UE_LOG(LogExhibitTalk, Error, TEXT("%d required rewards but only %d quests tonight."), Pay.Num(), Givers.Num());
+		Deal.Reward = FRobberReward();
+		Deal.JournalClue = FText::GetEmpty();
+	}
+	const int32 Slots = Givers.Num() + ChestDeals.Num();
+	if (Pay.Num() > Slots)
+	{
+		UE_LOG(LogExhibitTalk, Error, TEXT("%d required rewards but only %d quests and %d chests tonight."), Pay.Num(), Givers.Num(), ChestDeals.Num());
 		return false;
 	}
 	// Bonus rewards come from the table by weight.
@@ -467,7 +594,7 @@ bool ARobberNightDirector::DealOnce(const TArray<AActor*>& Exhibits, const TArra
 			TotalWeight += Row.Value->Weight;
 		}
 	}
-	while (Pay.Num() < Givers.Num() && TotalWeight > 0.f)
+	while (Pay.Num() < Slots && TotalWeight > 0.f)
 	{
 		float Roll = FMath::FRandRange(0.f, TotalWeight);
 		const FRobberRewardRow* Drawn = Bonuses.Last();
@@ -485,6 +612,22 @@ bool ARobberNightDirector::DealOnce(const TArray<AActor*>& Exhibits, const TArra
 		Reward.Value = Drawn->Value;
 	}
 	Algo::RandomShuffle(Pay);
+	for (int32 Index = 0; Index < ChestDeals.Num(); ++Index)
+	{
+		if (Pay.IsValidIndex(Givers.Num() + Index))
+		{
+			ChestDeals[Index].Reward = Pay[Givers.Num() + Index];
+		}
+	}
+	TArray<URobberPuzzleComponent*> FreePuzzles;
+	for (URobberPuzzleComponent* Puzzle : LevelPuzzles)
+	{
+		if (Puzzle && !Puzzle->IsSolved())
+		{
+			FreePuzzles.Add(Puzzle);
+		}
+	}
+	Algo::RandomShuffle(FreePuzzles);
 
 	// --- A template per quest, not too many of a kind, nothing twice. ---
 	auto QuestRows = ExhibitTalk::RowsOf<FRobberQuestRow>(RandomQuests);
@@ -512,6 +655,21 @@ bool ARobberNightDirector::DealOnce(const TArray<AActor*>& Exhibits, const TArra
 			if (KindCounts.FindOrAdd(Kind) >= MaxQuestsPerKind || (bNeedsSpot && FreeSpots.IsEmpty()) || (bNeedsTarget && !NotGivers.IsValidIndex(NextTarget)))
 			{
 				continue;
+			}
+			if (Kind == ERobberQuestKind::Puzzle)
+			{
+				// One quest per puzzle a night, and the giver has to be able to hear the solve (BP_TalkingMaster children can).
+				const ERobberPuzzleType Wanted = Row.Value->PuzzleType;
+				const int32 Found = FreePuzzles.IndexOfByPredicate([Wanted](const URobberPuzzleComponent* Puzzle)
+				{
+					return Wanted == ERobberPuzzleType::Any || Puzzle->PuzzleType == Wanted;
+				});
+				if (Found == INDEX_NONE || !ExhibitTalk::ImplementsSolver(Each.Exhibit))
+				{
+					continue;
+				}
+				Each.Puzzle = FreePuzzles[Found];
+				FreePuzzles.RemoveAt(Found);
 			}
 			if (bNeedsPuzzle)
 			{
@@ -542,6 +700,38 @@ bool ARobberNightDirector::DealOnce(const TArray<AActor*>& Exhibits, const TArra
 			return false;
 		}
 	}
+
+	// --- Hints point at some other puzzle than the one the reward comes from. ---
+	auto PickHint = [this](FRobberReward& Reward, const URobberPuzzleComponent* Not)
+	{
+		if (Reward.Kind != ERobberRewardKind::PuzzleHint)
+		{
+			return;
+		}
+		TArray<URobberPuzzleComponent*> Choices;
+		for (URobberPuzzleComponent* Puzzle : LevelPuzzles)
+		{
+			if (Puzzle && Puzzle != Not && !Puzzle->GetHintText().IsEmpty())
+			{
+				Choices.Add(Puzzle);
+			}
+		}
+		if (Choices.IsEmpty())
+		{
+			// No other puzzle tonight: a free clue is the next best thing.
+			Reward.Kind = ERobberRewardKind::TipOff;
+			return;
+		}
+		Reward.HintPuzzle = Choices[FMath::RandHelper(Choices.Num())];
+	};
+	for (FRobberExhibitAssignment* Each : Givers)
+	{
+		PickHint(Each->Reward, Each->Puzzle);
+	}
+	for (FRobberChestDeal& Deal : ChestDeals)
+	{
+		PickHint(Deal.Reward, Deal.Opener);
+	}
 	return true;
 }
 
@@ -554,7 +744,18 @@ bool ARobberNightDirector::IsSolvable(const TArray<FRobberExhibitAssignment>& De
 	};
 	auto CanFinish = [&](const FRobberExhibitAssignment& Each)
 	{
-		return HaveAll(KeysNeededAt(Each.Exhibit)) && HaveAll(KeysNeededAt(Each.Target)) && HaveAll(KeysNeededAt(Each.Spot));
+		return HaveAll(KeysNeededAt(Each.Exhibit)) && HaveAll(KeysNeededAt(Each.Target)) && HaveAll(KeysNeededAt(Each.Spot))
+			&& HaveAll(KeysNeededAt(Each.Puzzle.Get()));
+	};
+	// A chest needs its own room and the room of the puzzle that opens it. Only room keys are known here: a puzzle
+	// standing behind the very door it opens isn't caught.
+	auto CanOpen = [&](const FRobberChestDeal& Chest)
+	{
+		return HaveAll(KeysNeededAt(Chest.Chest.Get())) && HaveAll(KeysNeededAt(Chest.Opener.Get()));
+	};
+	auto PaysKey = [](const FRobberReward& Reward)
+	{
+		return Reward.Kind == ERobberRewardKind::Key || Reward.Kind == ERobberRewardKind::Tool;
 	};
 	// Keep collecting until nothing new turns up. A key behind its own door never gets collected, so that deal fails.
 	bool bProgress = true;
@@ -577,6 +778,21 @@ bool ARobberNightDirector::IsSolvable(const TArray<FRobberExhibitAssignment>& De
 				Keys.Add(Each.Reward.KeyId);
 				bProgress = true;
 			}
+		}
+		for (const FRobberChestDeal& Chest : ChestDeals)
+		{
+			if (PaysKey(Chest.Reward) && !Keys.Contains(Chest.Reward.KeyId) && CanOpen(Chest))
+			{
+				Keys.Add(Chest.Reward.KeyId);
+				bProgress = true;
+			}
+		}
+	}
+	for (const FRobberChestDeal& Chest : ChestDeals)
+	{
+		if ((PaysKey(Chest.Reward) || Chest.Reward.Kind == ERobberRewardKind::VaultDigits) && !CanOpen(Chest))
+		{
+			return false;
 		}
 	}
 	for (const FRobberExhibitAssignment& Each : Deal)
@@ -623,6 +839,39 @@ void ARobberNightDirector::CollectFacts(TArray<FClueFact>& Required, TArray<FClu
 			Fact.Kind = ERobberClueKind::KeyHolder;
 			Fact.Slots.Add(TEXT("exhibit"), Each.Speaker);
 			Fact.Slots.Add(TEXT("key"), Each.Reward.KeyName);
+		}
+	}
+	// A key or digits in a chest: say where the chest is.
+	for (const FRobberChestDeal& Deal : ChestDeals)
+	{
+		const bool bKey = Deal.Reward.Kind == ERobberRewardKind::Key || Deal.Reward.Kind == ERobberRewardKind::Tool;
+		if (!bKey && Deal.Reward.Kind != ERobberRewardKind::VaultDigits)
+		{
+			continue;
+		}
+		FClueFact Fact;
+		Fact.Kind = ERobberClueKind::ObjectLocation;
+		Fact.Slots.Add(TEXT("object"), bKey
+			? FText::Format(NSLOCTEXT("ExhibitTalk", "ChestKey", "a chest with the {0} in it"), Deal.Reward.KeyName)
+			: NSLOCTEXT("ExhibitTalk", "ChestDigits", "a chest with part of the vault code in it"));
+		if (AddRoomSlots(Fact.Slots, Deal.Chest))
+		{
+			Required.Add(Fact);
+		}
+	}
+	for (const URobberPuzzleComponent* Puzzle : LevelPuzzles)
+	{
+		const FText Hint = Puzzle ? Puzzle->GetHintText() : FText::GetEmpty();
+		const ARobberRoomInfo* Room = Puzzle ? FindRoom(Puzzle->GetPuzzleLocation()) : nullptr;
+		if (!Hint.IsEmpty() && Room)
+		{
+			FClueFact Fact;
+			Fact.Kind = ERobberClueKind::PuzzleHint;
+			Fact.Slots.Add(TEXT("object"), ExhibitTalk::PuzzleName(Puzzle));
+			Fact.Slots.Add(TEXT("room"), Room->RoomName);
+			Fact.Slots.Add(TEXT("floor"), Room->FloorName);
+			Fact.Slots.Add(TEXT("clue"), Hint);
+			Others.Add(Fact);
 		}
 	}
 	for (TActorIterator<AActor> It(GetWorld()); It; ++It)
@@ -774,7 +1023,9 @@ FFormatNamedArguments ARobberNightDirector::SlotsFor(const FRobberExhibitAssignm
 	Slots.Add(TEXT("item"), Row ? Row->ItemName : FText::GetEmpty());
 	const FRobberExhibitAssignment* Target = FindAssignment(Each.Target);
 	Slots.Add(TEXT("exhibit"), Target ? Target->Speaker : FText::GetEmpty());
-	const ARobberRoomInfo* Room = Each.Spot ? FindRoom(Each.Spot->GetActorLocation()) : Each.Target ? FindRoom(Each.Target->GetActorLocation()) : nullptr;
+	const ARobberRoomInfo* Room = Each.Spot ? FindRoom(Each.Spot->GetActorLocation()) : Each.Target ? FindRoom(Each.Target->GetActorLocation())
+		: Each.Puzzle ? FindRoom(Each.Puzzle->GetPuzzleLocation()) : nullptr;
+	Slots.Add(TEXT("object"), ExhibitTalk::PuzzleName(Each.Puzzle));
 	Slots.Add(TEXT("room"), Room ? Room->RoomName : NSLOCTEXT("ExhibitTalk", "SomeRoom", "the museum"));
 	Slots.Add(TEXT("floor"), Room ? Room->FloorName : FText::GetEmpty());
 	return Slots;
@@ -931,6 +1182,12 @@ void ARobberNightDirector::BuildQuest(FRobberExhibitAssignment& Each, UDialogueC
 void ARobberNightDirector::OnQuestAccepted(AActor* Giver, UPlayerQuestComponent* Player)
 {
 	const FRobberExhibitAssignment* Each = FindAssignment(Giver);
+	if (Each && Each->QuestKind == ERobberQuestKind::Puzzle && Each->bPuzzleSolved && Each->Quest && Player)
+	{
+		// Solved before anyone asked: it counts, so the quest is ready straight away.
+		Player->ReportQuestEvent(Each->Quest->ProgressEvent, 1);
+		return;
+	}
 	if (!Each || Each->QuestKind != ERobberQuestKind::Deliver || !Each->Quest || !Giver || Giver->GetWorld() != GetWorld())
 	{
 		return;
@@ -985,6 +1242,7 @@ void ARobberNightDirector::OnQuestTurnedIn(AActor* Giver, UPlayerQuestComponent*
 		}
 		break;
 	case ERobberRewardKind::TipOff:
+	case ERobberRewardKind::PuzzleHint:
 		if (Journal && !Each->JournalClue.IsEmpty())
 		{
 			Journal->LearnFact(Giver, Each->Speaker, Each->JournalClue);
@@ -1030,5 +1288,74 @@ void ARobberNightDirector::OnConversationStarted(AActor* Talker, APlayerState* P
 	if (URobberJournalComponent* Journal = Controller ? Controller->FindComponentByClass<URobberJournalComponent>() : nullptr)
 	{
 		Journal->LearnFact(Talker, Each->Speaker, Each->JournalClue);
+	}
+}
+
+void ARobberNightDirector::OnExhibitPuzzleSolved(AActor* Exhibit, AActor* Puzzle, APawn* SolvedBy)
+{
+	FRobberExhibitAssignment* Each = Assignments.FindByPredicate([Exhibit](const FRobberExhibitAssignment& One) { return One.Exhibit == Exhibit; });
+	if (!Each || !Each->Puzzle || Each->Puzzle->GetOwner() != Puzzle || !Each->Quest || Each->bPuzzleSolved || !Exhibit || Exhibit->GetWorld() != GetWorld())
+	{
+		return;
+	}
+	Each->bPuzzleSolved = true;
+	// The whole crew gets the tick, whoever solved it. Anyone who takes the quest later gets it on accepting.
+	for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
+	{
+		if (UPlayerQuestComponent* Quests = It->IsValid() ? It->Get()->FindComponentByClass<UPlayerQuestComponent>() : nullptr)
+		{
+			Quests->ReportQuestEvent(Each->Quest->ProgressEvent, 1);
+		}
+	}
+	if (ARobberGameState* GameState = GetWorld()->GetGameState<ARobberGameState>())
+	{
+		const APlayerState* By = SolvedBy ? SolvedBy->GetPlayerState() : nullptr;
+		FFormatNamedArguments Slots;
+		Slots.Add(TEXT("who"), By ? FText::FromString(By->GetPlayerName()) : NSLOCTEXT("ExhibitTalk", "SomeoneSolved", "Someone"));
+		Slots.Add(TEXT("object"), ExhibitTalk::PuzzleName(Each->Puzzle));
+		Slots.Add(TEXT("giver"), Each->Speaker);
+		GameState->TellCrew(ExhibitTalk::Fill(NSLOCTEXT("ExhibitTalk", "PuzzleSolvedCrew", "{who} solved the {object}. {giver} will want to hear."), Slots));
+	}
+}
+
+void ARobberNightDirector::FillChests()
+{
+	const ARobberVaultDoor* Vault = nullptr;
+	for (TActorIterator<ARobberVaultDoor> It(GetWorld()); It; ++It)
+	{
+		if (It->GetLevel() == GetLevel())
+		{
+			Vault = *It;
+		}
+	}
+	for (const FRobberChestDeal& Deal : ChestDeals)
+	{
+		if (!Deal.Chest)
+		{
+			continue;
+		}
+		TArray<int32> Indexes, Values;
+		if (Deal.Reward.Kind == ERobberRewardKind::VaultDigits && Vault)
+		{
+			for (const int32 Index : Deal.Reward.DigitIndexes)
+			{
+				if (Vault->GetCode().IsValidIndex(Index))
+				{
+					Indexes.Add(Index);
+					Values.Add(Vault->GetCode()[Index]);
+				}
+			}
+		}
+		FText CrewMessage;
+		if (Deal.Reward.Kind == ERobberRewardKind::GuardDistraction || Deal.Reward.Kind == ERobberRewardKind::ExtraTime)
+		{
+			FRobberExhibitAssignment AsQuest;
+			AsQuest.Reward = Deal.Reward;
+			RewardLine(AsQuest, &CrewMessage);
+			FFormatNamedArguments Slots;
+			Slots.Add(TEXT("giver"), NSLOCTEXT("ExhibitTalk", "ChestGiver", "A chest"));
+			CrewMessage = CrewMessage.IsEmpty() ? CrewMessage : ExhibitTalk::Fill(CrewMessage, Slots);
+		}
+		Deal.Chest->SetContents(Deal.Reward, Deal.JournalClue, CrewMessage, Indexes, Values, ARobberVaultDoor::CodeLength);
 	}
 }

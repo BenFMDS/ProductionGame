@@ -1,6 +1,7 @@
 #include "Dialogue/QuestDialogueCharacter.h"
 #include "Components/StaticMeshComponent.h"
 #include "Dialogue/DialogueComponent.h"
+#include "Heist/RobberPuzzle.h"
 #include "Quest/QuestGiverComponent.h"
 
 namespace
@@ -52,4 +53,9 @@ void AQuestDialogueCharacter::BeginPlay()
 	// Preserve old Blueprint data, but the Talker Component is now the runtime source.
 	if (NativeQuestGiver) NativeQuestGiver->AvailableQuests = NativeQuestDefinitions;
 	Super::BeginPlay();
+}
+
+void AQuestDialogueCharacter::HandlePuzzleSolved(AActor* Puzzle, APawn* SolvedBy)
+{
+	if (HasAuthority()) URobberPuzzleComponent::OnExhibitPuzzleSolved.Broadcast(this, Puzzle, SolvedBy);
 }

@@ -230,6 +230,7 @@ private:
 	UFUNCTION() void OnKeyDrop();
 	UFUNCTION() void OnKeyJournal();
 	UFUNCTION() void OnKeyPause();
+	UFUNCTION() void OnKeySprint();
 
 	void LoadFromSettings();
 	void RefreshAudio();
@@ -347,6 +348,9 @@ class PRODUCTIONGAME_API URobberPauseMenu : public URobberMenuWidget
 public:
 	virtual void CloseMenu() override;
 
+	/** Opens straight on "are you sure?" (the hideout's back door); Stay then closes the menu instead of going back to it. */
+	void ShowQuitCheckOnly();
+
 	/** Empty uses WBP_RobberSettings. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Case File")
 	TSubclassOf<URobberMenuWidget> SettingsClass;
@@ -356,6 +360,8 @@ protected:
 	virtual FReply NativeOnKeyDown(const FGeometry& MyGeometry, const FKeyEvent& InKeyEvent) override;
 
 private:
+	bool bQuitCheckOnly = false;
+
 	UFUNCTION() void OnResume();
 	UFUNCTION() void OnSettings();
 	UFUNCTION() void OnQuit();

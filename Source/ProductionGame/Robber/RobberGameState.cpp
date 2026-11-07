@@ -17,6 +17,7 @@
 #include "Heist/RobberEntryPoint.h"
 #include "Heist/RobberStage.h"
 #include "Heist/RobberJournal.h"
+#include "Heist/RobberSecurityCamera.h"
 #include "Heist/RobberVault.h"
 #include "Kismet/GameplayStatics.h"
 #include "Net/UnrealNetwork.h"
@@ -125,6 +126,72 @@ void ARobberGameState::Tick(float DeltaSeconds)
 		TickPhase();
 		TickHeat(DeltaSeconds);
 	}
+	TickHeatTier();
+}
+
+ERobberHeatTier ARobberGameState::GetHeatTier() const
+{
+	if (bAlarmRaised || Heat >= MaxHeat)
+	{
+		return ERobberHeatTier::Alarm;
+	}
+	return Heat >= RobberHeatCosts::AlertAt ? ERobberHeatTier::Alert
+		: Heat >= RobberHeatCosts::SuspiciousAt ? ERobberHeatTier::Suspicious : ERobberHeatTier::Calm;
+}
+
+void ARobberGameState::TickHeatTier()
+{
+	const ERobberHeatTier Tier = GetHeatTier();
+	if (Tier == LastHeatTier)
+	{
+		return;
+	}
+	const ERobberHeatTier Old = LastHeatTier;
+	LastHeatTier = Tier;
+	if (HasAuthority() && !RobberStage::IsInLobby(ReplicatedGameStage))
+	{
+		if (Tier == ERobberHeatTier::Alert)
+		{
+			bReachedAlert = true;
+		}
+		// Only going up gets a line; the alarm has its own.
+		if (Tier > Old && Tier == ERobberHeatTier::Suspicious)
+		{
+			TellCrew(NSLOCTEXT("RobberHeat", "TierSuspicious", "A guard thinks they heard something. Keep it down."));
+		}
+		else if (Tier > Old && Tier == ERobberHeatTier::Alert)
+		{
+			TellCrew(NSLOCTEXT("RobberHeat", "TierAlert", "The museum's on alert: the cameras are sweeping faster."));
+		}
+	}
+	OnHeatTierChanged.Broadcast(Tier, Old);
+}
+
+void ARobberGameState::ReportSighting(FVector Location, AActor* ReportedBy)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+	++SightingCount;
+	LastSighting = Location;
+	UE_LOG(LogTemp, Log, TEXT("Sighting at %s by %s"), *Location.ToCompactString(), *GetNameSafe(ReportedBy));
+	OnInvestigate.Broadcast(Location, ReportedBy);
+}
+
+void ARobberGameState::DisturbanceChecked(FVector Location, float Radius)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+	for (TActorIterator<ARobberSecurityCamera> It(GetWorld()); It; ++It)
+	{
+		if (It->IsAwaitingGuardNear(Location, Radius))
+		{
+			It->ResumeScanning();
+		}
+	}
 }
 
 void ARobberGameState::TickPhase()
@@ -160,9 +227,11 @@ void ARobberGameState::TickPhase()
 void ARobberGameState::TickHeat(float DeltaSeconds)
 {
 	// Cools once the crew has been quiet a while; stays full once the alarm's up.
-	if (Heat > 0.f && !bAlarmRaised && GetWorld()->GetTimeSeconds() - LastHeatTime > HeatCoolDelay)
+	const float Floor = bReachedAlert ? RobberHeatCosts::SuspiciousAt : 0.f;
+	if (Heat > Floor && !bAlarmRaised && GetWorld()->GetTimeSeconds() - LastHeatTime > HeatCoolDelay)
 	{
-		Heat = FMath::Max(0.f, Heat - HeatCoolPerSecond * DeltaSeconds);
+		const float Rate = HeatCoolPerSecond * (GetHeatTier() == ERobberHeatTier::Alert ? AlertCoolScale : 1.f);
+		Heat = FMath::Max(Floor, Heat - Rate * DeltaSeconds);
 	}
 }
 
@@ -616,6 +685,8 @@ void ARobberGameState::ResetCrewToLobby()
 	bAlarmRaised = false;
 	Heat = 0.f;
 	PeakHeat = 0.f;
+	bReachedAlert = false;
+	SightingCount = 0;
 	GuardsArriveServerTime = 0.;
 	BonusGuardsSeconds = 0.f;
 	for (APlayerState* Player : PlayerArray)
