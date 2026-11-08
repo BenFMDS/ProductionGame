@@ -12,12 +12,29 @@ class APlayerState;
 class ARobberController;
 class ARobberEntryPoint;
 
+/** How worked up the museum is. Bands of heat; the HUD headline and the cameras follow it. */
+UENUM(BlueprintType)
+enum class ERobberHeatTier : uint8
+{
+	Calm,
+	Suspicious,
+	Alert,
+	Alarm,
+};
+
 /**
  * How much heat (of 100) each kind of noise costs; one place to tune them. Getting heard by a guard twice puts the crew
- * at HOT, a third time sets the alarm off. Guards and cameras will add their own later.
+ * at HOT, a third time sets the alarm off. Guards will add their own later.
  */
 namespace RobberHeatCosts
 {
+	/** Heat where each tier starts. Alarm is MaxHeat or a tripped laser. */
+	constexpr float SuspiciousAt = 25.f;
+	constexpr float AlertAt = 50.f;
+
+	/** A security camera watched someone long enough to be sure. */
+	constexpr float CameraSpotted = 15.f;
+
 	/** A prop's noise meter filled up ("a guard heard..."). */
 	constexpr float Heard = 20.f;
 	/** Per second the roll-up door is up. */
@@ -32,6 +49,8 @@ namespace RobberHeatCosts
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FRobberStageChangedSignature, uint8, NewGameStage);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FRobberJobsChangedSignature);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FRobberHeatTierChangedSignature, ERobberHeatTier, NewTier, ERobberHeatTier, OldTier);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FRobberInvestigateSignature, FVector, Location, AActor*, ReportedBy);
 
 /** Native replicated game state for the Robber gameplay maps. */
 UCLASS(Blueprintable)
@@ -154,6 +173,36 @@ public:
 	/** Server only. Someone crossed a live laser: straight to full heat. */
 	void TripLaser(APawn* Pawn);
 
+	/** Same bands on every machine: worked out from the replicated heat and alarm. */
+	UFUNCTION(BlueprintPure, Category = "Robber|Heat")
+	ERobberHeatTier GetHeatTier() const;
+
+	/** Fires on every machine when the tier changes (it's checked each tick against the replicated heat). */
+	UPROPERTY(BlueprintAssignable, Category = "Robber|Heat")
+	FRobberHeatTierChangedSignature OnHeatTierChanged;
+
+	/**
+	 * Server only. Something (a camera) saw the crew at Location. Fires OnInvestigate for the guards to pick up;
+	 * nothing in C++ moves a guard, so BP_GuardController binds this and walks over.
+	 */
+	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Robber|Heat")
+	void ReportSighting(FVector Location, AActor* ReportedBy);
+
+	/**
+	 * Server only. A guard has been to Location and had a look: every camera frozen on a disturbance within Radius
+	 * starts panning again. Call it from the guard when it reaches an OnInvestigate spot.
+	 */
+	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Robber|Heat")
+	void DisturbanceChecked(FVector Location, float Radius = 600.f);
+
+	/** Server only. Guards should go and look at Location. */
+	UPROPERTY(BlueprintAssignable, Category = "Robber|Heat")
+	FRobberInvestigateSignature OnInvestigate;
+
+	/** Server only: sightings reported tonight, and where the last one was. */
+	int32 GetSightingCount() const { return SightingCount; }
+	FVector GetLastSighting() const { return LastSighting; }
+
 	// --- Nights ---
 	// Each night is a sublevel of L_GameLevel, streamed in at its own origin while the lobby stays loaded.
 
@@ -273,6 +322,21 @@ private:
 
 	UPROPERTY(EditDefaultsOnly, Category = "Robber|Heat")
 	float HeatCoolPerSecond = 2.f;
+
+	/** Cooling at Alert is this fraction of HeatCoolPerSecond: an alert museum calms down slowly. */
+	UPROPERTY(EditDefaultsOnly, Category = "Robber|Heat")
+	float AlertCoolScale = 0.5f;
+
+	/** Each machine: the tier last broadcast, to spot changes. */
+	ERobberHeatTier LastHeatTier = ERobberHeatTier::Calm;
+
+	/** Server only: once the museum's been on Alert tonight it never cools below Suspicious again. */
+	bool bReachedAlert = false;
+
+	int32 SightingCount = 0;
+	FVector LastSighting = FVector::ZeroVector;
+
+	void TickHeatTier();
 
 	/** Soft so the Blueprint alarm can be resolved at runtime; ConstructorHelpers is only legal in constructors. */
 	UPROPERTY(EditDefaultsOnly, Category = "Robber|Alarm")

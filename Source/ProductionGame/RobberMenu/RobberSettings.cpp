@@ -38,6 +38,8 @@ const TArray<FRobberKeyAction>& URobberSettingsSubsystem::KeyActions()
 		{ TEXT("Drop"), EKeys::G, TEXT("IA_Drop") },
 		{ TEXT("Journal"), EKeys::J, nullptr },
 		{ TEXT("Pause"), EKeys::P, nullptr },
+		// Held, read by ARobberController.
+		{ TEXT("Sprint"), EKeys::LeftShift, nullptr },
 	};
 	return Actions;
 }

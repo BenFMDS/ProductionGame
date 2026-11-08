@@ -115,9 +115,75 @@ void AProductionGameCharacter::DoAim(float Yaw, float Pitch)
 	AddControllerPitchInput(Pitch);
 }
 
+void AProductionGameCharacter::BeginPlay()
+{
+	Super::BeginPlay();
+	BaseWalkSpeed = GetCharacterMovement()->MaxWalkSpeed;
+}
+
+void AProductionGameCharacter::SetSprintHeld(bool bHeld)
+{
+	if (bSprintHeld == bHeld)
+	{
+		return;
+	}
+	bSprintHeld = bHeld;
+	if (!HasAuthority())
+	{
+		ServerSetSprintHeld(bHeld);
+	}
+}
+
+void AProductionGameCharacter::ServerSetSprintHeld_Implementation(bool bHeld)
+{
+	bSprintHeld = bHeld;
+}
+
+void AProductionGameCharacter::TickSprint(float DeltaSeconds)
+{
+	// Only the owning client and the server move this character; both run the same numbers so the
+	// client's predicted speed matches the server's and it doesn't get corrected.
+	if (!IsLocallyControlled() && !HasAuthority())
+	{
+		return;
+	}
+	UCharacterMovementComponent* Movement = GetCharacterMovement();
+	// Standing still with the key down doesn't burn stamina.
+	// Acceleration, not the input vector: the server doesn't have a remote player's input, but it does replay their moves.
+	const bool bMoving = Movement->Velocity.SizeSquared2D() > FMath::Square(10.f) && !Movement->GetCurrentAcceleration().IsNearlyZero();
+	bSprinting = bSprintHeld && !bWinded && bMoving && Stamina > 0.f;
+	if (bSprinting)
+	{
+		SinceSprinted = 0.f;
+		Stamina = FMath::Max(0.f, Stamina - DeltaSeconds / FMath::Max(0.1f, StaminaDrainSeconds));
+		if (Stamina <= 0.f)
+		{
+			bWinded = true;
+			bSprinting = false;
+		}
+	}
+	else
+	{
+		SinceSprinted += DeltaSeconds;
+		if (SinceSprinted >= StaminaRefillDelay)
+		{
+			Stamina = FMath::Min(1.f, Stamina + DeltaSeconds / FMath::Max(0.1f, StaminaRefillSeconds));
+		}
+		if (bWinded && Stamina >= WindedRecovery)
+		{
+			bWinded = false;
+		}
+	}
+	if (BaseWalkSpeed > 0.f)
+	{
+		Movement->MaxWalkSpeed = BaseWalkSpeed * MoveSpeedMultiplier * (bSprinting ? SprintSpeedMultiplier : 1.f);
+	}
+}
+
 void AProductionGameCharacter::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
+	TickSprint(DeltaSeconds);
 
 	if (!PendingLook.IsNearlyZero(0.001))
 	{

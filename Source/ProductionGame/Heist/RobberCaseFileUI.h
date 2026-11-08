@@ -67,6 +67,8 @@ protected:
  * BELOW  GuardsStamp + GuardsText, ToastPanel + ToastText.
  * CREW   CrewCard0-3, CrewColour0-3 (border), CrewName0-3, CrewStatus0-3.
  * TAB    JournalNew + JournalNewText.
+ * SPRINT SprintPanel (faded out while stamina's full), SprintBar (progress bar). Built in code at the bottom centre
+ *        when the WBP doesn't have a SprintBar.
  */
 UCLASS(Abstract)
 class PRODUCTIONGAME_API URobberCaseFileHUD : public URobberCaseFileWidgetBase
@@ -88,10 +90,19 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Case File")
 	FLinearColor TextColour = FLinearColor(FColor(0x1b, 0x1b, 0x1b));
 
+	/** Sprint bar fill, and the fill while winded (out of stamina, can't sprint yet). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Case File")
+	FLinearColor SprintColour = FLinearColor(FColor(0xff, 0xd4, 0x3b));
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Case File")
+	FLinearColor WindedColour = FLinearColor(FColor(0xff, 0x6b, 0x4a));
+
 protected:
+	virtual void NativeOnInitialized() override;
 	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
 
 private:
+	void UpdateSprint(float DeltaTime);
 	void UpdateNote(const ARobberGameState* State);
 	void UpdatePaper(const ARobberGameState* State);
 	void UpdateCrew(const ARobberGameState* State);
