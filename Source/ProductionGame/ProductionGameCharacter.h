@@ -122,6 +122,10 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Sprint")
 	float WindedRecovery = 0.3f;
 
+	/** Other systems (weighted carry) scale walk speed through this. */
+	UPROPERTY(BlueprintReadWrite, Category = "Movement")
+	float MoveSpeedMultiplier = 1.f;
+
 protected:
 	virtual void BeginPlay() override;
 

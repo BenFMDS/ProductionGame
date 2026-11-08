@@ -176,7 +176,7 @@ void AProductionGameCharacter::TickSprint(float DeltaSeconds)
 	}
 	if (BaseWalkSpeed > 0.f)
 	{
-		Movement->MaxWalkSpeed = BaseWalkSpeed * (bSprinting ? SprintSpeedMultiplier : 1.f);
+		Movement->MaxWalkSpeed = BaseWalkSpeed * MoveSpeedMultiplier * (bSprinting ? SprintSpeedMultiplier : 1.f);
 	}
 }
 
