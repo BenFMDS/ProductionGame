@@ -15,14 +15,22 @@ class APlayerState;
 UENUM(BlueprintType)
 enum class ERobberExhibitRole : uint8 { Silly, Helpful, Quest };
 
+// New values go on the end: the Data Tables store these by name, but saved Blueprints store the byte.
 UENUM(BlueprintType)
-enum class ERobberQuestKind : uint8 { Riddle, Fetch, Gossip, Deliver, Tamper, Flattery };
+enum class ERobberQuestKind : uint8 { Riddle, Fetch, Gossip, Deliver, Tamper, Flattery, Puzzle };
 
 UENUM(BlueprintType)
-enum class ERobberClueKind : uint8 { KeyHolder, ObjectLocation, DigitHolder, ToolUse };
+enum class ERobberClueKind : uint8 { KeyHolder, ObjectLocation, DigitHolder, ToolUse, PuzzleHint };
 
 UENUM(BlueprintType)
-enum class ERobberRewardKind : uint8 { None, VaultDigits, Key, Tool, GuardDistraction, ExtraTime, TipOff };
+enum class ERobberRewardKind : uint8 { None, VaultDigits, Key, Tool, GuardDistraction, ExtraTime, TipOff, PuzzleHint };
+
+/** Which kind of museum puzzle a Puzzle component sits on, so quest lines can talk about wires or plates. */
+UENUM(BlueprintType)
+enum class ERobberPuzzleType : uint8 { Any, Wire, Combination, CodeLock, PressurePlate, Scale };
+
+class URobberPuzzleComponent;
+class ARobberPuzzleChest;
 
 /** What an exhibit pays for its quest tonight. It belongs to the exhibit for the night, so any quest can pay any reward. */
 USTRUCT(BlueprintType)
@@ -37,6 +45,8 @@ struct PRODUCTIONGAME_API FRobberReward
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Reward") FText KeyName;
 	/** VaultDigits: which positions of the code. */
 	UPROPERTY(BlueprintReadOnly, Category = "Reward") TArray<int32> DigitIndexes;
+	/** PuzzleHint: the puzzle whose answer this gives away. */
+	UPROPERTY(BlueprintReadOnly, Category = "Reward") TObjectPtr<URobberPuzzleComponent> HintPuzzle;
 };
 
 // --- Data Table rows. Slots in lines: {giver} {exhibit} {room} {floor} {object} {item} {key} {digits} {clue}. ---
@@ -65,6 +75,8 @@ struct PRODUCTIONGAME_API FRobberQuestRow : public FTableRowBase
 {
 	GENERATED_BODY()
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Quest") ERobberQuestKind Kind = ERobberQuestKind::Fetch;
+	/** Puzzle quests: which kind of puzzle the lines are written for. Any fits every puzzle. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Quest") ERobberPuzzleType PuzzleType = ERobberPuzzleType::Any;
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Quest") FText QuestName;
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Quest") FText Objective;
 	/** The thing to find, carry or flip. Unused by Riddle, Flattery and Gossip. */
@@ -197,10 +209,26 @@ struct PRODUCTIONGAME_API FRobberExhibitAssignment
 	/** Fetch, Tamper: where its prop goes. */
 	UPROPERTY() TObjectPtr<ARobberQuestSpot> Spot;
 	UPROPERTY() TObjectPtr<ARobberQuestProp> Prop;
-	/** Helpful: the journal line, written when they say it. TipOff: the free clue. */
+	/** Puzzle quests: the puzzle to solve. */
+	UPROPERTY() TObjectPtr<URobberPuzzleComponent> Puzzle;
+	UPROPERTY() bool bPuzzleSolved = false;
+	/** Helpful: the journal line, written when they say it. TipOff: the free clue. PuzzleHint: the hint. */
 	UPROPERTY() FText JournalClue;
 	/** Crew-wide rewards pay out once per exhibit, however many players finish the quest. */
 	UPROPERTY() bool bCrewRewardPaid = false;
+};
+
+/** What's in one puzzle chest tonight. Server only. */
+USTRUCT()
+struct PRODUCTIONGAME_API FRobberChestDeal
+{
+	GENERATED_BODY()
+	UPROPERTY() TObjectPtr<ARobberPuzzleChest> Chest;
+	/** The puzzle that opens it (has the chest in its Solve Targets). */
+	UPROPERTY() TObjectPtr<URobberPuzzleComponent> Opener;
+	UPROPERTY() FRobberReward Reward;
+	/** TipOff / PuzzleHint: the note's text. */
+	UPROPERTY() FText JournalClue;
 };
 
 /**
@@ -248,6 +276,7 @@ public:
 	bool IsDealt() const { return bDealt; }
 	int32 GetDealAttempts() const { return DealAttempts; }
 	const TArray<FRobberExhibitAssignment>& GetAssignments() const { return Assignments; }
+	const TArray<FRobberChestDeal>& GetChestDeals() const { return ChestDeals; }
 	const FRobberExhibitAssignment* FindAssignment(const AActor* Exhibit) const;
 	/** Could a crew finish this deal: every required reward reachable, with no key needing itself? */
 	bool IsSolvable(const TArray<FRobberExhibitAssignment>& Deal) const;
@@ -264,6 +293,11 @@ private:
 	void TryDeal();
 	bool DealOnce(const TArray<AActor*>& Exhibits, const TArray<ARobberQuestSpot*>& Spots);
 	TArray<FName> KeysNeededAt(const AActor* Actor) const;
+	TArray<FName> KeysNeededAt(const URobberPuzzleComponent* Puzzle) const;
+	/** "the fuse box wires in the Server Room: red, then blue." */
+	FText PuzzleHintLine(const URobberPuzzleComponent* Puzzle) const;
+	void FillChests();
+	void OnExhibitPuzzleSolved(AActor* Exhibit, AActor* Puzzle, APawn* SolvedBy);
 	const ARobberRoomInfo* FindRoom(const FVector& Location) const;
 	void CollectFacts(TArray<FClueFact>& Required, TArray<FClueFact>& Others) const;
 	FText TellFact(const FClueFact& Fact, FText& OutJournal) const;
@@ -283,9 +317,12 @@ private:
 	/** Keeps the night's generated dialogue and quest objects alive. */
 	UPROPERTY(Transient) TArray<TObjectPtr<UObject>> Generated;
 	UPROPERTY(Transient) TArray<TObjectPtr<ARobberRoomInfo>> Rooms;
+	UPROPERTY(Transient) TArray<FRobberChestDeal> ChestDeals;
+	/** Every Puzzle component in the night's level. */
+	UPROPERTY(Transient) TArray<TObjectPtr<URobberPuzzleComponent>> LevelPuzzles;
 
 	bool bDealt = false;
 	int32 DealAttempts = 0;
 	FTimerHandle DealTimer;
-	FDelegateHandle AcceptedHandle, TurnedInHandle, ConversationHandle;
+	FDelegateHandle AcceptedHandle, TurnedInHandle, ConversationHandle, PuzzleHandle;
 };

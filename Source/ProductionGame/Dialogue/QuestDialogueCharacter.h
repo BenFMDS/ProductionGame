@@ -24,6 +24,9 @@ public:
 	/** Placeholder colour for the Model Mesh until this NPC has real art. Leave empty to keep the mesh's own material. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Dialogue", meta=(DisplayName="Temp Cube Material")) TObjectPtr<UMaterialInterface> TempCubeMaterial;
 	virtual void OnConstruction(const FTransform& Transform) override;
+	/** BP_TalkingMaster's On Puzzle Solved (BPI_PuzzleSolver) calls this. Passes it to the night director, server only. */
+	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category="Quest")
+	void HandlePuzzleSolved(AActor* Puzzle, APawn* SolvedBy);
 protected:
 	virtual void BeginPlay() override;
 };

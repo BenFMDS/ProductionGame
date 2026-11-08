@@ -23,7 +23,9 @@
 #include "InputMappingContext.h"
 #include "Kismet/GameplayStatics.h"
 #include "Kismet/KismetSystemLibrary.h"
+#include "ProductionGameCharacter.h"
 #include "Robber/RobberGameState.h"
+#include "RobberMenu/RobberMenuWidgets.h"
 #include "Sound/SoundMix.h"
 #include "Styling/CoreStyle.h"
 #include "TimerManager.h"
@@ -68,6 +70,8 @@ ARobberController::ARobberController()
 	// in the CDO to avoid an async-load cycle during editor startup.
 	InteractionWidgetClass = TSoftClassPtr<UUserWidget>(FSoftObjectPath(TEXT("/Game/OurStuff/Core/InteractionSystem/WBP_Interaction.WBP_Interaction_C")));
 	PauseMenuWidgetClass = TSoftClassPtr<UUserWidget>(FSoftObjectPath(TEXT("/Game/OurStuff/UI/CaseFile/Menus/WBP_RobberPauseMenu.WBP_RobberPauseMenu_C")));
+	LobbySettingsClass = TSoftClassPtr<UUserWidget>(FSoftObjectPath(TEXT("/Game/OurStuff/UI/CaseFile/Menus/WBP_RobberSettings.WBP_RobberSettings_C")));
+	LobbyAchievementsClass = TSoftClassPtr<UUserWidget>(FSoftObjectPath(TEXT("/Game/OurStuff/UI/CaseFile/Menus/WBP_RobberAchievements.WBP_RobberAchievements_C")));
 	GameUIWidgetClass = TSoftClassPtr<UUserWidget>(FSoftObjectPath(TEXT("/Game/OurStuff/Widgets/WBP_GameUI.WBP_GameUI_C")));
 	DevUIWidgetClass = TSoftClassPtr<UUserWidget>(FSoftObjectPath(TEXT("/Game/OurStuff/Widgets/WBP_DevUI.WBP_DevUI_C")));
 	CaseFileHUDClass = TSoftClassPtr<URobberCaseFileHUD>(FSoftObjectPath(TEXT("/Game/OurStuff/UI/CaseFile/WBP_CaseFileHUD.WBP_CaseFileHUD_C")));
@@ -240,6 +244,25 @@ void ARobberController::BindPlayerKeys()
 	PlayerKeysInput->KeyBindings.Reset();
 	PlayerKeysInput->BindKey(SettingsSystem->GetKey(TEXT("Pause")), IE_Pressed, this, &ARobberController::TogglePauseMenu);
 	PlayerKeysInput->BindKey(SettingsSystem->GetKey(TEXT("Journal")), IE_Pressed, this, &ARobberController::ToggleJournal);
+	// Not consumed, so a game binding on the same key still gets it.
+	PlayerKeysInput->BindKey(SettingsSystem->GetKey(TEXT("Sprint")), IE_Pressed, this, &ARobberController::OnSprintPressed).bConsumeInput = false;
+	PlayerKeysInput->BindKey(SettingsSystem->GetKey(TEXT("Sprint")), IE_Released, this, &ARobberController::OnSprintReleased).bConsumeInput = false;
+}
+
+void ARobberController::OnSprintPressed()
+{
+	if (AProductionGameCharacter* Runner = Cast<AProductionGameCharacter>(GetPawn()))
+	{
+		Runner->SetSprintHeld(true);
+	}
+}
+
+void ARobberController::OnSprintReleased()
+{
+	if (AProductionGameCharacter* Runner = Cast<AProductionGameCharacter>(GetPawn()))
+	{
+		Runner->SetSprintHeld(false);
+	}
 }
 
 void ARobberController::ClientAchievement_Implementation(FName AchievementId, ERobberAchievementStep Step, FName Detail, int32 Amount)
@@ -389,6 +412,30 @@ void ARobberController::TogglePauseMenu()
 	else
 	{
 		OpenPauseMenu();
+	}
+}
+
+void ARobberController::ClientOpenLobbyMenu_Implementation(ERobberLobbyMenu Menu)
+{
+	if (IsValid(ActiveWidget) || (IsValid(LobbyMenu) && LobbyMenu->IsInViewport()))
+	{
+		return;
+	}
+	if (Menu == ERobberLobbyMenu::Quit)
+	{
+		OpenPauseMenu();
+		if (URobberPauseMenu* Pause = Cast<URobberPauseMenu>(ActiveWidget))
+		{
+			Pause->ShowQuitCheckOnly();
+		}
+		return;
+	}
+	const TSoftClassPtr<UUserWidget>& Class = Menu == ERobberLobbyMenu::Settings ? LobbySettingsClass : LobbyAchievementsClass;
+	// The menu takes UI-only input when built and gives the game back when closed (URobberMenuWidget).
+	LobbyMenu = Class.IsNull() ? nullptr : CreateWidget<UUserWidget>(this, Class.LoadSynchronous());
+	if (LobbyMenu)
+	{
+		LobbyMenu->AddToViewport(10);
 	}
 }
 
