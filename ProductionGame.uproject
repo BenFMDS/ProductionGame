@@ -8,6 +8,11 @@
 			"Name": "ProductionGame",
 			"Type": "Runtime",
 			"LoadingPhase": "Default"
+		},
+		{
+			"Name": "ProductionGameTools",
+			"Type": "Editor",
+			"LoadingPhase": "Default"
 		}
 	],
 	"Plugins": [
@@ -31,6 +36,10 @@
 			"Name": "Scythe",
 			"Enabled": true,
 			"MarketplaceURL": "com.epicgames.launcher://ue/Fab/product/01e83831-6ce9-4cc0-b8fd-2587cd5df8d2"
+		},
+		{
+			"Name": "SteamSockets",
+			"Enabled": true
 		}
 	]
 }
