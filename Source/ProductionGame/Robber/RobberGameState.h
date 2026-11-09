@@ -146,6 +146,9 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Robber|Heist")
 	bool IsPowerCut() const { return bPowerCut; }
 
+	/** The generator's running. BP_PowerGenerator turns it back on 10 seconds after a cut; IsPowerCut stays set for the night. */
+	bool IsPowerOn() const;
+
 	// --- Heat: how much the museum has noticed, crew-wide, 0-100. Full heat raises the alarm. ---
 
 	static constexpr float MaxHeat = 100.f;
@@ -261,7 +264,6 @@ private:
 
 	FRobberCrewStatus* FindOrAddCrewStatus(APlayerState* Player);
 	void TickPhase();
-	bool IsPowerOn() const;
 
 	uint8 GetLegacyGameState() const;
 	void SetLegacyGameState(uint8 NewGameStage);

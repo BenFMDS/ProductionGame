@@ -12,6 +12,10 @@ class APawn;
 
 /** Server only: an NPC (Talker) started a conversation with Player. */
 DECLARE_MULTICAST_DELEGATE_TwoParams(FOnConversationStarted, AActor* /*Talker*/, APlayerState* /*Player*/);
+/** Server only: a player picked a choice carrying a StoryEvent. */
+DECLARE_MULTICAST_DELEGATE_ThreeParams(FOnDialogueEvent, AActor* /*Talker*/, UPlayerQuestComponent* /*Player*/, FName /*Event*/);
+/** Which node to open on for this player, or None for the dialogue's usual choice. */
+DECLARE_DELEGATE_RetVal_OneParam(FName, FDialogueEntryOverride, UPlayerQuestComponent* /*Player*/);
 
 /** A line this talker can have with a player who's on someone else's quest (ask about the gossip, hand over the parcel). */
 USTRUCT()
@@ -34,6 +38,9 @@ public:
 	UDialogueComponent();
 	/** Any talker, any world; listeners check the world themselves (the journal notes who you've spoken to). */
 	static FOnConversationStarted OnConversationStarted;
+	static FOnDialogueEvent OnDialogueEvent;
+	/** Set by the night director and story quests: the same talker can open differently for each player. */
+	FDialogueEntryOverride EntryOverride;
 	/** The one dialogue asset this actor speaks. A conversation cannot begin without it. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Dialogue", meta=(DisplayName="Dialogue Asset")) TObjectPtr<UDialogueDefinition> Dialogue;
 	/** Optional quests offered through this conversation. New talkers use this instead of a separate Quest Giver Component. */

@@ -6,6 +6,7 @@
 #include "AchievementTypes.h"
 #include "ProductionGamePlayerController.h"
 #include "Robber/RobberAchievementTracker.h"
+#include "Heist/RobberDevMenu.h"
 #include "Heist/RobberHideout.h"
 #include "RobberController.generated.h"
 
@@ -14,10 +15,11 @@ class ARobberMapTable;
 class URobberCaseFileHUD;
 class URobberJournalComponent;
 class URobberJournalWidget;
+class URobberPowerCut;
+class URobberShopCatalogue;
 class UAchievementDefinitionAsset;
 class UAchievementPopupWidget;
 class UInputAction;
-class SWidget;
 class USoundMix;
 class UUserWidget;
 
@@ -64,13 +66,26 @@ public:
 	UUserWidget* GetDevUIWidget() const { return DevUIRef; }
 	UUserWidget* GetGameUIWidget() const { return GameUIRef; }
 
-	/** Dev tool, F10: buttons for every night and the tutorial. Not in Shipping builds. */
-	void ToggleNightSwitcher();
-	bool IsNightSwitcherOpen() const;
+	/** Dev tool, F10: WBP_DevMenu (pick a night, skip stages, cheats). Not in Shipping builds. */
+	void ToggleDevMenu();
+	void CloseDevMenu();
+	bool IsDevMenuOpen() const;
+	URobberDevMenu* GetDevMenu() const { return DevMenu; }
 
-	/** What the night switcher's buttons send. NightIndex as ARobberGameState::SwitchNight. Ignored in Shipping. */
+	/** What the dev menu's buttons send. Defined in RobberDevMenu.cpp. Ignored in Shipping. */
 	UFUNCTION(Server, Reliable)
-	void ServerSwitchNight(int32 NightIndex);
+	void ServerDevAction(ERobberDevAction Action, int32 Value);
+
+	/** Dev menu: who has what quest tonight. The deal only exists on the server. */
+	UFUNCTION(Client, Reliable)
+	void ClientDevQuestList(const TArray<FString>& Lines, const TArray<uint8>& CanFind);
+	FString GetDevQuestList() const { return FString::Join(DevQuestLines, TEXT("\n")); }
+	void ClearDevQuestList() { DevQuestLines.Reset(); DevQuestCanFind.Reset(); ++DevQuestRevision; }
+	TArray<FString> DevQuestLines;
+	TArray<uint8> DevQuestCanFind;
+	int32 DevQuestRevision = 0;
+	/** Server only: what each row's Find button goes to. */
+	TArray<TWeakObjectPtr<AActor>> DevFindTargets;
 
 	/** From the planning table's interact: lean over Table, or step back if already looking at it. */
 	UFUNCTION(Client, Reliable)
@@ -109,6 +124,27 @@ public:
 	void OnSprintReleased();
 	bool IsJournalOpen() const;
 
+	/** The shop, opened from the catalogue on the lobby's lectern. Takes the mouse and stops the player moving. */
+	void OpenShopCatalogue();
+	void CloseShopCatalogue();
+	bool IsShopOpen() const;
+	URobberShopCatalogue* GetShopWidget() const { return ShopWidget; }
+
+	/** The generator's breaker panel for this player. These four are defined in RobberPowerCut.cpp. */
+	UFUNCTION(Client, Reliable)
+	void ClientOpenPowerCut(AActor* Generator);
+	void ClosePowerCut();
+	bool IsPowerCutOpen() const;
+	URobberPowerCut* GetPowerCut() const { return PowerCutWidget; }
+
+	/** Every breaker's down: the server runs the generator's CutPower, if this player's still next to it. */
+	UFUNCTION(Server, Reliable)
+	void ServerFinishPowerCut(AActor* Generator);
+
+	/** A mistimed trip: the bang adds heat. */
+	UFUNCTION(Server, Reliable)
+	void ServerPowerCutMiss(AActor* Generator);
+
 	/** The Case File HUD (null on non-local controllers); while it exists, the old debug text and heist card stay hidden. */
 	URobberCaseFileHUD* GetCaseFileHUD() const { return CaseFileHUD; }
 	URobberJournalWidget* GetJournalWidget() const { return JournalWidget; }
@@ -128,12 +164,6 @@ protected:
 	virtual void SetupInputComponent() override;
 
 private:
-	void CloseNightSwitcher();
-
-#if !UE_BUILD_SHIPPING
-	TSharedPtr<SWidget> NightSwitcher;
-#endif
-
 	void TogglePauseMenu();
 	void OpenPauseMenu();
 	/** Journal and Pause are bound here, not in the input mapping context, and follow the player's key settings. */
@@ -222,4 +252,13 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<URobberJournalWidget> JournalWidget;
+
+	UPROPERTY(Transient)
+	TObjectPtr<URobberShopCatalogue> ShopWidget;
+
+	UPROPERTY(Transient)
+	TObjectPtr<URobberDevMenu> DevMenu;
+
+	UPROPERTY(Transient)
+	TObjectPtr<URobberPowerCut> PowerCutWidget;
 };

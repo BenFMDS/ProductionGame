@@ -11,6 +11,14 @@
 #include "Engine/GameInstance.h"
 #include "ProductionGame.h"
 #include "RobberMenu/RobberSettings.h"
+#include "Heist/RobberCrewTag.h"
+#include "Heist/RobberInteractables.h"
+#include "EngineUtils.h"
+#include "Engine/PostProcessVolume.h"
+#include "Materials/MaterialInterface.h"
+#include "Camera/PlayerCameraManager.h"
+#include "GameFramework/PlayerController.h"
+#include "Net/UnrealNetwork.h"
 
 AProductionGameCharacter::AProductionGameCharacter()
 {
@@ -119,6 +127,28 @@ void AProductionGameCharacter::BeginPlay()
 {
 	Super::BeginPlay();
 	BaseWalkSpeed = GetCharacterMovement()->MaxWalkSpeed;
+	// Added here, not as a subobject, so the character Blueprints don't need re-saving.
+	if (GetNetMode() != NM_DedicatedServer)
+	{
+		URobberCrewTagComponent* Tag = NewObject<URobberCrewTagComponent>(this, TEXT("CrewTag"));
+		Tag->SetupAttachment(GetRootComponent());
+		Tag->RegisterComponent();
+
+		// Only L_MainMenu has a post process volume with the outline, so anywhere else a highlighted object drew nothing.
+		// On the camera, so it works in every map without a volume in each.
+		if (UMaterialInterface* Outline = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/OurStuff/Core/InteractionSystem/M_HoverOutline.M_HoverOutline")))
+		{
+			bool bVolumeHasIt = false;
+			for (TActorIterator<APostProcessVolume> It(GetWorld()); It && !bVolumeHasIt; ++It)
+			{
+				bVolumeHasIt = It->Settings.WeightedBlendables.Array.ContainsByPredicate([Outline](const FWeightedBlendable& Each) { return Each.Object == Outline; });
+			}
+			if (!bVolumeHasIt)
+			{
+				FirstPersonCameraComponent->AddOrUpdateBlendable(Outline);
+			}
+		}
+	}
 }
 
 void AProductionGameCharacter::SetSprintHeld(bool bHeld)
@@ -176,7 +206,7 @@ void AProductionGameCharacter::TickSprint(float DeltaSeconds)
 	}
 	if (BaseWalkSpeed > 0.f)
 	{
-		Movement->MaxWalkSpeed = BaseWalkSpeed * MoveSpeedMultiplier * (bSprinting ? SprintSpeedMultiplier : 1.f);
+		Movement->MaxWalkSpeed = BaseWalkSpeed * MoveSpeedMultiplier * CarrySpeedMultiplier * (bSprinting ? SprintSpeedMultiplier : 1.f);
 	}
 }
 
@@ -184,6 +214,10 @@ void AProductionGameCharacter::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
 	TickSprint(DeltaSeconds);
+	if (HidingSpot && HasAuthority())
+	{
+		TickHidingOnServer(DeltaSeconds);
+	}
 
 	if (!PendingLook.IsNearlyZero(0.001))
 	{
@@ -215,4 +249,198 @@ void AProductionGameCharacter::DoJumpEnd()
 {
 	// pass StopJumping to the character
 	StopJumping();
+}
+
+void AProductionGameCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+	DOREPLIFETIME(AProductionGameCharacter, HidingSpot);
+	DOREPLIFETIME(AProductionGameCharacter, CarrySpeedMultiplier);
+}
+
+void AProductionGameCharacter::EnterHiding(ARobberHidingSpot* Spot, bool bInSeenGoingIn)
+{
+	if (!HasAuthority() || !Spot || HidingSpot)
+	{
+		return;
+	}
+	HidingSpot = Spot;
+	bSeenGoingIn = bInSeenGoingIn;
+	SinceGuardCheck = 0.f;
+	Spot->SetOccupant(this);
+	ApplyHidingState();
+	ForceNetUpdate();
+}
+
+void AProductionGameCharacter::ExitHiding(bool bClimbOut)
+{
+	if (!HasAuthority() || !HidingSpot)
+	{
+		return;
+	}
+	ARobberHidingSpot* Spot = HidingSpot;
+	Spot->SetOccupant(nullptr);
+	HidingSpot = nullptr;
+	bSeenGoingIn = false;
+	ApplyHidingState();
+	if (bClimbOut)
+	{
+		// TeleportTo nudges them clear of small things. If the front is properly blocked, try the other sides rather than leave them inside it.
+		bool bOut = TeleportTo(Spot->GetExitLocation(), GetActorRotation());
+		const FVector Scale = Spot->GetActorScale3D();
+		const FVector Side = Spot->GetExitLocation() - Spot->GetActorLocation();
+		const double Reach = FMath::Max(Scale.X, Scale.Y) * 50. + 90.;
+		for (int32 Turn = 1; Turn < 4 && !bOut; ++Turn)
+		{
+			const FVector Flat = FVector(Side.X, Side.Y, 0.).GetSafeNormal().RotateAngleAxis(Turn * 90., FVector::UpVector);
+			bOut = TeleportTo(Spot->GetActorLocation() + Flat * Reach + FVector(0., 0., Side.Z), GetActorRotation());
+		}
+		// Teleporting can leave them Falling for a frame; they're being put down on the floor.
+		GetCharacterMovement()->SetMovementMode(MOVE_Walking);
+	}
+	ForceNetUpdate();
+}
+
+void AProductionGameCharacter::OnRep_HidingSpot()
+{
+	ApplyHidingState();
+}
+
+void AProductionGameCharacter::ApplyHidingState()
+{
+	if (AppliedHidingSpot == HidingSpot)
+	{
+		return;
+	}
+	const bool bHiding = HidingSpot != nullptr;
+	AppliedHidingSpot = HidingSpot;
+	SetActorHiddenInGame(bHiding);
+	SetActorEnableCollision(!bHiding);
+	GetCharacterMovement()->StopMovementImmediately();
+	GetCharacterMovement()->SetMovementMode(bHiding ? MOVE_None : MOVE_Walking);
+	if (bHiding)
+	{
+		// Also on clients: with movement off, a teleport from the server may never reach the owning client.
+		SetActorLocation(HidingSpot->GetHideLocation(), false, nullptr, ETeleportType::TeleportPhysics);
+	}
+	if (IsLocallyControlled())
+	{
+		ApplyLocalHidingView(bHiding);
+	}
+}
+
+void AProductionGameCharacter::ApplyLocalHidingView(bool bHiding)
+{
+	APlayerController* PC = Cast<APlayerController>(GetController());
+	APlayerCameraManager* Camera = PC ? PC->PlayerCameraManager.Get() : nullptr;
+	if (!Camera)
+	{
+		return;
+	}
+	Camera->StartCameraFade(1.f, 0.f, 0.35f, FLinearColor::Black, false, false);
+	if (LocalViewSpot)
+	{
+		LocalViewSpot->SetViewedFromInside(false);
+	}
+	LocalViewSpot = HidingSpot;
+	if (LocalViewSpot)
+	{
+		LocalViewSpot->SetViewedFromInside(true);
+	}
+	if (bHiding)
+	{
+		SavedViewPitchMin = Camera->ViewPitchMin;
+		SavedViewPitchMax = Camera->ViewPitchMax;
+		SavedViewYawMin = Camera->ViewYawMin;
+		SavedViewYawMax = Camera->ViewYawMax;
+		const FRotator Facing = HidingSpot->GetFacing();
+		PC->SetControlRotation(Facing);
+		Camera->ViewPitchMin = -25.f;
+		Camera->ViewPitchMax = 25.f;
+		Camera->ViewYawMin = Facing.Yaw - 55.f;
+		Camera->ViewYawMax = Facing.Yaw + 55.f;
+	}
+	else
+	{
+		Camera->ViewPitchMin = SavedViewPitchMin;
+		Camera->ViewPitchMax = SavedViewPitchMax;
+		Camera->ViewYawMin = SavedViewYawMin;
+		Camera->ViewYawMax = SavedViewYawMax;
+	}
+
+	// From inside, BPC_Interaction's trace can't hit the spot. Freezing it with the spot still targeted means E goes to
+	// the spot, which is what climbs back out. It's a Blueprint component, so this goes by name.
+	UActorComponent* Interaction = nullptr;
+	for (UActorComponent* Component : GetComponents())
+	{
+		if (Component && Component->GetClass()->GetName().StartsWith(TEXT("BPC_Interaction")))
+		{
+			Interaction = Component;
+			break;
+		}
+	}
+	if (!Interaction)
+	{
+		return;
+	}
+	Interaction->SetComponentTickEnabled(!bHiding);
+	if (FObjectPropertyBase* Target = FindFProperty<FObjectPropertyBase>(Interaction->GetClass(), TEXT("InteractActor")))
+	{
+		Target->SetObjectPropertyValue_InContainer(Interaction, bHiding ? HidingSpot.Get() : nullptr);
+	}
+	FObjectPropertyBase* WidgetRef = FindFProperty<FObjectPropertyBase>(Interaction->GetClass(), TEXT("Interaction Widget Ref"));
+	UObject* Widget = WidgetRef ? WidgetRef->GetObjectPropertyValue_InContainer(Interaction) : nullptr;
+	UFunction* UpdateWidget = Widget ? Widget->FindFunction(TEXT("UpdateWidget")) : nullptr;
+	struct { bool bVisible; FString Data; } Params{ bHiding, bHiding ? NSLOCTEXT("RobberTour", "ClimbOut", "Climb out").ToString() : FString() };
+	if (UpdateWidget && UpdateWidget->ParmsSize == sizeof(Params))
+	{
+		Widget->ProcessEvent(UpdateWidget, &Params);
+	}
+}
+
+void AProductionGameCharacter::TickHidingOnServer(float DeltaSeconds)
+{
+	SinceGuardCheck += DeltaSeconds;
+	if (SinceGuardCheck < 0.25f)
+	{
+		return;
+	}
+	SinceGuardCheck = 0.f;
+	// BPC_Caught teleports them to jail: they're not in the spot any more.
+	for (UActorComponent* Component : GetComponents())
+	{
+		const FBoolProperty* Caught = Component && Component->GetClass()->GetName().StartsWith(TEXT("BPC_Caught")) ? FindFProperty<FBoolProperty>(Component->GetClass(), TEXT("IsCaught")) : nullptr;
+		if (Caught && Caught->GetPropertyValue_InContainer(Component))
+		{
+			ExitHiding(false);
+			return;
+		}
+	}
+	// Once no guard is after them any more, they've got away with it.
+	if (bSeenGoingIn && !ARobberHidingSpot::IsGuardOnto(this, 0.f))
+	{
+		bSeenGoingIn = false;
+	}
+}
+
+UAISense_Sight::EVisibilityResult AProductionGameCharacter::CanBeSeenFrom(const FCanBeSeenFromContext& Context, FVector& OutSeenLocation, int32& OutNumberOfLoSChecksPerformed, int32& OutNumberOfAsyncLosCheckRequested, float& OutSightStrength, int32* UserData, const FOnPendingVisibilityQueryProcessedDelegate* Delegate)
+{
+	OutNumberOfLoSChecksPerformed = 0;
+	OutNumberOfAsyncLosCheckRequested = 0;
+	OutSeenLocation = GetActorLocation();
+	OutSightStrength = 1.f;
+	if (bDevImmune)
+	{
+		return UAISense_Sight::EVisibilityResult::NotVisible;
+	}
+	if (HidingSpot)
+	{
+		return bSeenGoingIn ? UAISense_Sight::EVisibilityResult::Visible : UAISense_Sight::EVisibilityResult::NotVisible;
+	}
+	// The engine skips its own sight test for anything with this interface, so this is that test.
+	FHitResult Hit;
+	const FCollisionQueryParams Params(SCENE_QUERY_STAT(AILineOfSight), true, Context.IgnoreActor);
+	const bool bHit = GetWorld()->LineTraceSingleByChannel(Hit, Context.ObserverLocation, OutSeenLocation, ECC_Visibility, Params);
+	++OutNumberOfLoSChecksPerformed;
+	return !bHit || Hit.GetActor() == this ? UAISense_Sight::EVisibilityResult::Visible : UAISense_Sight::EVisibilityResult::NotVisible;
 }

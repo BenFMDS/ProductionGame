@@ -543,6 +543,11 @@ void URobberSettingsMenu::NativeOnInitialized()
 	if (UButton* Button = Find<UButton>(TEXT("KeyJournal"))) Button->OnClicked.AddUniqueDynamic(this, &URobberSettingsMenu::OnKeyJournal);
 	if (UButton* Button = Find<UButton>(TEXT("KeyPause"))) Button->OnClicked.AddUniqueDynamic(this, &URobberSettingsMenu::OnKeyPause);
 	if (UButton* Button = Find<UButton>(TEXT("KeySprint"))) Button->OnClicked.AddUniqueDynamic(this, &URobberSettingsMenu::OnKeySprint);
+	if (USlider* Slider = Find<USlider>(TEXT("UiSizeSlider")))
+	{
+		Slider->OnValueChanged.AddUniqueDynamic(this, &URobberSettingsMenu::OnUiSizeChanged);
+		Slider->OnMouseCaptureEnd.AddUniqueDynamic(this, &URobberSettingsMenu::OnUiSizeReleased);
+	}
 
 	UKismetSystemLibrary::GetSupportedFullscreenResolutions(Resolutions);
 	if (Resolutions.Num() == 0)
@@ -609,6 +614,8 @@ void URobberSettingsMenu::LoadFromSettings()
 	if (USlider* Slider = Find<USlider>(TEXT("SfxSlider"))) Slider->SetValue(Sfx);
 	if (USlider* Slider = Find<USlider>(TEXT("VoiceSlider"))) Slider->SetValue(Voice);
 	if (USlider* Slider = Find<USlider>(TEXT("SensSlider"))) Slider->SetValue(Sens);
+	if (USlider* Slider = Find<USlider>(TEXT("UiSizeSlider"))) Slider->SetValue(Settings->UiSize);
+	RefreshUiSize();
 	if (UCheckBox* Box = Find<UCheckBox>(TEXT("InvertBox"))) Box->SetIsChecked(Settings->bInvertLook);
 	if (UCheckBox* Box = Find<UCheckBox>(TEXT("SmoothBox"))) Box->SetIsChecked(Settings->bSmoothMouse);
 
@@ -788,6 +795,40 @@ void URobberSettingsMenu::OnSensChanged(float Value)
 		System->GetSettings()->LookSensitivity = Value;
 		RefreshMouse();
 		MarkChanged();
+	}
+}
+
+void URobberSettingsMenu::RefreshUiSize()
+{
+	const URobberSettingsSubsystem* System = GetSettingsSystem();
+	const URobberSettingsSave* Settings = System ? System->GetSettings() : nullptr;
+	if (!Settings)
+	{
+		return;
+	}
+	if (UProgressBar* Fill = Find<UProgressBar>(TEXT("UiSizeFill")))
+	{
+		Fill->SetPercent((Settings->UiSize - 0.75f) / 0.5f);
+	}
+	SetText(Find<UTextBlock>(TEXT("UiSizeValue")), FText::Format(INVTEXT("{0}%"), FText::AsNumber(FMath::RoundToInt(Settings->UiSize * 100.f))));
+}
+
+void URobberSettingsMenu::OnUiSizeChanged(float Value)
+{
+	if (URobberSettingsSubsystem* System = bLoading ? nullptr : GetSettingsSystem())
+	{
+		System->GetSettings()->UiSize = FMath::Clamp(FMath::RoundToFloat(Value * 20.f) / 20.f, 0.75f, 1.25f);
+		RefreshUiSize();
+		MarkChanged();
+	}
+}
+
+void URobberSettingsMenu::OnUiSizeReleased()
+{
+	// Rescaling mid-drag would move the slider out from under the mouse.
+	if (URobberSettingsSubsystem* System = GetSettingsSystem())
+	{
+		System->ApplyUiSize();
 	}
 }
 

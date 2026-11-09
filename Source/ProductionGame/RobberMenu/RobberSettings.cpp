@@ -11,6 +11,7 @@
 #include "Sound/SoundClass.h"
 #include "Sound/SoundMix.h"
 #include "UObject/UObjectGlobals.h"
+#include "Engine/UserInterfaceSettings.h"
 
 namespace RobberSettingsDetail
 {
@@ -66,6 +67,10 @@ void URobberSettingsSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 	Super::Initialize(Collection);
 
 	LoadSave();
+	// Captured once per process: several PIE players each get this subsystem, and later ones would read a scaled value.
+	static const float ConfiguredScale = GetDefault<UUserInterfaceSettings>()->ApplicationScale;
+	BaseUiScale = ConfiguredScale;
+	ApplyUiSize();
 
 	DefaultContext = LoadObject<UInputMappingContext>(nullptr, RobberSettingsDetail::ContextPath);
 	if (DefaultContext)
@@ -98,6 +103,8 @@ void URobberSettingsSubsystem::Deinitialize()
 	FCoreUObjectDelegates::PostLoadMapWithWorld.Remove(MapLoadedHandle);
 	// The context is a shared asset: in the editor it would otherwise keep this player's keys after PIE ends.
 	RestoreDefaultKeys();
+	// Same for the UI scale, which lives on a class default object the editor also uses.
+	GetMutableDefault<UUserInterfaceSettings>()->ApplicationScale = BaseUiScale;
 	Super::Deinitialize();
 }
 
@@ -148,6 +155,7 @@ void URobberSettingsSubsystem::Apply()
 {
 	ApplyAudio(GetGameInstance() ? GetGameInstance()->GetWorld() : nullptr);
 	ApplyKeys();
+	ApplyUiSize();
 }
 
 void URobberSettingsSubsystem::LoadSave()
@@ -158,6 +166,12 @@ void URobberSettingsSubsystem::LoadSave()
 	{
 		Settings = NewObject<URobberSettingsSave>(this);
 	}
+}
+
+void URobberSettingsSubsystem::ApplyUiSize()
+{
+	// The viewport reads this every frame, so nothing else needs telling.
+	GetMutableDefault<UUserInterfaceSettings>()->ApplicationScale = BaseUiScale * FMath::Clamp(Settings ? Settings->UiSize : 1.f, 0.75f, 1.25f);
 }
 
 void URobberSettingsSubsystem::Revert()

@@ -5,8 +5,10 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Character.h"
 #include "Logging/LogMacros.h"
+#include "Perception/AISightTargetInterface.h"
 #include "ProductionGameCharacter.generated.h"
 
+class ARobberHidingSpot;
 class UInputComponent;
 class USkeletalMeshComponent;
 class UCameraComponent;
@@ -19,7 +21,7 @@ DECLARE_LOG_CATEGORY_EXTERN(LogTemplateCharacter, Log, All);
  *  A basic first person character
  */
 UCLASS(abstract)
-class PRODUCTIONGAME_API AProductionGameCharacter : public ACharacter
+class PRODUCTIONGAME_API AProductionGameCharacter : public ACharacter, public IAISightTargetInterface
 {
 	GENERATED_BODY()
 
@@ -126,14 +128,69 @@ public:
 	UPROPERTY(BlueprintReadWrite, Category = "Movement")
 	float MoveSpeedMultiplier = 1.f;
 
+	/** Server only. Quest items that are too heavy to run with; replicated so the owning client predicts the same speed. */
+	void SetCarrySpeed(float Multiplier) { CarrySpeedMultiplier = Multiplier; ForceNetUpdate(); }
+	float GetCarrySpeed() const { return CarrySpeedMultiplier; }
+
+	/** Dev menu. Guards and cameras only ever run on the server, so this doesn't need replicating. */
+	void SetDevImmune(bool bImmune) { bDevImmune = bImmune; }
+	bool IsDevImmune() const { return bDevImmune; }
+
+	// --- Hiding: inside an ARobberHidingSpot the player can't move or be seen, and E climbs back out. ---
+
+	/** Server only. bSeenGoingIn = a guard was onto them, so guards keep seeing them until they lose interest. */
+	void EnterHiding(ARobberHidingSpot* Spot, bool bSeenGoingIn);
+
+	/** Server only. bClimbOut false leaves them where they are (caught and jailed, or the night's over). */
+	void ExitHiding(bool bClimbOut = true);
+
+	UFUNCTION(BlueprintPure, Category = "Hiding")
+	bool IsHiding() const { return HidingSpot != nullptr; }
+
+	ARobberHidingSpot* GetHidingSpot() const { return HidingSpot; }
+	bool WasSeenGoingIn() const { return bSeenGoingIn; }
+
+	/** Guards use this instead of their usual sight test: a line of sight check, unless the player is hiding. */
+	virtual UAISense_Sight::EVisibilityResult CanBeSeenFrom(const FCanBeSeenFromContext& Context, FVector& OutSeenLocation, int32& OutNumberOfLoSChecksPerformed, int32& OutNumberOfAsyncLosCheckRequested, float& OutSightStrength, int32* UserData = nullptr, const FOnPendingVisibilityQueryProcessedDelegate* Delegate = nullptr) override;
+
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+
 protected:
 	virtual void BeginPlay() override;
+
+	UFUNCTION()
+	void OnRep_HidingSpot();
 
 	UFUNCTION(Server, Reliable)
 	void ServerSetSprintHeld(bool bHeld);
 
 private:
 	void TickSprint(float DeltaSeconds);
+	void ApplyHidingState();
+	void ApplyLocalHidingView(bool bHiding);
+	void TickHidingOnServer(float DeltaSeconds);
+
+	UPROPERTY(Replicated)
+	float CarrySpeedMultiplier = 1.f;
+
+	UPROPERTY(ReplicatedUsing = OnRep_HidingSpot)
+	TObjectPtr<ARobberHidingSpot> HidingSpot = nullptr;
+
+	/** What ApplyHidingState last acted on, so a repeat call does nothing. */
+	UPROPERTY(Transient)
+	TObjectPtr<ARobberHidingSpot> AppliedHidingSpot = nullptr;
+
+	/** The spot whose door panel this machine has switched off for its own player. */
+	UPROPERTY(Transient)
+	TObjectPtr<ARobberHidingSpot> LocalViewSpot = nullptr;
+
+	bool bSeenGoingIn = false;
+	bool bDevImmune = false;
+	float SinceGuardCheck = 0.f;
+	float SavedViewPitchMin = 0.f;
+	float SavedViewPitchMax = 0.f;
+	float SavedViewYawMin = 0.f;
+	float SavedViewYawMax = 0.f;
 
 	/** Walk speed from the Blueprint, captured at BeginPlay; sprint multiplies it. */
 	float BaseWalkSpeed = 0.f;

@@ -53,6 +53,7 @@ public:
 
 	bool IsCut() const { return bCut; }
 	bool IsRopeDown() const { return bRopeDown; }
+	FVector GetRopeAnchorLocation() const { return RopeAnchor->GetComponentLocation(); }
 	float GetCutProgress() const { return CutProgress; }
 	float GetNoise() const { return Noise; }
 	bool IsTooLoud() const { return bTooLoud; }

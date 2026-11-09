@@ -3,6 +3,7 @@
 #include "Quest/PlayerQuestComponent.h"
 #include "Quest/QuestDefinition.h"
 #include "Quest/QuestGiverComponent.h"
+#include "Heist/RobberExhibitTalk.h"
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerState.h"
@@ -92,6 +93,11 @@ bool UDialogueComponent::TryStart(UPlayerQuestComponent* Player)
 			if (Dialogue->FindNode(StateEntry)) CurrentNode = StateEntry;
 		}
 	}
+	if (EntryOverride.IsBound())
+	{
+		const FName Override = EntryOverride.Execute(Player);
+		if (Dialogue && Dialogue->FindNode(Override)) CurrentNode = Override;
+	}
 	LastActivity = GetWorld()->GetTimeSeconds();
 	GetOwner()->ForceNetUpdate();
 	GetWorld()->GetTimerManager().SetTimer(SessionTimer, this, &UDialogueComponent::ValidateSession, 0.25f, true);
@@ -101,6 +107,7 @@ bool UDialogueComponent::TryStart(UPlayerQuestComponent* Player)
 }
 
 FOnConversationStarted UDialogueComponent::OnConversationStarted;
+FOnDialogueEvent UDialogueComponent::OnDialogueEvent;
 
 FText UDialogueComponent::GetCurrentLine() const
 {
@@ -158,12 +165,20 @@ void UDialogueComponent::PublishNode()
 	if (!Player) return;
 	FPlayerConversation Snapshot;
 	Snapshot.NPC = GetOwner();
+	for (TActorIterator<ARobberNightDirector> Director(GetWorld()); Director; ++Director)
+	{
+		if (const ARobberRoomInfo* Room = Director->FindRoom(GetOwner()->GetActorLocation()))
+		{
+			Snapshot.Location = Room->RoomName;
+		}
+		break;
+	}
 	VisibleChoiceIDs.Reset();
 	if (Dialogue)
 	{
 		const FDialogueNode* Node = Dialogue->FindNode(CurrentNode);
 		if (!Node) { Release(Player); return; }
-		Snapshot.Speaker = Dialogue->SpeakerName;
+		Snapshot.Speaker = Node->Speaker.IsEmpty() ? Dialogue->SpeakerName : Node->Speaker;
 		Snapshot.Portrait = Dialogue->Portrait;
 		Snapshot.Text = Node->Text;
 		Snapshot.Voice = Node->Voice;
@@ -245,6 +260,11 @@ void UDialogueComponent::Choose(UPlayerQuestComponent* Player, int32 ChoiceID, i
 			if (Choice.QuestAction == EDialogueQuestAction::Progress) bSuccess = Player->ProgressQuest(Choice.Quest, GetOwner(), Choice.ProgressAmount);
 		}
 		if (!IsParticipant(Player)) return;
+		if (bSuccess && !Choice.StoryEvent.IsNone())
+		{
+			OnDialogueEvent.Broadcast(GetOwner(), Player, Choice.StoryEvent);
+			if (!IsParticipant(Player)) return;
+		}
 		if (bSuccess)
 		{
 			if (Choice.NextNode.IsNone()) { Release(Player); return; }

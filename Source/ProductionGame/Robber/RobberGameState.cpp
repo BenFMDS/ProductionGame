@@ -24,6 +24,7 @@
 #include "Quest/PlayerQuestComponent.h"
 #include "Robber/RobberController.h"
 #include "UObject/UnrealType.h"
+#include "ProductionGameCharacter.h"
 
 namespace
 {
@@ -676,6 +677,10 @@ void ARobberGameState::ResetCrewToLobby()
 		ActiveEntry->EndBreakIn(this);
 	}
 	ActiveEntry = nullptr;
+	for (TActorIterator<AProductionGameCharacter> It(GetWorld()); It; ++It)
+	{
+		It->ExitHiding(false);
+	}
 	Votes.Reset();
 	Crew.Reset();
 	Jobs.Reset();
