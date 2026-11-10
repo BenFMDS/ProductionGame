@@ -16,7 +16,9 @@ class URobberCaseFileHUD;
 class URobberJournalComponent;
 class URobberJournalWidget;
 class URobberPowerCut;
+class URobberServerConsole;
 class URobberShopCatalogue;
+class UMaterialInstanceDynamic;
 class UAchievementDefinitionAsset;
 class UAchievementPopupWidget;
 class UInputAction;
@@ -94,6 +96,30 @@ public:
 	/** From a hideout object in the lobby: opens its screen (settings, achievements, or the quit check) for this player. */
 	UFUNCTION(Client, Reliable)
 	void ClientOpenLobbyMenu(ERobberLobbyMenu Menu);
+
+	/** Software Update's console. Action is an EConsoleAction. Defined in RobberSoftwareUpdate.cpp. */
+	UFUNCTION(Server, Reliable)
+	void ServerConsoleAction(uint8 Action, int32 Value, const FString& Text);
+	UFUNCTION(Client, Reliable)
+	void ClientServerConsole(bool bOpen);
+	UFUNCTION(Client, Reliable)
+	void ClientConsoleMessage(const FText& Message);
+	URobberServerConsole* GetServerConsole() const { return ServerConsole.Get(); }
+
+	/** Local only. The iris (WBP_Transition): shut for HoldSeconds, then opens. Defined in RobberTransition.cpp. */
+	void PlayTransition(float HoldSeconds);
+	bool IsTransitionPlaying() const { return TransitionTime >= 0.f; }
+	virtual void PlayerTick(float DeltaTime) override;
+
+	/** A new pawn counts as a level load; moving further than this in one frame counts as a teleport. */
+	UPROPERTY(EditDefaultsOnly, Category = "Robber|Transition")
+	float TeleportFadeDistance = 800.f;
+	UPROPERTY(EditDefaultsOnly, Category = "Robber|Transition")
+	float LoadFadeHold = 2.f;
+	UPROPERTY(EditDefaultsOnly, Category = "Robber|Transition")
+	float TeleportFadeHold = 0.3f;
+	UPROPERTY(EditDefaultsOnly, Category = "Robber|Transition")
+	float FadeOpenSeconds = 1.f;
 
 	/** The settings or achievements screen a lobby object opened, while it's up. */
 	UUserWidget* GetLobbyMenu() const { return LobbyMenu; }
@@ -255,6 +281,19 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<URobberShopCatalogue> ShopWidget;
+
+	/** Kept between openings, so the terms the player has scrolled through are still scrolled. */
+	UPROPERTY(Transient)
+	TObjectPtr<URobberServerConsole> ServerConsole;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UUserWidget> TransitionWidget;
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInstanceDynamic> TransitionMaterial;
+	float TransitionTime = -1.f;
+	float TransitionHold = 0.f;
+	TWeakObjectPtr<APawn> TransitionPawn;
+	FVector TransitionPawnLocation = FVector::ZeroVector;
 
 	UPROPERTY(Transient)
 	TObjectPtr<URobberDevMenu> DevMenu;

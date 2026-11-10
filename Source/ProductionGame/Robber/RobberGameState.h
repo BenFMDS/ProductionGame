@@ -132,6 +132,11 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Robber|Stage")
 	bool CanTalkToExhibits() const;
 
+	/** During Investigate exhibits only make small talk: one random line, no clues, quests or journal notes. */
+	bool IsExhibitSmallTalk() const;
+	/** Whether pressing interact on an exhibit gets any answer at all. */
+	bool CanChatWithExhibits() const;
+
 	/** Server only. Called when the crew reaches the gem room door. Sets the night's jobs. */
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Robber|Heist")
 	void StartHeist();

@@ -6,6 +6,8 @@
 #include "EngineUtils.h"
 #include "GameFramework/PlayerState.h"
 #include "Heist/RobberExhibitTalk.h"
+#include "Heist/RobberJournal.h"
+#include "Heist/RobberVault.h"
 #include "Net/UnrealNetwork.h"
 #include "ProductionGameCharacter.h"
 #include "Robber/RobberController.h"
@@ -265,6 +267,7 @@ void ARobberMummyQuest::BuildDialogue()
 
 	UDialogueComponent* Talker = Mummy->FindComponentByClass<UDialogueComponent>();
 	Talker->Dialogue = Script;
+	Talker->SmallTalkLines = Chatter[0];
 	Talker->OfferedQuests.Reset();
 	Talker->EntryOverride.BindUObject(this, &ARobberMummyQuest::EntryFor, Mummy.Get());
 }
@@ -334,30 +337,26 @@ void ARobberMummyQuest::ShowFitted(int32 Slot)
 
 void ARobberMummyQuest::PayOut()
 {
-	ARobberGameState* State = GetWorld()->GetGameState<ARobberGameState>();
-	if (!State)
+	if (!DigitIndexes.IsValidIndex(PayoutsMade))
 	{
 		return;
 	}
-	for (TActorIterator<ARobberNightDirector> It(GetWorld()); It; ++It)
+	for (TActorIterator<ARobberVaultDoor> It(GetWorld()); It; ++It)
 	{
-		if (It->GetLevel() != GetLevel())
+		if (It->GetLevel() != GetLevel() || !It->GetCode().IsValidIndex(DigitIndexes[PayoutsMade]))
 		{
 			continue;
 		}
-		const FRobberReward Reward = It->DrawBonusReward();
+		const int32 Index = DigitIndexes[PayoutsMade];
+		const int32 Value = It->GetCode()[Index];
+		const AController* Controller = OwnerController();
+		if (URobberJournalComponent* Journal = Controller ? Controller->FindComponentByClass<URobberJournalComponent>() : nullptr)
+		{
+			Journal->LearnVaultDigit(Mummy, MummyQuest::Speaker(), Index, Value, ARobberVaultDoor::CodeLength);
+		}
 		++PayoutsMade;
 		ForceNetUpdate();
-		if (Reward.Kind == ERobberRewardKind::ExtraTime)
-		{
-			State->AddGuardsTime(Reward.Value);
-			State->TellCrew(FText::Format(MUMMY_LOC("PaidTime", "PAYOUT · The mummy has delayed the guards by {0} seconds."), FMath::RoundToInt32(Reward.Value)));
-		}
-		else
-		{
-			State->CoolHeat(Reward.Value);
-			State->TellCrew(FText::Format(MUMMY_LOC("PaidHeat", "PAYOUT · The mummy had a word. Heat is down by {0}."), FMath::RoundToInt32(Reward.Value)));
-		}
+		Toast(FText::Format(MUMMY_LOC("DigitToast", "CODE DIGIT · {0} jotted in your journal (J)"), Value));
 		return;
 	}
 }
@@ -553,7 +552,7 @@ FRobberStoryNote ARobberMummyQuest::BuildNote() const
 	FRobberStoryNote Note;
 	Note.bShown = true;
 	Note.Title = MUMMY_LOC("Name", "Some Assembly Required");
-	Note.Footer = FText::Format(MUMMY_LOC("Foot", "Payouts: {0} of 2"), PayoutsMade);
+	Note.Footer = FText::Format(MUMMY_LOC("Foot", "Code digits: {0} of 2"), PayoutsMade);
 	const TArray<FText> Steps = {
 		MUMMY_LOC("L0", "Talk to the mummy"), MUMMY_LOC("L1", "Take the ritual scroll"),
 		MUMMY_LOC("L2", "Find the breath of the sea"), MUMMY_LOC("L3", "Find four chambers of plenty"),

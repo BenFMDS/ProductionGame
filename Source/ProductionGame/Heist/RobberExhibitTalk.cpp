@@ -591,6 +591,8 @@ void ARobberNightDirector::TryDeal()
 	{
 		UDialogueComponent* Talker = Each.Exhibit->FindComponentByClass<UDialogueComponent>();
 		const TArray<FText> ExhibitJokes = JokesFor(Each.Exhibit, Talker);
+		// Set here, not left to the fallback in the component: the dialogue built below opens with this exhibit's clue.
+		Talker->SmallTalkLines = ExhibitJokes.IsEmpty() ? TArray<FText>{ NSLOCTEXT("ExhibitTalk", "NoSmallTalk", "...") } : ExhibitJokes;
 		Talker->OfferedQuests.Reset();
 		switch (Each.Role)
 		{
@@ -661,24 +663,26 @@ bool ARobberNightDirector::DealOnce(const TArray<AActor*>& Exhibits, const TArra
 		{
 			Digits.Add(Digit);
 		}
-		// A story quest that pays digits takes one of the digit quests' places, and its script says "the first number".
-		ARobberStoryQuest* DigitStory = nullptr;
+		// Each story quest that pays digits takes one of the digit quests' places, and its script says which numbers they are.
+		int32 DigitStories = 0;
 		for (ARobberStoryQuest* Story : StoryQuests)
 		{
 			if (Story->WantsVaultDigits())
 			{
-				DigitStory = Story;
-				break;
+				constexpr int32 StoryDigits = 2;
+				TArray<int32> Taken;
+				for (int32 Offset = 0; Offset < StoryDigits; ++Offset)
+				{
+					Taken.Add(Story->GetFirstVaultDigit() + Offset);
+				}
+				Story->SetVaultDigits(Taken);
+				Digits.RemoveAll([&Taken](const int32 Digit) { return Taken.Contains(Digit); });
+				++DigitStories;
 			}
 		}
-		if (DigitStory)
-		{
-			constexpr int32 StoryDigits = 2;
-			DigitStory->SetVaultDigits({ 0, 1 });
-			Digits.RemoveAt(0, StoryDigits);
-		}
 		Algo::RandomShuffle(Digits);
-		const int32 Holders = FMath::Clamp(DigitQuests - (DigitStory ? 1 : 0), 1, FMath::Max(1, FMath::Min(Givers.Num(), Digits.Num())));
+		// Story quests can cover the whole code, and an exhibit with no digits to give would pay nothing.
+		const int32 Holders = Digits.IsEmpty() ? 0 : FMath::Clamp(DigitQuests - DigitStories, 1, FMath::Max(1, FMath::Min(Givers.Num(), Digits.Num())));
 		for (int32 Holder = 0; Holder < Holders; ++Holder)
 		{
 			FRobberReward& Reward = Pay.AddDefaulted_GetRef();
@@ -707,9 +711,17 @@ bool ARobberNightDirector::DealOnce(const TArray<AActor*>& Exhibits, const TArra
 			Reward.KeyName = FText::FromName(Key);
 		}
 	};
+	TArray<FName> StoryKeys;
+	for (const ARobberStoryQuest* Story : StoryQuests)
+	{
+		Story->GetPaidKeys(StoryKeys);
+	}
 	for (const FName Key : RequiredQuestKeys)
 	{
-		AddKeyReward(Key, ERobberRewardKind::Key);
+		if (!StoryKeys.Contains(Key))
+		{
+			AddKeyReward(Key, ERobberRewardKind::Key);
+		}
 	}
 	for (const FName Tool : QuestTools)
 	{
@@ -931,6 +943,22 @@ bool ARobberNightDirector::IsSolvable(const TArray<FRobberExhibitAssignment>& De
 				bProgress = true;
 			}
 		}
+		for (const ARobberStoryQuest* Story : StoryQuests)
+		{
+			TArray<FName> Paid;
+			Story->GetPaidKeys(Paid);
+			TArray<AActor*> Needed;
+			Story->GetRequiredActors(Needed);
+			const bool bCanFinish = !Needed.ContainsByPredicate([&](const AActor* Actor) { return !HaveAll(KeysNeededAt(Actor)); });
+			for (const FName Key : Paid)
+			{
+				if (bCanFinish && !Keys.Contains(Key))
+				{
+					Keys.Add(Key);
+					bProgress = true;
+				}
+			}
+		}
 	}
 	for (const FRobberChestDeal& Chest : ChestDeals)
 	{
@@ -949,11 +977,13 @@ bool ARobberNightDirector::IsSolvable(const TArray<FRobberExhibitAssignment>& De
 	}
 	for (const ARobberStoryQuest* Story : StoryQuests)
 	{
+		TArray<FName> Paid;
+		Story->GetPaidKeys(Paid);
 		TArray<AActor*> Needed;
 		Story->GetRequiredActors(Needed);
 		for (const AActor* Actor : Needed)
 		{
-			if (Story->WantsVaultDigits() && !HaveAll(KeysNeededAt(Actor)))
+			if ((Story->WantsVaultDigits() || !Paid.IsEmpty()) && !HaveAll(KeysNeededAt(Actor)))
 			{
 				return false;
 			}

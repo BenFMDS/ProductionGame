@@ -530,6 +530,16 @@ bool ARobberGameState::CanTalkToExhibits() const
 	return ReplicatedGameStage != RobberStage::BreakIn && ReplicatedGameStage != RobberStage::Investigate;
 }
 
+bool ARobberGameState::IsExhibitSmallTalk() const
+{
+	return ReplicatedGameStage == RobberStage::Investigate;
+}
+
+bool ARobberGameState::CanChatWithExhibits() const
+{
+	return CanTalkToExhibits() || IsExhibitSmallTalk();
+}
+
 void ARobberGameState::StartHeist()
 {
 	if (!HasAuthority() || ReplicatedGameStage != RobberStage::Investigate)
@@ -588,7 +598,7 @@ FText ARobberGameState::GetObjectiveText(const APlayerState* Viewer) const
 	case RobberStage::BreakIn:
 		return ActiveEntry ? ActiveEntry->GetBreakInStatus(this, Viewer) : FText::GetEmpty();
 	case RobberStage::Investigate:
-		return NSLOCTEXT("RobberHeist", "InvestigateObjective", "Sneak to the gem room door. The exhibits won't talk to you yet.");
+		return NSLOCTEXT("RobberHeist", "InvestigateObjective", "Sneak to the gem room door. The exhibits only want to chat for now.");
 	case RobberStage::Heist:
 		return bAlarmRaised ? NSLOCTEXT("RobberHeist", "HeistTripped", "The alarm's gone off! Grab the gem and get out before the guards arrive.")
 			: NSLOCTEXT("RobberHeist", "HeistObjective", "Do the jobs. The exhibits will talk now.");

@@ -57,10 +57,10 @@ FText ARobberLobbyObject::GetPrompt(const ARobberGameState* GameState, const APl
 {
 	switch (Menu)
 	{
-	case ERobberLobbyMenu::Settings: return NSLOCTEXT("RobberHideout", "PromptSettings", "Settings: keys, sound and picture");
-	case ERobberLobbyMenu::Achievements: return NSLOCTEXT("RobberHideout", "PromptAchievements", "Achievements: what the crew's pulled off");
-	case ERobberLobbyMenu::Quit: return NSLOCTEXT("RobberHideout", "PromptQuit", "Quit: leave the game");
-	case ERobberLobbyMenu::Catalogue: return NSLOCTEXT("RobberHideout", "PromptCatalogue", "Catalogue: gear for the next job");
+	case ERobberLobbyMenu::Settings: return NSLOCTEXT("RobberHideout", "PromptSettings", "Settings");
+	case ERobberLobbyMenu::Achievements: return NSLOCTEXT("RobberHideout", "PromptAchievements", "Achievements");
+	case ERobberLobbyMenu::Quit: return NSLOCTEXT("RobberHideout", "PromptQuit", "Quit game");
+	case ERobberLobbyMenu::Catalogue: return NSLOCTEXT("RobberHideout", "PromptCatalogue", "Open catalogue");
 	default: return Prompt;
 	}
 }
@@ -88,7 +88,7 @@ void URobberMenuObjectSubsystem::OnWorldBeginPlay(UWorld& World)
 				Text->SetVisibility(false);
 			}
 		}
-		// The Blueprint's own label says which object this is, so that picks the description.
+		// The Blueprint's own label says which object this is, so that picks the prompt.
 		const FTextProperty* DisplayText = FindFProperty<FTextProperty>(It->GetClass(), TEXT("DisplayText"));
 		const FStrProperty* InteractText = FindFProperty<FStrProperty>(It->GetClass(), TEXT("Interact Text"));
 		if (!DisplayText || !InteractText)
@@ -96,13 +96,13 @@ void URobberMenuObjectSubsystem::OnWorldBeginPlay(UWorld& World)
 			continue;
 		}
 		const FString Name = DisplayText->GetPropertyValue_InContainer(*It).ToString();
-		FString What;
-		if (Name.Contains(TEXT("Play"))) What = NSLOCTEXT("RobberHideout", "WhatPlay", "start or join a heist").ToString();
-		else if (Name.Contains(TEXT("Setting"))) What = NSLOCTEXT("RobberHideout", "WhatSettings", "keys, sound and picture").ToString();
-		else if (Name.Contains(TEXT("Achievement"))) What = NSLOCTEXT("RobberHideout", "WhatAchievements", "what the crew's pulled off").ToString();
-		else if (Name.Contains(TEXT("Dev"))) What = NSLOCTEXT("RobberHideout", "WhatDev", "jump to a test level").ToString();
-		else if (Name.Contains(TEXT("Quit"))) What = NSLOCTEXT("RobberHideout", "WhatQuit", "leave the game").ToString();
-		InteractText->SetPropertyValue_InContainer(*It, What.IsEmpty() ? Name : FString::Printf(TEXT("%s: %s"), *Name, *What));
+		FString Prompt = Name;
+		if (Name.Contains(TEXT("Play"))) Prompt = NSLOCTEXT("RobberHideout", "MenuPlay", "Play game").ToString();
+		else if (Name.Contains(TEXT("Setting"))) Prompt = NSLOCTEXT("RobberHideout", "MenuSettings", "Settings").ToString();
+		else if (Name.Contains(TEXT("Achievement"))) Prompt = NSLOCTEXT("RobberHideout", "MenuAchievements", "Achievements").ToString();
+		else if (Name.Contains(TEXT("Dev"))) Prompt = NSLOCTEXT("RobberHideout", "MenuDev", "Dev levels").ToString();
+		else if (Name.Contains(TEXT("Quit"))) Prompt = NSLOCTEXT("RobberHideout", "MenuQuit", "Quit game").ToString();
+		InteractText->SetPropertyValue_InContainer(*It, Prompt);
 	}
 }
 

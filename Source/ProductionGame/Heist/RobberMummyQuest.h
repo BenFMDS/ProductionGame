@@ -41,6 +41,9 @@ public:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
+	virtual bool WantsVaultDigits() const override { return true; }
+	virtual void SetVaultDigits(const TArray<int32>& Indexes) override { DigitIndexes = Indexes; }
+	virtual int32 GetFirstVaultDigit() const override { return 2; }
 	virtual AActor* GetTipSubject() const override { return Mummy; }
 	virtual void GetRequiredActors(TArray<AActor*>& OutActors) const override;
 	virtual bool HandlesProp(FName PropId) const override;
@@ -79,6 +82,7 @@ private:
 
 	UPROPERTY(Transient) TObjectPtr<AActor> Mummy;
 	UPROPERTY(Transient) TObjectPtr<UDialogueDefinition> Script;
+	TArray<int32> DigitIndexes;
 	TMap<int32, int32> LastChatLine;
 	FDelegateHandle EventHandle;
 };

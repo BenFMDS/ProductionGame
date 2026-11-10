@@ -185,6 +185,8 @@ void UDialoguePresentationWidget::RefreshConversation()
 		}
 	}
 	SetUserFocus(GetOwningPlayer());
+	// The label keeps the line up beside its answers, so a separate "line only" step just repeats it.
+	if (bExhibitLabel) ShowChoices();
 }
 
 void UDialoguePresentationWidget::ShowChoices()

@@ -40,6 +40,10 @@ public:
 	// --- The director's side. ---
 	virtual bool WantsVaultDigits() const { return false; }
 	virtual void SetVaultDigits(const TArray<int32>& Indexes) {}
+	/** Where this quest's two digits start in the code, so a script can say "the first number" and mean it. */
+	virtual int32 GetFirstVaultDigit() const { return 0; }
+	/** Keys this quest pays out. The director leaves them out of the exhibit quests' rewards. */
+	virtual void GetPaidKeys(TArray<FName>& OutKeys) const {}
 	/** Whoever the tip points at, for its {room} and {floor}. */
 	virtual AActor* GetTipSubject() const { return nullptr; }
 	/** Everything a player has to reach, so the deal can check the night can be finished. */
@@ -56,6 +60,10 @@ public:
 	/** Several story quests can share a night, so each prop has to be claimed by the one it belongs to. */
 	virtual bool HandlesProp(FName PropId) const { return false; }
 	virtual FText GetPropPrompt(FName PropId, const APlayerState* Viewer) const { return FText::GetEmpty(); }
+	/** What a prop placed with bLiveLabel says right now. Built from replicated state, so every machine agrees. */
+	virtual FText GetPropLabel(FName PropId) const { return FText::GetEmpty(); }
+	/** Replaces the HUD newspaper's headline for the whole crew while it isn't empty. */
+	virtual FText GetHeadlineOverride() const { return FText::GetEmpty(); }
 	virtual void OnPropUsed(FName PropId, ARobberStoryProp* Prop, APawn* Pawn, APlayerState* Player) {}
 	/** May this watcher (ARobberTina::WatcherId) catch this player right now? Any quest can say no. */
 	virtual bool WatcherCares(FName Watcher, const APlayerState* Player) const { return true; }
@@ -73,6 +81,8 @@ protected:
 	/** The note stays up behind the QUEST COMPLETE stamp, then drops off the screen. */
 	void ClearNoteAfterStamp();
 	void Toast(const FText& Message) const;
+	/** Draws a heat or guard-time reward from the night's table and tells the crew who it came from. */
+	void PayBonusReward(const FText& FromWho);
 
 	ARobberStoryProp* FindProp(FName PropId) const;
 	bool IsOwnerInRoom(const FString& RoomName) const;
@@ -97,14 +107,18 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Story") FName PropId;
 	/** Starts the night out of sight (the flame, before anyone has lit it). */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Story") bool bStartsHidden = false;
+	/** The quest writes this prop's label (the polls board). Off by default so ordinary props don't look their quest up every tick. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Story") bool bLiveLabel = false;
 
 	/** Server only. A prop that's gone can't be seen, aimed at or walked into. */
 	void SetShown(bool bInShown);
 	bool IsShown() const { return bShown; }
+	FText GetLiveLabelForTest() const { return GetLabel(nullptr); }
 
 protected:
 	virtual void OnServerInteract(APawn* Pawn, APlayerState* Player, ARobberGameState* GameState) override;
 	virtual FText GetPrompt(const ARobberGameState* GameState, const APlayerState* Viewer) const override;
+	virtual FText GetLabel(const ARobberGameState* GameState) const override;
 
 private:
 	ARobberStoryQuest* FindStory() const;

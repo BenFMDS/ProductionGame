@@ -53,6 +53,10 @@ public:
 	UPROPERTY(Transient) FText JournalQuote;
 	/** Server only, set by the night director. */
 	UPROPERTY(Transient) TArray<FDialogueErrand> Errands;
+	/** Server only. What this talker can say during Investigate. Must never hold a clue. */
+	UPROPERTY(Transient) TArray<FText> SmallTalkLines;
+	/** Server only. Replaces the dialogue's speaker name during small talk, for talkers whose names are a secret. */
+	UPROPERTY(Transient) FText SmallTalkSpeaker;
 	/** Replicated busy indicator; lock ownership itself is private server state. */
 	UPROPERTY(Replicated, BlueprintReadOnly, Category="Dialogue") bool bIsInConversation = false;
 	UPROPERTY(Replicated, BlueprintReadOnly, Category="Dialogue") TObjectPtr<APlayerState> TalkingPlayer;
@@ -79,6 +83,10 @@ private:
 	FTimerHandle SessionTimer;
 	/** An errand's reply, said instead of the current node's line until the next choice. */
 	FText ErrandLine;
+	bool bSmallTalk = false;
+	FText SmallTalkLine;
+	int32 LastSmallTalkLine = INDEX_NONE;
+	FText PickSmallTalkLine();
 	AActor* FindErrandItem(const FDialogueErrand& Errand) const;
 	bool CanDoErrand(const UPlayerQuestComponent* Player, const FDialogueErrand& Errand) const;
 	void ValidateSession();

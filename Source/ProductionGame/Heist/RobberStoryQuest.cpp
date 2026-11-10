@@ -106,6 +106,34 @@ void ARobberStoryQuest::Toast(const FText& Message) const
 	}
 }
 
+void ARobberStoryQuest::PayBonusReward(const FText& FromWho)
+{
+	ARobberGameState* State = GetWorld()->GetGameState<ARobberGameState>();
+	if (!State)
+	{
+		return;
+	}
+	for (TActorIterator<ARobberNightDirector> It(GetWorld()); It; ++It)
+	{
+		if (It->GetLevel() != GetLevel())
+		{
+			continue;
+		}
+		const FRobberReward Reward = It->DrawBonusReward();
+		if (Reward.Kind == ERobberRewardKind::ExtraTime)
+		{
+			State->AddGuardsTime(Reward.Value);
+			State->TellCrew(FText::Format(NSLOCTEXT("StoryQuest", "PaidTime", "PAYOUT · {0} delayed the guards by {1} seconds."), FromWho, FMath::RoundToInt32(Reward.Value)));
+		}
+		else
+		{
+			State->CoolHeat(Reward.Value);
+			State->TellCrew(FText::Format(NSLOCTEXT("StoryQuest", "PaidHeat", "PAYOUT · {0} had a word. Heat is down by {1}."), FromWho, FMath::RoundToInt32(Reward.Value)));
+		}
+		return;
+	}
+}
+
 ARobberStoryProp* ARobberStoryQuest::FindProp(FName PropId) const
 {
 	for (TActorIterator<ARobberStoryProp> It(GetWorld()); It; ++It)
@@ -187,6 +215,12 @@ FText ARobberStoryProp::GetPrompt(const ARobberGameState* GameState, const APlay
 {
 	const ARobberStoryQuest* Story = FindStory();
 	return Story && bShown ? Story->GetPropPrompt(PropId, Viewer) : FText::GetEmpty();
+}
+
+FText ARobberStoryProp::GetLabel(const ARobberGameState* GameState) const
+{
+	const ARobberStoryQuest* Story = bLiveLabel ? FindStory() : nullptr;
+	return Story ? Story->GetPropLabel(PropId) : Super::GetLabel(GameState);
 }
 
 void ARobberStoryProp::OnServerInteract(APawn* Pawn, APlayerState* Player, ARobberGameState* GameState)
@@ -616,6 +650,9 @@ void ARobberCaveMenQuest::BuildDialogues()
 		UDialogueComponent* Talker = Man->FindComponentByClass<UDialogueComponent>();
 		Talker->Dialogue = Dialogue;
 		Talker->OfferedQuests.Reset();
+		// Nobody can have found the book this early, so it's cave speak and no names.
+		Talker->SmallTalkLines = Gibberish;
+		Talker->SmallTalkSpeaker = Who(Unknown);
 		Talker->EntryOverride.BindUObject(this, &ARobberCaveMenQuest::EntryFor, Man);
 	}
 }

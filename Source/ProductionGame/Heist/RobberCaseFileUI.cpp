@@ -38,6 +38,7 @@
 #include "Quest/PlayerQuestComponent.h"
 #include "Robber/RobberController.h"
 #include "Robber/RobberGameState.h"
+#include "Heist/RobberStoryQuest.h"
 
 // --- Shared ---
 
@@ -221,6 +222,14 @@ namespace
 
 FText URobberCaseFileHUD::GetHeadline() const
 {
+	for (TActorIterator<ARobberStoryQuest> It(GetWorld()); It; ++It)
+	{
+		const FText Override = It->GetHeadlineOverride();
+		if (!Override.IsEmpty())
+		{
+			return Override;
+		}
+	}
 	return Headline(HeatLevel(GetRobberState()));
 }
 
@@ -965,7 +974,7 @@ void URobberCaseFileHUD::UpdateExhibitBubbles(const FGeometry& MyGeometry, float
 		SinceBubbleScan = 0.f;
 		BubbleExhibits.Reset();
 		const AProductionGameCharacter* Robber = Cast<AProductionGameCharacter>(PC->GetPawn());
-		if (State->CanTalkToExhibits() && !RobberStage::IsInLobby(State->GetGameStage()) && !(Robber && Robber->IsHiding()))
+		if (State->CanChatWithExhibits() && !RobberStage::IsInLobby(State->GetGameStage()) && !(Robber && Robber->IsHiding()))
 		{
 			const FVector Eye = Camera->GetCameraLocation();
 			TArray<TPair<double, AActor*>> Near;
@@ -1155,7 +1164,7 @@ void URobberCaseFileHUD::UpdatePaper(const ARobberGameState* State)
 		Fuse->SetPercent(State->GetHeat() / ARobberGameState::MaxHeat);
 		Fuse->SetFillColorAndOpacity(HeatColour(Level));
 	}
-	SetText(Find<UTextBlock>(TEXT("HeadlineText")), Headline(Level));
+	SetText(Find<UTextBlock>(TEXT("HeadlineText")), GetHeadline());
 	SetText(Find<UTextBlock>(TEXT("SublineText")), Subline(Level));
 
 	const float Guards = State->GetGuardsTimeRemaining();

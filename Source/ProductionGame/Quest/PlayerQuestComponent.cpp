@@ -11,6 +11,7 @@
 #include "Engine/World.h"
 #include "TimerManager.h"
 #include "Net/UnrealNetwork.h"
+#include "Robber/RobberController.h"
 #include "Robber/RobberGameState.h"
 
 UPlayerQuestComponent::UPlayerQuestComponent()
@@ -142,9 +143,9 @@ void UPlayerQuestComponent::ServerTalkTo_Implementation(AActor* NPC)
 	if (auto* Dialogue = NPC->FindComponentByClass<UDialogueComponent>())
 	{
 		const auto* RobberState = GetWorld()->GetGameState<ARobberGameState>();
-		if (RobberState && !RobberState->CanTalkToExhibits())
+		if (RobberState && !RobberState->CanChatWithExhibits())
 		{
-			ClientRejectConversation(NSLOCTEXT("Dialogue", "NotYet", "The exhibits won't talk yet. Find the gem room first."));
+			ClientRejectConversation(NSLOCTEXT("Dialogue", "NotYet", "The exhibits won't talk yet."));
 			return;
 		}
 		if (!Dialogue->HasValidDialogue())
@@ -303,7 +304,12 @@ void UPlayerQuestComponent::SetConversation(const FPlayerConversation& Snapshot)
 void UPlayerQuestComponent::CloseConversation() { SetConversation(FPlayerConversation()); }
 void UPlayerQuestComponent::OnRep_Quests() { OnQuestsChanged.Broadcast(); }
 void UPlayerQuestComponent::OnRep_Conversation() { OnConversationChanged.Broadcast(); }
-void UPlayerQuestComponent::ClientRejectConversation_Implementation(const FText& Reason) { OnConversationRejected.Broadcast(Reason); }
+void UPlayerQuestComponent::ClientRejectConversation_Implementation(const FText& Reason)
+{
+	OnConversationRejected.Broadcast(Reason);
+	// The Case File HUD doesn't show the old widget's feedback line, so a refusal looked like the key doing nothing.
+	if (auto* Robber = Cast<ARobberController>(GetOwner())) Robber->ClientHeistMessage(Reason);
+}
 
 void UPlayerQuestComponent::TalkToLookedAtNPC()
 {

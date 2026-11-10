@@ -4,6 +4,7 @@
 #include "Quest/QuestDefinition.h"
 #include "Quest/QuestGiverComponent.h"
 #include "Heist/RobberExhibitTalk.h"
+#include "Robber/RobberGameState.h"
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerState.h"
@@ -74,6 +75,18 @@ bool UDialogueComponent::TryStart(UPlayerQuestComponent* Player)
 	StartingPawn = PC->GetPawn();
 	TalkingPlayer = PC->PlayerState;
 	bIsInConversation = true;
+	const auto* RobberState = GetWorld()->GetGameState<ARobberGameState>();
+	bSmallTalk = RobberState && RobberState->IsExhibitSmallTalk();
+	if (bSmallTalk)
+	{
+		// Returns before OnConversationStarted on purpose: that's what hands out tips and journal notes.
+		SmallTalkLine = PickSmallTalkLine();
+		LastActivity = GetWorld()->GetTimeSeconds();
+		GetOwner()->ForceNetUpdate();
+		GetWorld()->GetTimerManager().SetTimer(SessionTimer, this, &UDialogueComponent::ValidateSession, 0.25f, true);
+		PublishNode();
+		return true;
+	}
 	CurrentNode = Dialogue ? Dialogue->EntryNode : NAME_None;
 	if (Dialogue && !Dialogue->RandomEntryNodes.IsEmpty())
 	{
@@ -104,6 +117,24 @@ bool UDialogueComponent::TryStart(UPlayerQuestComponent* Player)
 	PublishNode();
 	OnConversationStarted.Broadcast(GetOwner(), PC->PlayerState);
 	return true;
+}
+
+FText UDialogueComponent::PickSmallTalkLine()
+{
+	TArray<FText> Lines = SmallTalkLines;
+	if (Lines.IsEmpty() && Dialogue)
+	{
+		// Nights the director hasn't dealt: these talkers still have only their own asset's lines.
+		for (const FDialogueNode& Node : Dialogue->Nodes)
+		{
+			if (!Node.Text.IsEmpty() && (Dialogue->RandomEntryNodes.Contains(Node.ID) || Dialogue->EntryNode == Node.ID)) Lines.Add(Node.Text);
+		}
+	}
+	if (Lines.IsEmpty()) return NSLOCTEXT("Dialogue", "NothingToSay", "...");
+	int32 Pick = FMath::RandHelper(Lines.Num());
+	if (Lines.Num() > 1 && Pick == LastSmallTalkLine) Pick = (Pick + 1) % Lines.Num();
+	LastSmallTalkLine = Pick;
+	return Lines[Pick];
 }
 
 FOnConversationStarted UDialogueComponent::OnConversationStarted;
@@ -152,6 +183,7 @@ void UDialogueComponent::Release(UPlayerQuestComponent* Player)
 	StartingPawn.Reset();
 	TalkingPlayer = nullptr;
 	bIsInConversation = false;
+	bSmallTalk = false;
 	ErrandLine = FText::GetEmpty();
 	VisibleChoiceIDs.Reset();
 	GetWorld()->GetTimerManager().ClearTimer(SessionTimer);
@@ -174,6 +206,15 @@ void UDialogueComponent::PublishNode()
 		break;
 	}
 	VisibleChoiceIDs.Reset();
+	if (bSmallTalk)
+	{
+		// No choices: the screen adds its own Goodbye for a line with none.
+		Snapshot.Speaker = !SmallTalkSpeaker.IsEmpty() ? SmallTalkSpeaker : Dialogue ? Dialogue->SpeakerName : FText::GetEmpty();
+		Snapshot.Portrait = Dialogue ? Dialogue->Portrait : nullptr;
+		Snapshot.Text = SmallTalkLine;
+		Player->SetConversation(Snapshot);
+		return;
+	}
 	if (Dialogue)
 	{
 		const FDialogueNode* Node = Dialogue->FindNode(CurrentNode);
