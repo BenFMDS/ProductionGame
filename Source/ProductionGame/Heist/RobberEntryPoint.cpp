@@ -1,6 +1,8 @@
 #include "Heist/RobberEntryPoint.h"
 
 #include "Algo/AllOf.h"
+#include "EngineUtils.h"
+#include "ProductionGameCharacter.h"
 #include "Components/ArrowComponent.h"
 #include "Components/BoxComponent.h"
 #include "Components/TextRenderComponent.h"
@@ -55,14 +57,6 @@ ARobberTourEntryPoint::ARobberTourEntryPoint()
 
 namespace
 {
-	void SetFrozen(APlayerState* Player, bool bFrozen)
-	{
-		if (ARobberController* Controller = Player ? Cast<ARobberController>(Player->GetOwningController()) : nullptr)
-		{
-			Controller->SetHeistFrozen(bFrozen);
-		}
-	}
-
 	void TellPlayer(APlayerState* Player, const FText& Message)
 	{
 		if (ARobberController* Controller = Player ? Cast<ARobberController>(Player->GetOwningController()) : nullptr)
@@ -79,15 +73,75 @@ bool ARobberTourEntryPoint::TryHide(ARobberGameState* GameState, APlayerState* P
 		OutReason = NSLOCTEXT("RobberEntry", "NeedTicket", "Buy a ticket at the desk first.");
 		return false;
 	}
-	APawn* Pawn = Player->GetPawn();
-	if (!Pawn)
+	if (!Player->GetPawn())
 	{
 		return false;
 	}
 	GameState->SetHidingSpot(Player, HidingSpot);
-	Pawn->TeleportTo(HidingSpot->GetHideLocation(), Pawn->GetActorRotation());
-	SetFrozen(Player, true);
 	return true;
+}
+
+void ARobberTourEntryPoint::GetBreakInMarkers(const ARobberGameState* GameState, const APlayerState* Viewer, TArray<FRobberMarkerTarget>& Out) const
+{
+	// Past the ticket the next step is "pick a spot", and which one is the player's choice.
+	if (GameState->GetCrewStatus(Viewer).bHasTicket)
+	{
+		return;
+	}
+	for (TActorIterator<ARobberTicketDesk> It(GetWorld()); It; ++It)
+	{
+		if (It->IsActive(GameState))
+		{
+			Out.Add({ It->GetActorLocation(), NSLOCTEXT("RobberMarker", "Desk", "Ticket desk") });
+			return;
+		}
+	}
+}
+
+void ARobberSkylightEntryPoint::GetBreakInMarkers(const ARobberGameState* GameState, const APlayerState* Viewer, TArray<FRobberMarkerTarget>& Out) const
+{
+	if (!Skylight || IsInside(Viewer ? Viewer->GetPawn() : nullptr))
+	{
+		return;
+	}
+	if (Skylight->IsCut() && !Skylight->IsRopeDown())
+	{
+		Out.Add({ Skylight->GetRopeAnchorLocation(), NSLOCTEXT("RobberMarker", "Anchor", "Rope anchor") });
+		return;
+	}
+	Out.Add({ Skylight->GetActorLocation(), NSLOCTEXT("RobberMarker", "Skylight", "Skylight") });
+}
+
+void ARobberSewerEntryPoint::GetBreakInMarkers(const ARobberGameState* GameState, const APlayerState* Viewer, TArray<FRobberMarkerTarget>& Out) const
+{
+	if (IsInside(Viewer ? Viewer->GetPawn() : nullptr))
+	{
+		return;
+	}
+	if (Water && !Water->IsDrained())
+	{
+		for (const ARobberSewerValve* Valve : Water->Valves)
+		{
+			if (Valve)
+			{
+				Out.Add({ Valve->GetActorLocation(), NSLOCTEXT("RobberMarker", "Valve", "Valve") });
+			}
+		}
+		return;
+	}
+	// Finding the crowbar is the job here, so nothing points at it.
+	if (Grate && (Grate->IsOpen() || !Crowbar || Crowbar->IsTaken()))
+	{
+		Out.Add({ Grate->GetActorLocation(), NSLOCTEXT("RobberMarker", "Grate", "Grate") });
+	}
+}
+
+void ARobberLoadingDockEntryPoint::GetBreakInMarkers(const ARobberGameState* GameState, const APlayerState* Viewer, TArray<FRobberMarkerTarget>& Out) const
+{
+	if (RollUpDoor && !IsInside(Viewer ? Viewer->GetPawn() : nullptr))
+	{
+		Out.Add({ RollUpDoor->GetActorLocation(), NSLOCTEXT("RobberMarker", "RollUp", "Roll-up door") });
+	}
 }
 
 void ARobberTourEntryPoint::BeginBreakIn(ARobberGameState* GameState)
@@ -115,7 +169,11 @@ void ARobberTourEntryPoint::EndBreakIn(ARobberGameState* GameState)
 	{
 		if (Status.HidingSpot)
 		{
-			SetFrozen(Status.Player, false);
+			// Closing's the point of hiding on the Tour, so everyone comes back out to start the night.
+			if (AProductionGameCharacter* Character = Status.Player ? Cast<AProductionGameCharacter>(Status.Player->GetPawn()) : nullptr)
+			{
+				Character->ExitHiding();
+			}
 			TellPlayer(Status.Player, NSLOCTEXT("RobberEntry", "Closed", "The museum is closed. Time to sneak out."));
 		}
 		else

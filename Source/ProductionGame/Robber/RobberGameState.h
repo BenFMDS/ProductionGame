@@ -132,6 +132,11 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Robber|Stage")
 	bool CanTalkToExhibits() const;
 
+	/** During Investigate exhibits only make small talk: one random line, no clues, quests or journal notes. */
+	bool IsExhibitSmallTalk() const;
+	/** Whether pressing interact on an exhibit gets any answer at all. */
+	bool CanChatWithExhibits() const;
+
 	/** Server only. Called when the crew reaches the gem room door. Sets the night's jobs. */
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Robber|Heist")
 	void StartHeist();
@@ -145,6 +150,9 @@ public:
 	/** The generator's been switched off this night: room lights are on emergency red and the lasers are down. */
 	UFUNCTION(BlueprintPure, Category = "Robber|Heist")
 	bool IsPowerCut() const { return bPowerCut; }
+
+	/** The generator's running. BP_PowerGenerator turns it back on 10 seconds after a cut; IsPowerCut stays set for the night. */
+	bool IsPowerOn() const;
 
 	// --- Heat: how much the museum has noticed, crew-wide, 0-100. Full heat raises the alarm. ---
 
@@ -261,7 +269,6 @@ private:
 
 	FRobberCrewStatus* FindOrAddCrewStatus(APlayerState* Player);
 	void TickPhase();
-	bool IsPowerOn() const;
 
 	uint8 GetLegacyGameState() const;
 	void SetLegacyGameState(uint8 NewGameStage);

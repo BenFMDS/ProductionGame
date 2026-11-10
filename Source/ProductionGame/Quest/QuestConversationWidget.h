@@ -59,6 +59,8 @@ private:
 	bool bShowingChoices = false;
 	bool bPreviousCursor = false;
 	int32 DisplayedRevision = INDEX_NONE;
+	/** WBP_ExhibitLabel keeps the line and portrait on screen with the answers; the old layout swaps them out. */
+	bool bExhibitLabel = false;
 	void SetText(FName Name, const FText& Text);
 	void SetBoxVisibility(FName Name, ESlateVisibility NewVisibility);
 };

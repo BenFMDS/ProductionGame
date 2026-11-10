@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Subsystems/WorldSubsystem.h"
 #include "GameFramework/Actor.h"
 #include "Heist/RobberInteractables.h"
 #include "RobberHideout.generated.h"
@@ -14,6 +15,7 @@ enum class ERobberLobbyMenu : uint8
 	Settings,
 	Achievements,
 	Quit,
+	Catalogue,
 };
 
 /**
@@ -36,11 +38,42 @@ public:
 
 	bool IsHovered() const { return bHovered; }
 
+	/** How close (cm) a player has to be for a menu object to light up, with a clear view of it. */
+	static constexpr double HighlightRange = 500.;
+
+	/** True when Target is within HighlightRange of Viewer with nothing in the way. */
+	static bool IsInHighlightRange(const AActor* Target, const APlayerController* Viewer);
+
 protected:
 	virtual void OnServerInteract(APawn* Pawn, APlayerState* Player, ARobberGameState* GameState) override;
+	virtual FText GetPrompt(const ARobberGameState* GameState, const APlayerState* Viewer) const override;
+	/** The name and what it does are on the prompt now; nothing floats over the object. */
+	virtual FText GetLabel(const ARobberGameState* GameState) const override { return FText::GetEmpty(); }
 
 private:
 	bool bHovered = false;
+};
+
+/**
+ * Does for the main menu's Blueprint BP_MenuObjects what ARobberLobbyObject does for itself: no floating text, lit up
+ * in range, a prompt saying what it does. No world objects or Blueprints to change, so it can't be lost in a merge.
+ */
+UCLASS()
+class PRODUCTIONGAME_API URobberMenuObjectSubsystem : public UTickableWorldSubsystem
+{
+	GENERATED_BODY()
+
+public:
+	virtual bool ShouldCreateSubsystem(UObject* Outer) const override;
+	virtual void OnWorldBeginPlay(UWorld& World) override;
+	virtual void Tick(float DeltaTime) override;
+	virtual TStatId GetStatId() const override { RETURN_QUICK_DECLARE_CYCLE_STAT(URobberMenuObjectSubsystem, STATGROUP_Tickables); }
+
+	/** The objects it has taken over, for tests. */
+	const TArray<TWeakObjectPtr<AActor>>& GetObjects() const { return Objects; }
+
+private:
+	TArray<TWeakObjectPtr<AActor>> Objects;
 };
 
 /**

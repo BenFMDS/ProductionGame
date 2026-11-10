@@ -1,5 +1,6 @@
 #include "Heist/RobberSecurityCamera.h"
 
+#include "ProductionGameCharacter.h"
 #include "Components/SpotLightComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
@@ -149,7 +150,8 @@ bool ARobberSecurityCamera::GetFloorCircle(FVector& OutCentre) const
 bool ARobberSecurityCamera::CanSee(const APawn* Pawn) const
 {
 	FVector Centre;
-	if (!Pawn || !GetFloorCircle(Centre))
+	const AProductionGameCharacter* Robber = Cast<AProductionGameCharacter>(Pawn);
+	if (!Pawn || (Robber && (Robber->IsHiding() || Robber->IsDevImmune())) || !GetFloorCircle(Centre))
 	{
 		return false;
 	}

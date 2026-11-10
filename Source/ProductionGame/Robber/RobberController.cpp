@@ -10,7 +10,6 @@
 #include "AchievementSubsystem.h"
 #include "Blueprint/UserWidget.h"
 #include "Components/Widget.h"
-#include "Engine/GameViewportClient.h"
 #include "EnhancedInputComponent.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
@@ -18,6 +17,7 @@
 #include "Heist/RobberCaseFileUI.h"
 #include "Heist/RobberJournal.h"
 #include "Heist/RobberMapTable.h"
+#include "Heist/RobberShop.h"
 #include "Heist/RobberStage.h"
 #include "InputAction.h"
 #include "InputMappingContext.h"
@@ -27,14 +27,8 @@
 #include "Robber/RobberGameState.h"
 #include "RobberMenu/RobberMenuWidgets.h"
 #include "Sound/SoundMix.h"
-#include "Styling/CoreStyle.h"
 #include "TimerManager.h"
 #include "UObject/ConstructorHelpers.h"
-#include "Widgets/Input/SButton.h"
-#include "Widgets/Layout/SBorder.h"
-#include "Widgets/Layout/SBox.h"
-#include "Widgets/SBoxPanel.h"
-#include "Widgets/Text/STextBlock.h"
 
 ARobberController::ARobberController()
 {
@@ -176,6 +170,53 @@ void ARobberController::CloseJournal()
 	SetInputMode(FInputModeGameOnly());
 }
 
+void ARobberController::OpenShopCatalogue()
+{
+	if (!IsLocalController() || IsShopOpen())
+	{
+		return;
+	}
+	CloseJournal();
+	if (!ShopWidget)
+	{
+		if (UClass* ShopClass = StaticLoadClass(URobberShopCatalogue::StaticClass(), nullptr, TEXT("/Game/OurStuff/UI/CaseFile/WBP_ShopCatalogue.WBP_ShopCatalogue_C"), nullptr, LOAD_Quiet | LOAD_NoWarn))
+		{
+			ShopWidget = CreateWidget<URobberShopCatalogue>(this, ShopClass);
+		}
+	}
+	if (!ShopWidget)
+	{
+		return;
+	}
+	ShopWidget->AddToViewport(25);
+	ShopWidget->OnOpened();
+	SetIgnoreLookInput(true);
+	SetIgnoreMoveInput(true);
+	FInputModeUIOnly Mode;
+	Mode.SetWidgetToFocus(ShopWidget->TakeWidget());
+	Mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+	SetInputMode(Mode);
+	SetShowMouseCursor(true);
+}
+
+void ARobberController::CloseShopCatalogue()
+{
+	if (!IsShopOpen())
+	{
+		return;
+	}
+	ShopWidget->RemoveFromParent();
+	SetIgnoreLookInput(false);
+	SetIgnoreMoveInput(false);
+	SetShowMouseCursor(false);
+	SetInputMode(FInputModeGameOnly());
+}
+
+bool ARobberController::IsShopOpen() const
+{
+	return ShopWidget && ShopWidget->IsInViewport();
+}
+
 bool ARobberController::IsJournalOpen() const
 {
 	return JournalWidget && JournalWidget->IsInViewport();
@@ -183,8 +224,6 @@ bool ARobberController::IsJournalOpen() const
 
 void ARobberController::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
-	// Slate content outlives the controller otherwise and stays on screen after PIE ends.
-	CloseNightSwitcher();
 	if (URobberSettingsSubsystem* SettingsSystem = GetGameInstance() ? GetGameInstance()->GetSubsystem<URobberSettingsSubsystem>() : nullptr)
 	{
 		SettingsSystem->OnControlsChanged.Remove(ControlsChangedHandle);
@@ -217,7 +256,7 @@ void ARobberController::SetupInputComponent()
 		}
 	}
 #if !UE_BUILD_SHIPPING
-	InputComponent->BindKey(EKeys::F10, IE_Pressed, this, &ARobberController::ToggleNightSwitcher);
+	InputComponent->BindKey(EKeys::F10, IE_Pressed, this, &ARobberController::ToggleDevMenu);
 #endif
 	// Not consumed: Space is still jump and Esc still the menu when nobody's at the map.
 	for (const FKey& Key : { EKeys::SpaceBar, EKeys::Escape })
@@ -273,92 +312,30 @@ void ARobberController::ClientAchievement_Implementation(FName AchievementId, ER
 	}
 }
 
-void ARobberController::ToggleNightSwitcher()
+void ARobberController::ToggleDevMenu()
 {
 #if !UE_BUILD_SHIPPING
-	if (NightSwitcher.IsValid())
+	if (IsDevMenuOpen())
 	{
-		CloseNightSwitcher();
+		CloseDevMenu();
 		return;
 	}
-	UGameViewportClient* Viewport = GetWorld() ? GetWorld()->GetGameViewport() : nullptr;
-	const ARobberGameState* RobberGameState = GetWorld() ? GetWorld()->GetGameState<ARobberGameState>() : nullptr;
-	if (!Viewport || !RobberGameState)
+	CloseJournal();
+	CloseShopCatalogue();
+	if (!DevMenu)
+	{
+		if (UClass* MenuClass = StaticLoadClass(URobberDevMenu::StaticClass(), nullptr, TEXT("/Game/OurStuff/UI/CaseFile/WBP_DevMenu.WBP_DevMenu_C"), nullptr, LOAD_Quiet | LOAD_NoWarn))
+		{
+			DevMenu = CreateWidget<URobberDevMenu>(this, MenuClass);
+		}
+	}
+	if (!DevMenu)
 	{
 		return;
 	}
+	DevMenu->AddToViewport(100);
 
-	TWeakObjectPtr<ARobberController> WeakThis(this);
-	auto MakeButton = [WeakThis](const FText& Label, int32 NightIndex) -> TSharedRef<SWidget>
-	{
-		return SNew(SBox)
-			.Padding(2.f)
-			[
-				SNew(SButton)
-				.IsFocusable(false)
-				.Text(Label)
-				.OnClicked_Lambda([WeakThis, NightIndex]()
-				{
-					if (WeakThis.IsValid())
-					{
-						WeakThis->ServerSwitchNight(NightIndex);
-					}
-					return FReply::Handled();
-				})
-			];
-	};
-
-	TSharedRef<SHorizontalBox> NightButtons = SNew(SHorizontalBox);
-	for (int32 NightIndex = 0; NightIndex < RobberGameState->GetNightCount(); ++NightIndex)
-	{
-		NightButtons->AddSlot().AutoWidth()[MakeButton(FText::AsNumber(NightIndex + 1), NightIndex)];
-	}
-
-	NightSwitcher = SNew(SBox)
-		.Visibility(EVisibility::SelfHitTestInvisible)
-		.HAlign(HAlign_Right)
-		.VAlign(VAlign_Top)
-		.Padding(FMargin(0.f, 80.f, 20.f, 0.f))
-		[
-			SNew(SBorder)
-			.BorderImage(FCoreStyle::Get().GetBrush("WhiteBrush"))
-			.BorderBackgroundColor(FLinearColor(0.f, 0.f, 0.f, 0.75f))
-			.Padding(10.f)
-			[
-				SNew(SVerticalBox)
-				+ SVerticalBox::Slot().AutoHeight().Padding(2.f)
-				[
-					SNew(STextBlock).Text(INVTEXT("Dev: switch night (F10)"))
-				]
-				+ SVerticalBox::Slot().AutoHeight().Padding(2.f)
-				[
-					SNew(STextBlock)
-					.ColorAndOpacity(FLinearColor(0.7f, 0.7f, 0.7f))
-					.Text_Lambda([WeakThis]()
-					{
-						const ARobberGameState* State = WeakThis.IsValid() ? WeakThis->GetWorld()->GetGameState<ARobberGameState>() : nullptr;
-						if (!State)
-						{
-							return FText::GetEmpty();
-						}
-						const FText Night = State->IsTutorial() ? INVTEXT("Tutorial")
-							: State->GetCurrentNight() == INDEX_NONE ? INVTEXT("No night")
-							: FText::Format(INVTEXT("Night {0}"), State->GetCurrentNight() + 1);
-						return FText::Format(INVTEXT("Now: {0} - {1}"), Night, RobberStage::GetDisplayName(State->GetGameStage()));
-					})
-				]
-				+ SVerticalBox::Slot().AutoHeight()
-				[
-					NightButtons
-				]
-				+ SVerticalBox::Slot().AutoHeight()
-				[
-					MakeButton(INVTEXT("Tutorial"), INDEX_NONE)
-				]
-			]
-		];
-	Viewport->AddViewportWidgetContent(NightSwitcher.ToSharedRef(), 100);
-
+	// Game and UI, with nothing focused: F10 still reaches this controller to close it, and the player can keep walking.
 	FInputModeGameAndUI InputMode;
 	InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
 	InputMode.SetHideCursorDuringCapture(true);
@@ -367,40 +344,20 @@ void ARobberController::ToggleNightSwitcher()
 #endif
 }
 
-bool ARobberController::IsNightSwitcherOpen() const
+bool ARobberController::IsDevMenuOpen() const
 {
-#if !UE_BUILD_SHIPPING
-	return NightSwitcher.IsValid();
-#else
-	return false;
-#endif
+	return DevMenu && DevMenu->IsInViewport();
 }
 
-void ARobberController::CloseNightSwitcher()
+void ARobberController::CloseDevMenu()
 {
-#if !UE_BUILD_SHIPPING
-	if (!NightSwitcher.IsValid())
+	if (!IsDevMenuOpen())
 	{
 		return;
 	}
-	if (UGameViewportClient* Viewport = GetWorld() ? GetWorld()->GetGameViewport() : nullptr)
-	{
-		Viewport->RemoveViewportWidgetContent(NightSwitcher.ToSharedRef());
-	}
-	NightSwitcher.Reset();
+	DevMenu->RemoveFromParent();
 	SetInputMode(FInputModeGameOnly());
 	bShowMouseCursor = false;
-#endif
-}
-
-void ARobberController::ServerSwitchNight_Implementation(int32 NightIndex)
-{
-#if !UE_BUILD_SHIPPING
-	if (ARobberGameState* RobberGameState = GetWorld()->GetGameState<ARobberGameState>())
-	{
-		RobberGameState->SwitchNight(NightIndex);
-	}
-#endif
 }
 
 void ARobberController::TogglePauseMenu()
@@ -428,6 +385,11 @@ void ARobberController::ClientOpenLobbyMenu_Implementation(ERobberLobbyMenu Menu
 		{
 			Pause->ShowQuitCheckOnly();
 		}
+		return;
+	}
+	if (Menu == ERobberLobbyMenu::Catalogue)
+	{
+		OpenShopCatalogue();
 		return;
 	}
 	const TSoftClassPtr<UUserWidget>& Class = Menu == ERobberLobbyMenu::Settings ? LobbySettingsClass : LobbyAchievementsClass;

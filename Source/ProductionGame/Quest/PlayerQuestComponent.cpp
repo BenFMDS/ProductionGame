@@ -4,10 +4,14 @@
 #include "Quest/QuestObjectiveComponent.h"
 #include "Quest/QuestSequenceStep.h"
 #include "Dialogue/DialogueComponent.h"
+#include "Camera/PlayerCameraManager.h"
+#include "GameFramework/Character.h"
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/Pawn.h"
 #include "Engine/World.h"
+#include "TimerManager.h"
 #include "Net/UnrealNetwork.h"
+#include "Robber/RobberController.h"
 #include "Robber/RobberGameState.h"
 
 UPlayerQuestComponent::UPlayerQuestComponent()
@@ -21,6 +25,37 @@ void UPlayerQuestComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>
 	DOREPLIFETIME_CONDITION(UPlayerQuestComponent, Quests, COND_OwnerOnly);
 	DOREPLIFETIME_CONDITION(UPlayerQuestComponent, Conversation, COND_OwnerOnly);
 	DOREPLIFETIME_CONDITION(UPlayerQuestComponent, Keys, COND_OwnerOnly);
+	DOREPLIFETIME_CONDITION(UPlayerQuestComponent, StoryNote, COND_OwnerOnly);
+}
+
+void UPlayerQuestComponent::SetStoryNote(const FRobberStoryNote& Note)
+{
+	if (!GetOwner()->HasAuthority()) return;
+	StoryNote = Note;
+	GetOwner()->ForceNetUpdate();
+}
+
+void UPlayerQuestComponent::ClientStoryStamp_Implementation(bool bComplete, const FText& Title, const FText& Subtitle)
+{
+	OnStoryStamp.Broadcast(bComplete, Title, Subtitle);
+}
+
+void UPlayerQuestComponent::ClientStoryCaught_Implementation(float Seconds, FVector Launch)
+{
+	APlayerController* PC = Cast<APlayerController>(GetOwner());
+	if (!PC) return;
+	if (PC->PlayerCameraManager) PC->PlayerCameraManager->StartCameraFade(1.f, 1.f, Seconds, FLinearColor::Black, false, true);
+	PC->SetIgnoreMoveInput(true);
+	PC->SetIgnoreLookInput(true);
+	if (ACharacter* Character = PC->GetCharacter(); Character && !GetOwner()->HasAuthority()) Character->LaunchCharacter(Launch, true, true);
+	GetWorld()->GetTimerManager().SetTimer(CaughtTimer, FTimerDelegate::CreateWeakLambda(this, [this]()
+	{
+		APlayerController* Controller = Cast<APlayerController>(GetOwner());
+		if (!Controller) return;
+		Controller->SetIgnoreMoveInput(false);
+		Controller->SetIgnoreLookInput(false);
+		if (Controller->PlayerCameraManager) Controller->PlayerCameraManager->StartCameraFade(1.f, 0.f, 0.5f, FLinearColor::Black, false, false);
+	}), Seconds, false);
 }
 
 void UPlayerQuestComponent::ResetForNight()
@@ -31,6 +66,7 @@ void UPlayerQuestComponent::ResetForNight()
 	CloseConversation();
 	Quests.Reset();
 	Keys.Reset();
+	StoryNote = FRobberStoryNote();
 	GetOwner()->ForceNetUpdate();
 	OnRep_Quests();
 }
@@ -107,9 +143,9 @@ void UPlayerQuestComponent::ServerTalkTo_Implementation(AActor* NPC)
 	if (auto* Dialogue = NPC->FindComponentByClass<UDialogueComponent>())
 	{
 		const auto* RobberState = GetWorld()->GetGameState<ARobberGameState>();
-		if (RobberState && !RobberState->CanTalkToExhibits())
+		if (RobberState && !RobberState->CanChatWithExhibits())
 		{
-			ClientRejectConversation(NSLOCTEXT("Dialogue", "NotYet", "The exhibits won't talk yet. Find the gem room first."));
+			ClientRejectConversation(NSLOCTEXT("Dialogue", "NotYet", "The exhibits won't talk yet."));
 			return;
 		}
 		if (!Dialogue->HasValidDialogue())
@@ -268,7 +304,12 @@ void UPlayerQuestComponent::SetConversation(const FPlayerConversation& Snapshot)
 void UPlayerQuestComponent::CloseConversation() { SetConversation(FPlayerConversation()); }
 void UPlayerQuestComponent::OnRep_Quests() { OnQuestsChanged.Broadcast(); }
 void UPlayerQuestComponent::OnRep_Conversation() { OnConversationChanged.Broadcast(); }
-void UPlayerQuestComponent::ClientRejectConversation_Implementation(const FText& Reason) { OnConversationRejected.Broadcast(Reason); }
+void UPlayerQuestComponent::ClientRejectConversation_Implementation(const FText& Reason)
+{
+	OnConversationRejected.Broadcast(Reason);
+	// The Case File HUD doesn't show the old widget's feedback line, so a refusal looked like the key doing nothing.
+	if (auto* Robber = Cast<ARobberController>(GetOwner())) Robber->ClientHeistMessage(Reason);
+}
 
 void UPlayerQuestComponent::TalkToLookedAtNPC()
 {

@@ -210,6 +210,8 @@ private:
 	UFUNCTION() void OnSfxChanged(float Value);
 	UFUNCTION() void OnVoiceChanged(float Value);
 	UFUNCTION() void OnSensChanged(float Value);
+	UFUNCTION() void OnUiSizeChanged(float Value);
+	UFUNCTION() void OnUiSizeReleased();
 	UFUNCTION() void OnInvertChanged(bool bChecked);
 	UFUNCTION() void OnSmoothChanged(bool bChecked);
 	UFUNCTION() void OnFullscreen();
@@ -237,6 +239,7 @@ private:
 	void RefreshDisplay();
 	void RefreshKeys();
 	void RefreshMouse();
+	void RefreshUiSize();
 	void RefreshApply();
 	void MarkChanged();
 	void CaptureKey(const FKey& Key);
