@@ -51,6 +51,8 @@ public:
 	TObjectPtr<ARobberEntryPoint> OwningEntry;
 
 	bool IsActive(const ARobberGameState* GameState) const;
+	/** Shows or removes a part: hidden with its children, and nothing to bump into while it's gone. */
+	static void ShowPart(UPrimitiveComponent* Part, bool bShown);
 
 protected:
 	virtual void OnServerInteract(APawn* Pawn, APlayerState* Player, ARobberGameState* GameState) {}
@@ -129,6 +131,12 @@ public:
 	/** A guard's detection of this player at or above this when they climb in means the guard saw it happen. */
 	UPROPERTY(EditAnywhere, Category = "Robber|Hiding")
 	float SeenDetection = 50.f;
+
+	/** Above 0, the hider's camera sits this high (cm) above the spot's floor, for low spots like under a desk. 0 keeps standing height. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Robber|Hiding", meta = (ClampMin = "0"))
+	float HiddenEyeHeight = 0.f;
+
+	double GetFloorZ() const { return GetActorLocation().Z - GetActorScale3D().Z * 50.; }
 
 	/** Just inside the front, so a guard who saw you go in can get within its catch radius. */
 	FVector GetHideLocation() const;
@@ -219,7 +227,19 @@ public:
 
 	bool IsTaken() const { return bTaken; }
 
+	virtual void Tick(float DeltaSeconds) override;
+
+	/** The "!" floats over the key while this machine's own player is within this many cm and it's still there. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Robber|Door", meta = (ClampMin = "0"))
+	float AlertRange = 600.f;
+
+	bool IsAlertShowing() const;
+
 protected:
+	/** Drawn per machine, never replicated: each player sees it only near the key themselves. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Robber|Door")
+	TObjectPtr<UTextRenderComponent> Alert;
+
 	virtual void OnServerInteract(APawn* Pawn, APlayerState* Player, ARobberGameState* GameState) override;
 	virtual FText GetPrompt(const ARobberGameState* GameState, const APlayerState* Viewer) const override;
 	virtual FText GetLabel(const ARobberGameState* GameState) const override;

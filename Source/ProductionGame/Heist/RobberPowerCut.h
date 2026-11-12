@@ -70,6 +70,7 @@ private:
 	void PickBand();
 	void Draw();
 	void Say(const FText& Text);
+	void SayNextBreaker();
 
 	TWeakObjectPtr<AActor> Generator;
 	int32 BreakersDown = 0;

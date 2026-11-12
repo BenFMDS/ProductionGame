@@ -87,6 +87,8 @@ private:
 	FText SmallTalkLine;
 	int32 LastSmallTalkLine = INDEX_NONE;
 	FText PickSmallTalkLine();
+	/** Where a conversation opens: a random greeting, the quest's step, or what the entry override says. */
+	FName PickEntryNode(UPlayerQuestComponent* Player) const;
 	AActor* FindErrandItem(const FDialogueErrand& Errand) const;
 	bool CanDoErrand(const UPlayerQuestComponent* Player, const FDialogueErrand& Errand) const;
 	void ValidateSession();

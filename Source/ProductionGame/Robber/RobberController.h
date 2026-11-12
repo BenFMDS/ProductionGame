@@ -20,10 +20,11 @@ class URobberServerConsole;
 class URobberShopCatalogue;
 class UMaterialInstanceDynamic;
 class UAchievementDefinitionAsset;
-class UAchievementPopupWidget;
+class URobberAchievementPopup;
 class UInputAction;
 class USoundMix;
 class UUserWidget;
+class UWidget;
 
 /**
  * Native controller for the Robber gameplay maps. The identically named
@@ -36,6 +37,14 @@ class PRODUCTIONGAME_API ARobberController : public AProductionGamePlayerControl
 
 public:
 	ARobberController();
+
+	/** Server: a ClientHeistMessage to this player, if they're a robber. */
+	static void Tell(const APlayerState* Player, const FText& Message);
+	static void Tell(const APawn* Pawn, const FText& Message);
+
+	/** A full-screen widget takes the mouse and keys: no looking or walking. Returns whether the cursor was showing, for LeaveModal. */
+	static bool EnterModal(APlayerController* Controller, UWidget* Focus);
+	static void LeaveModal(APlayerController* Controller, bool bCursorWasShown);
 
 	/** Allows menus that referenced the old Blueprint custom event to close themselves. */
 	UFUNCTION(BlueprintCallable, Category = "Robber|UI")
@@ -174,6 +183,8 @@ public:
 	/** The Case File HUD (null on non-local controllers); while it exists, the old debug text and heist card stay hidden. */
 	URobberCaseFileHUD* GetCaseFileHUD() const { return CaseFileHUD; }
 	URobberJournalWidget* GetJournalWidget() const { return JournalWidget; }
+	/** Null until the first popup on this (local) controller. */
+	URobberAchievementPopup* GetAchievementPopup() const { return AchievementPopup; }
 	URobberJournalComponent* GetJournal() const { return Journal; }
 
 	/** A code typed into a code lock's screen. The server checks it, so the answer never has to reach a client. Defined in RobberPuzzle.cpp. */
@@ -202,6 +213,7 @@ private:
 	FDelegateHandle ControlsChangedHandle;
 	void UnmuteVoice();
 	void BindAchievementNotifications();
+	URobberAchievementPopup* GetOrMakeAchievementPopup();
 	void ApplyHeistFrozen(bool bFrozen);
 
 	UFUNCTION(Client, Reliable)
@@ -243,8 +255,9 @@ private:
 	UPROPERTY(EditDefaultsOnly, Category = "Robber|UI")
 	TSoftClassPtr<UUserWidget> DevUIWidgetClass;
 
-	UPROPERTY(EditDefaultsOnly, Category = "Robber|Achievements")
-	TSoftClassPtr<UAchievementPopupWidget> AchievementPopupClass;
+	/** Plays this player's unlock and progress popups, one at a time. Made on first use. */
+	UPROPERTY(Transient)
+	TObjectPtr<URobberAchievementPopup> AchievementPopup;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Robber|Voice")
 	TObjectPtr<USoundMix> MuteVoiceSoundMix;

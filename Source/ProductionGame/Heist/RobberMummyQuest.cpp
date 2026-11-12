@@ -17,71 +17,12 @@ const FName ARobberMummyQuest::DeskGuard(TEXT("DeskGuard"));
 
 namespace MummyQuest
 {
-	#define MUMMY_LOC(Key, Text) NSLOCTEXT("MummyQuest", Key, Text)
-
 	const FName Tag(TEXT("Neferkhaos"));
 	const FName Ballast(TEXT("Ballast")), Lungs(TEXT("Lungs")), Stomach(TEXT("Stomach")), Liver(TEXT("Liver")), Sausages(TEXT("Sausages")), Cabinet(TEXT("Cabinet")), HeadJar(TEXT("HeadJar"));
 	const FName Crate1(TEXT("Crate1")), Crate2(TEXT("Crate2")), HeartCrate(TEXT("Crate3")), Crate4(TEXT("Crate4")), Crate5(TEXT("Crate5"));
 	const FName FirstDone(TEXT("FirstDone")), LungsDone(TEXT("LungsDone")), StomachDone(TEXT("StomachDone")), LiverDone(TEXT("LiverDone")), HeartDone(TEXT("HeartDone")), SausagesDone(TEXT("SausagesDone")), HeadDone(TEXT("HeadDone"));
 
-	FName SlotId(int32 Slot) { return *FString::Printf(TEXT("Slot%d"), Slot); }
 	bool IsCrate(FName Id) { return Id == Crate1 || Id == Crate2 || Id == HeartCrate || Id == Crate4 || Id == Crate5; }
-
-	FRobberStoryLine OpenLine(const FText& Text) { FRobberStoryLine Line; Line.Text = Text; return Line; }
-	FRobberStoryLine DoneLine(const FText& Text) { FRobberStoryLine Line; Line.Text = Text; Line.bDone = true; return Line; }
-
-	FText Speaker() { return MUMMY_LOC("Speaker", "Neferkhaos"); }
-	FText GoOn() { return MUMMY_LOC("GoOn", "Go on."); }
-
-	struct FLine
-	{
-		bool bYou;
-		FText Text;
-	};
-	FLine Him(const FText& Text) { return { false, Text }; }
-	FLine You(const FText& Text) { return { true, Text }; }
-
-	FDialogueNode MakeNode(FName Id, const FText& Text)
-	{
-		FDialogueNode Node;
-		Node.ID = Id;
-		Node.Speaker = Speaker();
-		Node.Text = Text;
-		return Node;
-	}
-
-	FDialogueChoice MakeChoice(const FText& Text, FName Next, FName Event = NAME_None)
-	{
-		FDialogueChoice Choice;
-		Choice.Text = Text;
-		Choice.NextNode = Next;
-		Choice.StoryEvent = Event;
-		return Choice;
-	}
-
-	/** Builds one scene. A "You" line becomes the answer the player picks on the line before it. */
-	void AddTalk(UDialogueDefinition* Dialogue, const TCHAR* Prefix, const TArray<FLine>& Lines, FName LastEvent, const FText& LastChoice)
-	{
-		TArray<int32> Spoken;
-		for (int32 Index = 0; Index < Lines.Num(); ++Index)
-		{
-			if (!Lines[Index].bYou)
-			{
-				Spoken.Add(Index);
-			}
-		}
-		for (int32 Position = 0; Position < Spoken.Num(); ++Position)
-		{
-			const int32 Index = Spoken[Position];
-			FDialogueNode Node = MakeNode(*FString::Printf(TEXT("%s%d"), Prefix, Position + 1), Lines[Index].Text);
-			const bool bHasNext = Position + 1 < Spoken.Num();
-			const FText Answer = Lines.IsValidIndex(Index + 1) && Lines[Index + 1].bYou ? Lines[Index + 1].Text : (bHasNext ? GoOn() : LastChoice);
-			Node.Choices.Add(bHasNext
-				? MakeChoice(Answer, *FString::Printf(TEXT("%s%d"), Prefix, Position + 2))
-				: MakeChoice(Answer, NAME_None, LastEvent));
-			Dialogue->Nodes.Add(Node);
-		}
-	}
 
 	/** Which "everyone else" lines apply, by how much of him there is. */
 	int32 ChatBucket(EMummyStage Stage)
@@ -97,9 +38,7 @@ namespace MummyQuest
 
 ARobberMummyQuest::ARobberMummyQuest()
 {
-	TipLine = MUMMY_LOC("Tip", "The mummy in the {room} has been muttering at a scroll for three thousand years. {floor}. Nobody knows why. Nobody has asked.");
-	TipTakenLine = MUMMY_LOC("TipTaken", "Somebody is already helping the mummy. Heaven help them.");
-	TipJournal = MUMMY_LOC("TipJournal", "The mummy in the {room} ({floor}) has been muttering at a scroll.");
+	UseScript(TEXT("DT_MummyScript"));
 }
 
 void ARobberMummyQuest::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -159,117 +98,35 @@ void ARobberMummyQuest::GetRequiredActors(TArray<AActor*>& OutActors) const
 bool ARobberMummyQuest::HandlesProp(FName PropId) const
 {
 	using namespace MummyQuest;
-	if (IsCrate(PropId) || PropId == Ballast || PropId == Lungs || PropId == Stomach || PropId == Liver || PropId == Sausages || PropId == Cabinet || PropId == HeadJar)
-	{
-		return true;
-	}
-	return PropId.ToString().StartsWith(TEXT("Slot"));
+	return IsCrate(PropId) || PropId == Ballast || PropId == Lungs || PropId == Stomach || PropId == Liver || PropId == Sausages || PropId == Cabinet || PropId == HeadJar;
 }
 
 void ARobberMummyQuest::BuildDialogue()
 {
 	using namespace MummyQuest;
-	Script = NewObject<UDialogueDefinition>(this);
-	Script->DialogueType = EDialogueType::DialogueOnly;
-	Script->bIncludeQuestChoices = false;
-	Script->SpeakerName = Speaker();
-
-	AddTalk(Script, TEXT("First"), {
-		Him(MUMMY_LOC("First1", "Mmmf. Mmf mm MMMF.")),
-		You(MUMMY_LOC("First2", "Sorry?")),
-		Him(MUMMY_LOC("First3", "MMMMMF.")) }, FirstDone, MUMMY_LOC("FirstEnd", "...Is that a scroll?"));
-
-	AddTalk(Script, TEXT("Lungs"), {
-		Him(MUMMY_LOC("Lungs1", "WHY.")),
-		Him(MUMMY_LOC("Lungs2", "AM.")),
-		Him(MUMMY_LOC("Lungs3", "I.")),
-		Him(MUMMY_LOC("Lungs4", "SHOUTING.")),
-		You(MUMMY_LOC("Lungs5", "Those are whale lungs.")),
-		Him(MUMMY_LOC("Lungs6", "THE. SCROLL. SAID. BREATH.")),
-		Him(MUMMY_LOC("Lungs7", "NEXT.")) }, LungsDone, MUMMY_LOC("LungsEnd", "Four chambers. On it."));
-
-	AddTalk(Script, TEXT("Stomach"), {
-		Him(MUMMY_LOC("Stomach1", "Oh. Oh, that is better. I can do sentences. I can also feel something moving. Several somethings.")),
-		Him(MUMMY_LOC("Stomach2", "Four chambers. I took that for a metaphor. I am hungry in four separate ways, and one of them wants grass.")),
-		Him(MUMMY_LOC("Stomach3", "Three thousand years. \"Shortly\", they said. You never pay a priest for what you can do yourself.")),
-		Him(MUMMY_LOC("Stomach4", "For your trouble. I was buried with considerable wealth, and very little of it was mine.")),
-		Him(MUMMY_LOC("Stomach5", "Now, a thing of great age. Off you go.")) }, StomachDone, MUMMY_LOC("StomachEnd", "Off I go."));
-
-	AddTalk(Script, TEXT("Liver"), {
-		Him(MUMMY_LOC("Liver1", "What is this?")),
-		You(MUMMY_LOC("Liver2", "It's a liver.")),
-		Him(MUMMY_LOC("Liver3", "It's a rock.")),
-		You(MUMMY_LOC("Liver4", "It's a very old liver.")),
-		Him(MUMMY_LOC("Liver5", "This thing is older than me, for Ra's sake. But I guess it will do.")),
-		Him(MUMMY_LOC("Liver6", "The priests would have said it was a rock. That's the difference between a professional and a man who cares.")),
-		Him(MUMMY_LOC("Liver7", "Now, my heart. It is in storage, apparently, like a lawnmower.")) }, LiverDone, MUMMY_LOC("LiverEnd", "Like a lawnmower. Got it."));
-
-	AddTalk(Script, TEXT("Heart"), {
-		Him(MUMMY_LOC("Heart1", "My own heart. No substitutes on this one. I checked.")),
-		Him(MUMMY_LOC("Heart2", "It was weighed against a feather once. It lost. Please don't tell anyone.")),
-		Him(MUMMY_LOC("Heart3", "I feel something. What is this? Is this sadness? Take it out. No. Put it back. Do not look at me.")),
-		Him(MUMMY_LOC("Heart4", "Thank you. I have never said that before. Do not get used to it.")),
-		Him(MUMMY_LOC("Heart5", "The next line says bowels. I have read ahead on this bit. Absolutely not. It is a very small sarcophagus, it has no windows, and I have to sleep in it.")),
-		Him(MUMMY_LOC("Heart6", "We need something that counts as bowels.")),
-		You(MUMMY_LOC("Heart7", "I might know something that would work.")),
-		Him(MUMMY_LOC("Heart8", "Does it smell?")),
-		You(MUMMY_LOC("Heart9", "Only of breakfast.")) }, HeartDone, MUMMY_LOC("HeartEnd", "Only of breakfast."));
-
-	AddTalk(Script, TEXT("Sausages"), {
-		Him(MUMMY_LOC("Sausages1", "These are sausages. I can tell. I am choosing not to ask. The scroll is silent on sausages, and I intend to keep it that way.")),
-		Him(MUMMY_LOC("Sausages2", "I feel at peace. I feel seasoned.")),
-		Him(MUMMY_LOC("Sausages3", "The last line just says: a head. They pulled my own out through my nose, so we'll be needing a spare.")) }, SausagesDone, MUMMY_LOC("SausagesEnd", "One head. Sure."));
-
-	AddTalk(Script, TEXT("Head"), {
-		Him(MUMMY_LOC("Head1", "It says Head. It says it right there on the jar. That's the ritual satisfied.")),
-		Him(MUMMY_LOC("Head2", "By the power of Ra, and the four chambers, and the sausages: I RISE!")),
-		Him(MUMMY_LOC("Head3", "I live! Three thousand years, and I did it myself! Never pay a priest!")),
-		Him(MUMMY_LOC("Head4", "I can see everything. I know everything. I know...")),
-		Him(MUMMY_LOC("Head5", "...that it's nearly nine. I'm due at the Loading Dock.")),
-		Him(MUMMY_LOC("Head6", "I have sixteen crates to sign for.")),
-		Him(MUMMY_LOC("Head7", "Your wages. Sign here. And here. Initial here.")) }, HeadDone, MUMMY_LOC("HeadEnd", "...Initialled."));
-
-	const FText Leave = MUMMY_LOC("Leave", "I'll get on with it.");
-	const TPair<FName, FText> Waits[] = {
-		{ TEXT("WaitLungs"), MUMMY_LOC("WaitLungs", "MMMF.") },
-		{ TEXT("WaitStomach"), MUMMY_LOC("WaitStomach", "CHAMBERS.") },
-		{ TEXT("WaitLiver"), MUMMY_LOC("WaitLiver", "I did all my own embalming prep, you know. Well. I watched.") },
-		{ TEXT("WaitHeart"), MUMMY_LOC("WaitHeart", "It's in Art Crate Storage. The number's on the scroll. I wrote it there myself, in pencil, in 1300 BC.") },
-		{ TEXT("WaitSausages"), MUMMY_LOC("WaitSausages", "Whatever it is you had in mind, I would like it before my sarcophagus is any smaller.") },
-		{ TEXT("WaitHead"), MUMMY_LOC("WaitHead", "A head. Any head. I'm not fussy. The scroll isn't fussy.") },
-	};
-	for (const TPair<FName, FText>& Wait : Waits)
+	const FName Him(TEXT("Neferkhaos"));
+	Script = NewScript(Line(TEXT("Speaker")));
+	AddScene(Script, TEXT("First"), FirstDone);
+	AddScene(Script, TEXT("Lungs"), LungsDone);
+	AddScene(Script, TEXT("Stomach"), StomachDone);
+	AddScene(Script, TEXT("Liver"), LiverDone);
+	AddScene(Script, TEXT("Heart"), HeartDone);
+	AddScene(Script, TEXT("Sausages"), SausagesDone);
+	AddScene(Script, TEXT("Head"), HeadDone);
+	for (const TCHAR* Wait : { TEXT("WaitLungs"), TEXT("WaitStomach"), TEXT("WaitLiver"), TEXT("WaitHeart"), TEXT("WaitSausages"), TEXT("WaitHead") })
 	{
-		FDialogueNode Node = MakeNode(Wait.Key, Wait.Value);
-		Node.Choices.Add(MakeChoice(Leave, NAME_None));
-		Script->Nodes.Add(Node);
+		AddSingle(Script, Wait, Him, Line(Wait));
 	}
-
 	// One random line a talk, for anyone who isn't on the quest.
-	const TArray<TArray<FText>> Chatter = {
-		{ MUMMY_LOC("Chat0A", "Mmmf."), MUMMY_LOC("Chat0B", "Mmf mm.") },
-		{ MUMMY_LOC("Chat1A", "BUSY."), MUMMY_LOC("Chat1B", "RITUAL.") },
-		{ MUMMY_LOC("Chat2A", "Are you the sandwich? The scroll didn't mention a sandwich, but I am open to it.") },
-		{ MUMMY_LOC("Chat3A", "Amateurs, the lot of them. I don't mean you. Yes I do.") },
-		{ MUMMY_LOC("Chat4A", "I have feelings now. Yours are not among them.") },
-		{ MUMMY_LOC("Chat5A", "Can't stop. Loading Dock. Mind the crates.") },
-	};
-	for (int32 Bucket = 0; Bucket < Chatter.Num(); ++Bucket)
+	for (int32 Bucket = 0; Bucket <= 5; ++Bucket)
 	{
-		for (int32 Index = 0; Index < Chatter[Bucket].Num(); ++Index)
+		const TArray<FText> Chatter = SceneLines(*FString::Printf(TEXT("Chat%d"), Bucket));
+		for (int32 Index = 0; Index < Chatter.Num(); ++Index)
 		{
-			FDialogueNode Node = MakeNode(*FString::Printf(TEXT("Chat%d_%d"), Bucket, Index), Chatter[Bucket][Index]);
-			Node.Choices.Add(MakeChoice(MUMMY_LOC("Bye", "I'll leave you to it."), NAME_None));
-			Script->Nodes.Add(Node);
+			AddSingle(Script, *FString::Printf(TEXT("Chat%d_%d"), Bucket, Index), Him, Chatter[Index], TEXT("Bye"));
 		}
 	}
-	Script->EntryNode = TEXT("Chat0_0");
-
-	UDialogueComponent* Talker = Mummy->FindComponentByClass<UDialogueComponent>();
-	Talker->Dialogue = Script;
-	Talker->SmallTalkLines = Chatter[0];
-	Talker->OfferedQuests.Reset();
-	Talker->EntryOverride.BindUObject(this, &ARobberMummyQuest::EntryFor, Mummy.Get());
+	GiveScript(Mummy, Script, TEXT("Chat0_0"), SceneLines(TEXT("Chat0")))->EntryOverride.BindUObject(this, &ARobberMummyQuest::EntryFor, Mummy.Get());
 }
 
 FName ARobberMummyQuest::EntryFor(UPlayerQuestComponent* Player, AActor* Talker)
@@ -302,13 +159,13 @@ FName ARobberMummyQuest::EntryFor(UPlayerQuestComponent* Player, AActor* Talker)
 	{
 		++Count;
 	}
-	int32 Line = FMath::RandHelper(FMath::Max(1, Count));
-	if (const int32* Last = LastChatLine.Find(Bucket); Last && Count > 1 && *Last == Line)
+	int32 Pick = FMath::RandHelper(FMath::Max(1, Count));
+	if (const int32* Last = LastChatLine.Find(Bucket); Last && Count > 1 && *Last == Pick)
 	{
-		Line = (Line + 1) % Count;
+		Pick = (Pick + 1) % Count;
 	}
-	LastChatLine.Add(Bucket, Line);
-	return *FString::Printf(TEXT("Chat%d_%d"), Bucket, Line);
+	LastChatLine.Add(Bucket, Pick);
+	return *FString::Printf(TEXT("Chat%d_%d"), Bucket, Pick);
 }
 
 void ARobberMummyQuest::SetStage(EMummyStage NewStage)
@@ -328,37 +185,22 @@ void ARobberMummyQuest::SetCarrying(float SpeedMultiplier)
 
 void ARobberMummyQuest::ShowFitted(int32 Slot)
 {
-	if (ARobberStoryProp* Jar = FindProp(MummyQuest::SlotId(Slot)))
-	{
-		Jar->SetShown(true);
-	}
+	// The organ goes inside him (Ben's call: no jars on show). The carried prop was hidden at pickup, so nothing to show.
 	SetCarrying(1.f);
 }
 
 void ARobberMummyQuest::PayOut()
 {
-	if (!DigitIndexes.IsValidIndex(PayoutsMade))
+	const int32 Index = DigitIndexes.IsValidIndex(PayoutsMade) ? DigitIndexes[PayoutsMade] : INDEX_NONE;
+	const int32 Value = Index == INDEX_NONE ? INDEX_NONE : VaultDigit(Index);
+	if (Value == INDEX_NONE)
 	{
 		return;
 	}
-	for (TActorIterator<ARobberVaultDoor> It(GetWorld()); It; ++It)
-	{
-		if (It->GetLevel() != GetLevel() || !It->GetCode().IsValidIndex(DigitIndexes[PayoutsMade]))
-		{
-			continue;
-		}
-		const int32 Index = DigitIndexes[PayoutsMade];
-		const int32 Value = It->GetCode()[Index];
-		const AController* Controller = OwnerController();
-		if (URobberJournalComponent* Journal = Controller ? Controller->FindComponentByClass<URobberJournalComponent>() : nullptr)
-		{
-			Journal->LearnVaultDigit(Mummy, MummyQuest::Speaker(), Index, Value, ARobberVaultDoor::CodeLength);
-		}
-		++PayoutsMade;
-		ForceNetUpdate();
-		Toast(FText::Format(MUMMY_LOC("DigitToast", "CODE DIGIT · {0} jotted in your journal (J)"), Value));
-		return;
-	}
+	TellOwnerDigit(Mummy, Line(TEXT("Speaker")), Index, Value);
+	++PayoutsMade;
+	ForceNetUpdate();
+	Toast(FText::Format(Line(TEXT("DigitToast")), Value));
 }
 
 void ARobberMummyQuest::OnQuestStarted()
@@ -369,7 +211,7 @@ void ARobberMummyQuest::OnQuestStarted()
 		ForceNetUpdate();
 	}
 	RefreshNote();
-	Stamp(false, MUMMY_LOC("Name", "Some Assembly Required"), MUMMY_LOC("NewSub", "Resurrection: now a do-it-yourself job."));
+	Stamp(false, Line(TEXT("Name")), Line(TEXT("NewSub")));
 }
 
 void ARobberMummyQuest::OnDialogueEvent(AActor* Talker, UPlayerQuestComponent* Player, FName Event)
@@ -382,7 +224,7 @@ void ARobberMummyQuest::OnDialogueEvent(AActor* Talker, UPlayerQuestComponent* P
 	if (Event == FirstDone && Stage == EMummyStage::FirstTalk)
 	{
 		SetStage(EMummyStage::FetchLungs);
-		Toast(MUMMY_LOC("GotScroll", "RITUAL SCROLL · It's a shopping list. Margin note: \"Shortly, they said.\""));
+		Toast(Line(TEXT("GotScroll")));
 	}
 	else if (Event == LungsDone && Stage == EMummyStage::BringLungs)
 	{
@@ -415,7 +257,7 @@ void ARobberMummyQuest::OnDialogueEvent(AActor* Talker, UPlayerQuestComponent* P
 		ShowFitted(6);
 		PayOut();
 		SetStage(EMummyStage::Done);
-		Stamp(true, MUMMY_LOC("Name", "Some Assembly Required"), MUMMY_LOC("DoneSub", "He has risen. He is due at the Loading Dock."));
+		Stamp(true, Line(TEXT("Name")), Line(TEXT("DoneSub")));
 		ClearNoteAfterStamp();
 	}
 }
@@ -427,14 +269,14 @@ FText ARobberMummyQuest::GetPropPrompt(FName PropId, const APlayerState* Viewer)
 	{
 		return FText::GetEmpty();
 	}
-	if (PropId == Ballast && Stage == EMummyStage::FetchLungs && !bHasBallast) return MUMMY_LOC("PromptSand", "Pick up the sandbag");
-	if (PropId == Lungs && Stage == EMummyStage::FetchLungs) return bHasBallast ? MUMMY_LOC("PromptSwap", "Swap the sandbag for the jar") : MUMMY_LOC("PromptLift", "Lift the jar");
-	if (PropId == Stomach && Stage == EMummyStage::FetchStomach) return MUMMY_LOC("PromptStomach", "Take the cow's stomach");
-	if (PropId == Liver && Stage == EMummyStage::FetchLiver) return MUMMY_LOC("PromptLiver", "Take the paperweight");
-	if (IsCrate(PropId) && Stage == EMummyStage::FetchHeart && !OpenedCrates.Contains(PropId)) return MUMMY_LOC("PromptCrate", "Open the crate");
-	if (PropId == Sausages && Stage == EMummyStage::FetchSausages) return MUMMY_LOC("PromptSausages", "Take the string of sausages");
-	if (PropId == Cabinet && Stage == EMummyStage::FetchHead && !bCabinetOpen) return MUMMY_LOC("PromptCabinet", "Try the code pencilled on the scroll");
-	if (PropId == HeadJar && Stage == EMummyStage::FetchHead && bCabinetOpen) return MUMMY_LOC("PromptJar", "Take the jar");
+	if (PropId == Ballast && Stage == EMummyStage::FetchLungs && !bHasBallast) return Line(TEXT("PromptSand"));
+	if (PropId == Lungs && Stage == EMummyStage::FetchLungs) return Line(bHasBallast ? TEXT("PromptSwap") : TEXT("PromptLift"));
+	if (PropId == Stomach && Stage == EMummyStage::FetchStomach) return Line(TEXT("PromptStomach"));
+	if (PropId == Liver && Stage == EMummyStage::FetchLiver) return Line(TEXT("PromptLiver"));
+	if (IsCrate(PropId) && Stage == EMummyStage::FetchHeart && !OpenedCrates.Contains(PropId)) return Line(TEXT("PromptCrate"));
+	if (PropId == Sausages && Stage == EMummyStage::FetchSausages) return Line(TEXT("PromptSausages"));
+	if (PropId == Cabinet && Stage == EMummyStage::FetchHead && !bCabinetOpen) return Line(TEXT("PromptCabinet"));
+	if (PropId == HeadJar && Stage == EMummyStage::FetchHead && bCabinetOpen) return Line(TEXT("PromptJar"));
 	return FText::GetEmpty();
 }
 
@@ -447,33 +289,33 @@ void ARobberMummyQuest::OnPropUsed(FName PropId, ARobberStoryProp* Prop, APawn* 
 		Prop->SetShown(false);
 		ForceNetUpdate();
 		RefreshNote();
-		Toast(MUMMY_LOC("GotSand", "SANDBAG · About the weight of some very large lungs."));
+		Toast(Line(TEXT("GotSand")));
 	}
 	else if (PropId == Lungs)
 	{
 		if (!bHasBallast)
 		{
-			Toast(MUMMY_LOC("NeedSand", "PRESSURE PLATE · You'll need something heavy to swap in."));
+			Toast(Line(TEXT("NeedSand")));
 			return;
 		}
 		Prop->SetShown(false);
 		SetCarrying(0.55f);
 		SetStage(EMummyStage::BringLungs);
-		Toast(MUMMY_LOC("GotLungs", "BREATH OF THE SEA · Extremely heavy. Carry it to the mummy."));
+		Toast(Line(TEXT("GotLungs")));
 	}
 	else if (PropId == Stomach)
 	{
 		Prop->SetShown(false);
 		SetCarrying(0.8f);
 		SetStage(EMummyStage::BringStomach);
-		Toast(MUMMY_LOC("GotStomach", "FOUR CHAMBERS · Frozen solid. Those sausages look interesting."));
+		Toast(Line(TEXT("GotStomach")));
 	}
 	else if (PropId == Liver)
 	{
 		Prop->SetShown(false);
 		SetCarrying(0.8f);
 		SetStage(EMummyStage::BringLiver);
-		Toast(MUMMY_LOC("GotLiver", "A THING OF GREAT AGE · It's a rock. The label says liver."));
+		Toast(Line(TEXT("GotLiver")));
 	}
 	else if (IsCrate(PropId))
 	{
@@ -483,12 +325,12 @@ void ARobberMummyQuest::OnPropUsed(FName PropId, ARobberStoryProp* Prop, APawn* 
 		{
 			SetCarrying(0.9f);
 			SetStage(EMummyStage::BringHeart);
-			Toast(MUMMY_LOC("GotHeart", "CRATE 1127 · One heart, lightly used."));
+			Toast(Line(TEXT("GotHeart")));
 		}
 		else
 		{
 			RefreshNote();
-			Toast(MUMMY_LOC("WrongCrate", "WRONG CRATE · Straw. The number's on the scroll."));
+			Toast(Line(TEXT("WrongCrate")));
 		}
 	}
 	else if (PropId == Sausages)
@@ -496,7 +338,7 @@ void ARobberMummyQuest::OnPropUsed(FName PropId, ARobberStoryProp* Prop, APawn* 
 		Prop->SetShown(false);
 		SetCarrying(0.9f);
 		SetStage(EMummyStage::BringSausages);
-		Toast(MUMMY_LOC("GotSausages", "THE BOWELS OF THE ONE WHO RISES · Near enough."));
+		Toast(Line(TEXT("GotSausages")));
 	}
 	else if (PropId == Cabinet)
 	{
@@ -507,14 +349,14 @@ void ARobberMummyQuest::OnPropUsed(FName PropId, ARobberStoryProp* Prop, APawn* 
 			Jar->SetShown(true);
 		}
 		RefreshNote();
-		Toast(MUMMY_LOC("CabinetOpen", "CABINET · The code works. There's a jar inside."));
+		Toast(Line(TEXT("CabinetOpen")));
 	}
 	else if (PropId == HeadJar)
 	{
 		Prop->SetShown(false);
 		SetCarrying(0.9f);
 		SetStage(EMummyStage::BringHead);
-		Toast(MUMMY_LOC("GotHead", "JAR LABEL · HEAD OF SHIPPING. Well, it says head."));
+		Toast(Line(TEXT("GotHead")));
 	}
 }
 
@@ -538,11 +380,11 @@ void ARobberMummyQuest::OnPlayerCaught(APawn* Pawn, APlayerState* Player, FName 
 		}
 		SetCarrying(1.f);
 		SetStage(EMummyStage::FetchLiver);
-		Toast(MUMMY_LOC("LostLiver", "CAUGHT · The guard took his paperweight back."));
+		Toast(Line(TEXT("LostLiver")));
 	}
 	else
 	{
-		Toast(MUMMY_LOC("CaughtDesk", "CAUGHT · Wait until his chair is turned the other way."));
+		Toast(Line(TEXT("CaughtDesk")));
 	}
 }
 
@@ -551,13 +393,13 @@ FRobberStoryNote ARobberMummyQuest::BuildNote() const
 	using namespace MummyQuest;
 	FRobberStoryNote Note;
 	Note.bShown = true;
-	Note.Title = MUMMY_LOC("Name", "Some Assembly Required");
-	Note.Footer = FText::Format(MUMMY_LOC("Foot", "Code digits: {0} of 2"), PayoutsMade);
-	const TArray<FText> Steps = {
-		MUMMY_LOC("L0", "Talk to the mummy"), MUMMY_LOC("L1", "Take the ritual scroll"),
-		MUMMY_LOC("L2", "Find the breath of the sea"), MUMMY_LOC("L3", "Find four chambers of plenty"),
-		MUMMY_LOC("L4", "Find a thing of great age"), MUMMY_LOC("L5", "Find the heart of the one who rises"),
-		MUMMY_LOC("L6", "Find something for the bowels"), MUMMY_LOC("L7", "Find a head") };
+	Note.Title = Line(TEXT("Name"));
+	Note.Footer = FText::Format(Line(TEXT("Foot")), PayoutsMade);
+	TArray<FText> Steps;
+	for (int32 Step = 0; Step <= 7; ++Step)
+	{
+		Steps.Add(Line(*FString::Printf(TEXT("L%d"), Step)));
+	}
 	int32 DoneCount = 0;
 	bool bCarrying = false;
 	switch (Stage)
@@ -579,20 +421,20 @@ FRobberStoryNote ARobberMummyQuest::BuildNote() const
 	}
 	if (DoneCount > 0)
 	{
-		Note.Lines.Add(DoneLine(Steps[DoneCount - 1]));
+		Note.Lines.Add(NoteLine(Steps[DoneCount - 1], true));
 	}
 	if (Steps.IsValidIndex(DoneCount))
 	{
-		Note.Lines.Add(bCarrying ? DoneLine(Steps[DoneCount]) : OpenLine(Steps[DoneCount]));
+		Note.Lines.Add(NoteLine(Steps[DoneCount], bCarrying));
 	}
 	if (bCarrying)
 	{
-		Note.Lines.Add(OpenLine(MUMMY_LOC("LCarry", "Carry it back to the mummy")));
+		Note.Lines.Add(NoteLine(Line(TEXT("LCarry"))));
 	}
 	if (Stage == EMummyStage::FetchLungs)
 	{
-		Note.ErrandTitle = MUMMY_LOC("Errand", "Shopping List");
-		Note.ErrandLines = { DoneLine(MUMMY_LOC("E0", "Take the scroll from his hands")), OpenLine(MUMMY_LOC("E1", "The breath of the sea: Ocean Hall")) };
+		Note.ErrandTitle = Line(TEXT("Errand"));
+		Note.ErrandLines = { NoteLine(Line(TEXT("E0")), true), NoteLine(Line(TEXT("E1"))) };
 	}
 	return Note;
 }

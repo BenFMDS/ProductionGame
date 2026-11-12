@@ -92,7 +92,6 @@ private:
 	UPROPERTY(Replicated) int32 PayoutsMade = 0;
 
 	UPROPERTY(Transient) TMap<FName, TObjectPtr<AActor>> Talkers;
-	UPROPERTY(Transient) TArray<TObjectPtr<UDialogueDefinition>> Scripts;
 	float ErasedSeconds = 0.f;
 	TMap<FName, int32> LastChatLine;
 	FDelegateHandle EventHandle;

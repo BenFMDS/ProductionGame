@@ -3,6 +3,7 @@
 
 #include "AIController.h"
 #include "BehaviorTree/BlackboardComponent.h"
+#include "Camera/PlayerCameraManager.h"
 #include "EngineUtils.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "ProductionGameCharacter.h"
@@ -28,10 +29,7 @@ ARobberInteractable::ARobberInteractable()
 
 	Mesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Mesh"));
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> Cube(TEXT("/Engine/BasicShapes/Cube.Cube"));
-	if (Cube.Succeeded())
-	{
-		Mesh->SetStaticMesh(Cube.Object);
-	}
+	Mesh->SetStaticMesh(Cube.Object);
 	RootComponent = Mesh;
 
 	LabelText = CreateDefaultSubobject<UTextRenderComponent>(TEXT("Label"));
@@ -96,6 +94,12 @@ FString ARobberInteractable::GetInteractPrompt() const
 		return Prompt.ToString();
 	}
 	return IsActive(GameState) ? GetPrompt(GameState, LocalPlayer ? LocalPlayer->PlayerState : nullptr).ToString() : FString();
+}
+
+void ARobberInteractable::ShowPart(UPrimitiveComponent* Part, bool bShown)
+{
+	Part->SetHiddenInGame(!bShown, true);
+	Part->SetCollisionEnabled(bShown ? ECollisionEnabled::QueryAndPhysics : ECollisionEnabled::NoCollision);
 }
 
 bool ARobberInteractable::IsActive(const ARobberGameState* GameState) const
@@ -175,14 +179,8 @@ ARobberHidingSpot::ARobberHidingSpot()
 	Opening->SetupAttachment(Mesh);
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> OpeningCube(TEXT("/Engine/BasicShapes/Cube.Cube"));
 	static ConstructorHelpers::FObjectFinder<UMaterialInterface> OpeningMaterial(TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
-	if (OpeningCube.Succeeded())
-	{
-		Opening->SetStaticMesh(OpeningCube.Object);
-	}
-	if (OpeningMaterial.Succeeded())
-	{
-		Opening->SetMaterial(0, OpeningMaterial.Object);
-	}
+	Opening->SetStaticMesh(OpeningCube.Object);
+	Opening->SetMaterial(0, OpeningMaterial.Object);
 	// The parent's scale applies, so this stays in proportion on any size of spot: it just needs to sit proud of the +X face.
 	Opening->SetRelativeLocation(FVector(50.5, 0., -8.));
 	Opening->SetRelativeScale3D(FVector(0.02, 0.6, 0.82));
@@ -275,9 +273,9 @@ void ARobberHidingSpot::OnServerInteract(APawn* Pawn, APlayerState* Player, ARob
 		FText Reason;
 		if (!Tour->TryHide(GameState, Player, this, Reason))
 		{
-			if (ARobberController* Controller = !Reason.IsEmpty() ? Cast<ARobberController>(Pawn->GetController()) : nullptr)
+			if (!Reason.IsEmpty())
 			{
-				Controller->ClientHeistMessage(Reason);
+				ARobberController::Tell(Pawn, Reason);
 			}
 			return;
 		}
@@ -303,15 +301,6 @@ FText ARobberHidingSpot::GetPrompt(const ARobberGameState* GameState, const APla
 	return FText::Format(NSLOCTEXT("RobberTour", "HideIn", "Hide in the {0}"), Label);
 }
 
-namespace
-{
-	const UPlayerQuestComponent* FindQuests(const APlayerState* Player)
-	{
-		const AController* Controller = Player ? Player->GetOwningController() : nullptr;
-		return Controller ? Controller->FindComponentByClass<UPlayerQuestComponent>() : nullptr;
-	}
-}
-
 ARobberLockedDoor::ARobberLockedDoor()
 {
 	bReplicates = true;
@@ -331,13 +320,10 @@ void ARobberLockedDoor::OnServerInteract(APawn* Pawn, APlayerState* Player, ARob
 	{
 		return;
 	}
-	const UPlayerQuestComponent* Quests = FindQuests(Player);
+	const UPlayerQuestComponent* Quests = UPlayerQuestComponent::Of(Player);
 	if (!IsInside(Pawn) && (!Quests || !Quests->HasKey(KeyId)))
 	{
-		if (ARobberController* Controller = Cast<ARobberController>(Pawn->GetController()))
-		{
-			Controller->ClientHeistMessage(FText::Format(NSLOCTEXT("RobberDoor", "NeedKey", "Locked. You need the {0}."), KeyName));
-		}
+		ARobberController::Tell(Pawn, FText::Format(NSLOCTEXT("RobberDoor", "NeedKey", "Locked. You need the {0}."), KeyName));
 		return;
 	}
 	if (KeyId == TEXT("Crowbar"))
@@ -359,7 +345,7 @@ FText ARobberLockedDoor::GetPrompt(const ARobberGameState* GameState, const APla
 	{
 		return NSLOCTEXT("RobberDoor", "OpenInside", "Open the door");
 	}
-	const UPlayerQuestComponent* Quests = FindQuests(Viewer);
+	const UPlayerQuestComponent* Quests = UPlayerQuestComponent::Of(Viewer);
 	return Quests && Quests->HasKey(KeyId)
 		? FText::Format(NSLOCTEXT("RobberDoor", "Unlock", "Unlock with the {0}"), KeyName)
 		: FText::Format(NSLOCTEXT("RobberDoor", "Locked", "Locked (needs the {0})"), KeyName);
@@ -373,8 +359,7 @@ FText ARobberLockedDoor::GetLabel(const ARobberGameState* GameState) const
 void ARobberLockedDoor::OnRep_Open()
 {
 	// No door model yet: an open door just gets out of the way.
-	Mesh->SetHiddenInGame(bOpen, true);
-	Mesh->SetCollisionEnabled(bOpen ? ECollisionEnabled::NoCollision : ECollisionEnabled::QueryAndPhysics);
+	ShowPart(Mesh, !bOpen);
 }
 
 bool ARobberLockedDoor::IsInside(const APawn* Pawn) const
@@ -387,6 +372,50 @@ ARobberKeyPickup::ARobberKeyPickup()
 	bReplicates = true;
 	Label = NSLOCTEXT("RobberDoor", "KeyLabel", "KEY");
 	KeyName = NSLOCTEXT("RobberDoor", "DefaultKey", "key");
+
+	// Every frame while shown, so it can turn to the camera and bob smoothly; cheap, there are only a few keys.
+	PrimaryActorTick.TickInterval = 0.f;
+	Alert = CreateDefaultSubobject<UTextRenderComponent>(TEXT("Alert"));
+	Alert->SetupAttachment(Mesh);
+	// Absolute so the key's flat scale (a badge is 4 cm thick) doesn't squash it; placed in world space in Tick.
+	Alert->SetAbsolute(true, true, true);
+	Alert->SetText(NSLOCTEXT("RobberDoor", "KeyAlert", "!"));
+	Alert->SetHorizontalAlignment(EHTA_Center);
+	Alert->SetVerticalAlignment(EVRTA_TextCenter);
+	Alert->SetWorldSize(70.f);
+	Alert->SetTextRenderColor(FColor(0xff, 0xc8, 0x1e));
+	Alert->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	Alert->SetCastShadow(false);
+	Alert->SetHiddenInGame(true);
+}
+
+bool ARobberKeyPickup::IsAlertShowing() const
+{
+	return Alert && !Alert->bHiddenInGame;
+}
+
+void ARobberKeyPickup::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+	// The local player's own view: a dedicated server has none and never shows it.
+	const APlayerController* Local = GetWorld()->GetFirstPlayerController();
+	const APawn* Viewer = Local && Local->IsLocalController() ? Local->GetPawn() : nullptr;
+	const ARobberGameState* GameState = GetWorld()->GetGameState<ARobberGameState>();
+	const bool bShow = Viewer && GameState && !bTaken && IsActive(GameState) && !RobberStage::IsInLobby(GameState->GetGameStage())
+		&& FVector::DistSquared(Viewer->GetActorLocation(), GetActorLocation()) < FMath::Square(AlertRange);
+	Alert->SetHiddenInGame(!bShow);
+	if (!bShow)
+	{
+		return;
+	}
+	// Above the key, bobbing, and turned to face the camera (text is mirrored from behind). Pulled 40 cm towards the
+	// viewer so a key hung on a wall rack (the staff badge) doesn't have the shelf above it hide the "!".
+	const double Bob = 6. * FMath::Sin(GetWorld()->GetTimeSeconds() * 3.);
+	const FVector Camera = Local->PlayerCameraManager ? Local->PlayerCameraManager->GetCameraLocation() : Viewer->GetActorLocation();
+	FVector ToCamera = Camera - GetActorLocation();
+	ToCamera.Z = 0.;
+	const FVector Dir = ToCamera.GetSafeNormal();
+	Alert->SetWorldLocationAndRotation(GetActorLocation() + Dir * 40. + FVector(0., 0., 60. + Bob), Dir.IsNearlyZero() ? FRotator::ZeroRotator : Dir.Rotation());
 }
 
 void ARobberKeyPickup::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -397,8 +426,7 @@ void ARobberKeyPickup::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& Out
 
 void ARobberKeyPickup::OnServerInteract(APawn* Pawn, APlayerState* Player, ARobberGameState* GameState)
 {
-	const AController* Controller = Player ? Player->GetOwningController() : nullptr;
-	UPlayerQuestComponent* Quests = Controller ? Controller->FindComponentByClass<UPlayerQuestComponent>() : nullptr;
+	UPlayerQuestComponent* Quests = UPlayerQuestComponent::Of(Player);
 	if (bTaken || !Quests || RobberStage::IsInLobby(GameState->GetGameStage()))
 	{
 		return;
@@ -423,6 +451,5 @@ FText ARobberKeyPickup::GetLabel(const ARobberGameState* GameState) const
 
 void ARobberKeyPickup::OnRep_Taken()
 {
-	Mesh->SetHiddenInGame(bTaken, true);
-	Mesh->SetCollisionEnabled(bTaken ? ECollisionEnabled::NoCollision : ECollisionEnabled::QueryAndPhysics);
+	ShowPart(Mesh, !bTaken);
 }

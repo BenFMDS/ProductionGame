@@ -160,14 +160,8 @@ ARobberGemCase::ARobberGemCase()
 	{
 		UStaticMeshComponent* Gem = CreateDefaultSubobject<UStaticMeshComponent>(*FString::Printf(TEXT("Gem%d"), Index + 1));
 		Gem->SetupAttachment(CaseRoot);
-		if (Sphere.Succeeded())
-		{
-			Gem->SetStaticMesh(Sphere.Object);
-		}
-		if (ShapeMaterial.Succeeded())
-		{
-			Gem->SetMaterial(0, ShapeMaterial.Object);
-		}
+		Gem->SetStaticMesh(Sphere.Object);
+		Gem->SetMaterial(0, ShapeMaterial.Object);
 		Gem->SetRelativeScale3D(FVector(0.22));
 		Gem->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 		Gems.Add(Gem);

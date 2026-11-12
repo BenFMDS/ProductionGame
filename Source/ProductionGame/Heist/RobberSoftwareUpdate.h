@@ -120,7 +120,6 @@ private:
 
 	UPROPERTY(Transient) TObjectPtr<AActor> Bot;
 	UPROPERTY(Transient) TObjectPtr<AActor> Buddy;
-	UPROPERTY(Transient) TArray<TObjectPtr<UDialogueDefinition>> Scripts;
 	int32 AccessCode = 0;
 	double ServersOffAt = 0.;
 	bool bSaidArchive = false;
@@ -174,6 +173,8 @@ private:
 	ARobberSoftwareUpdateQuest* FindQuest() const;
 	void Send(EConsoleAction Action, int32 Value = 0, const FString& Text = FString());
 	void Rebuild();
+	/** Empties the card and forgets every widget on it, keeping the terms' scroll position. */
+	void ClearBody();
 
 	void BuildCaptcha(const ARobberSoftwareUpdateQuest& Quest);
 	void BuildTerms(const ARobberSoftwareUpdateQuest& Quest);

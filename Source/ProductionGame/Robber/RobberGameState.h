@@ -125,6 +125,10 @@ public:
 
 	/** Server only. Shows Message to every player. */
 	void TellCrew(const FText& Message) const;
+	/** The players in PlayerId order, which every machine agrees on (crew cards, map pins). */
+	TArray<APlayerState*> GetPlayersInIdOrder() const;
+	/** Each way in that has votes, with its count, in the order they were first voted for. */
+	TArray<TPair<const ARobberEntryPoint*, int32>> GetVoteTallies() const;
 
 	// --- Investigate / Heist ---
 

@@ -60,6 +60,8 @@ protected:
 	static FText CrewStatus(const ARobberGameState* State, const APlayerState* Player);
 	static bool VaultStillShut(const ARobberGameState* State);
 	FText PlayerName(const APlayerState* Player) const;
+	/** Fills <RowName>0-3 with the crew in PlayerId order: the row, CrewColour, CrewName and CrewStatus widgets. */
+	void FillCrew(const ARobberGameState* State, const TCHAR* RowName);
 };
 
 /** One quest marker on screen: the target's name and distance over a yellow diamond. */
@@ -159,7 +161,6 @@ private:
 	void UpdateSprint(float DeltaTime);
 	void UpdateNote(const ARobberGameState* State);
 	void UpdatePaper(const ARobberGameState* State);
-	void UpdateCrew(const ARobberGameState* State);
 
 	FRobberStoryRowUI MakeStoryRow(const FSlateFontInfo& Font);
 	FRobberStoryNoteUI MakeStoryNote(const FLinearColor& Paper, int32 RowCount, float Width);

@@ -114,15 +114,7 @@ void UDialoguePresentationWidget::NativeConstruct()
 	TextBox = bExhibitLabel ? Layout.Get() : Layout ? Cast<UUserWidget>(Layout->GetWidgetFromName(TEXT("TextBox"))) : nullptr;
 	if (!Player || !TextBox) return;
 	SetVisibility(ESlateVisibility::Visible);
-	bPreviousCursor = PC->bShowMouseCursor;
-	PC->SetIgnoreLookInput(true);
-	PC->SetIgnoreMoveInput(true);
-	PC->bShowMouseCursor = true;
-	// Release gameplay mouse capture and focus the modal above the existing HUD.
-	FInputModeUIOnly Mode;
-	Mode.SetWidgetToFocus(TakeWidget());
-	Mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
-	PC->SetInputMode(Mode);
+	bPreviousCursor = ARobberController::EnterModal(PC, this);
 	RefreshConversation();
 }
 
@@ -232,14 +224,7 @@ FReply UDialoguePresentationWidget::NativeOnKeyDown(const FGeometry& Geometry, c
 void UDialoguePresentationWidget::NativeDestruct()
 {
 	if (Voice) Voice->Stop();
-	if (Player)
-		if (auto* PC = GetOwningPlayer())
-		{
-			PC->SetIgnoreLookInput(false);
-			PC->SetIgnoreMoveInput(false);
-			PC->bShowMouseCursor = bPreviousCursor;
-			PC->SetInputMode(FInputModeGameOnly());
-		}
+	if (Player && GetOwningPlayer()) ARobberController::LeaveModal(GetOwningPlayer(), bPreviousCursor);
 	Super::NativeDestruct();
 }
 
@@ -352,13 +337,8 @@ void UQuestConversationWidget::RefreshQuests()
 	TArray<TPair<FString, int32>> Votes;
 	if (bHeist && RobberStage::IsInLobby(Stage))
 	{
-		TArray<const ARobberEntryPoint*> Counted;
-		for (const FRobberEntryVote& Vote : GameState->GetVotes())
-			if (Vote.Entry && !Counted.Contains(Vote.Entry))
-			{
-				Counted.Add(Vote.Entry);
-				Votes.Emplace(Vote.Entry->DisplayName.ToString(), GameState->GetVoteCount(Vote.Entry));
-			}
+		for (const TPair<const ARobberEntryPoint*, int32>& Tally : GameState->GetVoteTallies())
+			Votes.Emplace(Tally.Key->DisplayName.ToString(), Tally.Value);
 	}
 	static const TArray<FRobberJob> NoJobs;
 	const TArray<FRobberJob>& Jobs = bHeist ? GameState->GetJobs() : NoJobs;

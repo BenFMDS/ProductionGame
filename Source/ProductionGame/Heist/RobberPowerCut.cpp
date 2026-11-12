@@ -78,8 +78,13 @@ void URobberPowerCut::OnOpened(AActor* InGenerator)
 	bCutWhenOpened = State && State->IsPowerCut();
 	Show(Find<UWidget>(TEXT("LightsOut")), false);
 	PickBand();
-	Say(FText::Format(NSLOCTEXT("RobberPowerCut", "Prompt", "Breaker {0} of {1}. Wait for the green."), BreakersDown + 1, BreakerCount));
+	SayNextBreaker();
 	Draw();
+}
+
+void URobberPowerCut::SayNextBreaker()
+{
+	Say(FText::Format(NSLOCTEXT("RobberPowerCut", "Prompt", "Breaker {0} of {1}. Wait for the green."), BreakersDown + 1, BreakerCount));
 }
 
 float URobberPowerCut::CurrentSpeed() const
@@ -129,7 +134,7 @@ void URobberPowerCut::Press()
 		else
 		{
 			PickBand();
-			Say(FText::Format(NSLOCTEXT("RobberPowerCut", "Prompt", "Breaker {0} of {1}. Wait for the green."), BreakersDown + 1, BreakerCount));
+			SayNextBreaker();
 		}
 	}
 	else
@@ -277,13 +282,7 @@ void ARobberController::ClientOpenPowerCut_Implementation(AActor* Generator)
 	}
 	PowerCutWidget->AddToViewport(25);
 	PowerCutWidget->OnOpened(Generator);
-	SetIgnoreLookInput(true);
-	SetIgnoreMoveInput(true);
-	FInputModeUIOnly Mode;
-	Mode.SetWidgetToFocus(PowerCutWidget->TakeWidget());
-	Mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
-	SetInputMode(Mode);
-	SetShowMouseCursor(true);
+	EnterModal(this, PowerCutWidget);
 }
 
 void ARobberController::ClosePowerCut()
@@ -293,10 +292,7 @@ void ARobberController::ClosePowerCut()
 		return;
 	}
 	PowerCutWidget->RemoveFromParent();
-	SetIgnoreLookInput(false);
-	SetIgnoreMoveInput(false);
-	SetShowMouseCursor(false);
-	SetInputMode(FInputModeGameOnly());
+	LeaveModal(this, false);
 }
 
 bool ARobberController::IsPowerCutOpen() const

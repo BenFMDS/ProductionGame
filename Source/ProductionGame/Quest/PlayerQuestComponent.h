@@ -4,6 +4,7 @@
 #include "Components/ActorComponent.h"
 #include "PlayerQuestComponent.generated.h"
 
+class APlayerState;
 class UQuestDefinition;
 class UDialogueComponent;
 class UQuestConversationWidget;
@@ -88,6 +89,8 @@ class PRODUCTIONGAME_API UPlayerQuestComponent : public UActorComponent
 	GENERATED_BODY()
 public:
 	UPlayerQuestComponent();
+	/** The quests of the player behind this player state (they live on the controller), or null. */
+	static UPlayerQuestComponent* Of(const APlayerState* Player);
 	/** Any player, any world; listeners check the world themselves (the night director pays rewards on it). */
 	static FOnQuestTurnedIn OnQuestTurnedIn;
 	/** Same, when a player takes a quest on. */
@@ -153,6 +156,10 @@ protected:
 	virtual void EndPlay(const EEndPlayReason::Type Reason) override;
 private:
 	void RefreshDefaultUI();
+	/** The dialogue of whoever this player is talking to, or null. */
+	UDialogueComponent* CurrentTalker() const;
+	/** This player has the quest, from this giver, in this state. */
+	bool HasQuestIn(const UQuestDefinition* Definition, const AActor* Giver, EPlayerQuestState State) const;
 	UPROPERTY(Transient) TObjectPtr<UQuestConversationWidget> Widget;
 	UFUNCTION() void OnRep_Quests();
 	UFUNCTION() void OnRep_Conversation();

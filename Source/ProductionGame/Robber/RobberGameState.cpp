@@ -15,6 +15,7 @@
 #include "GameFramework/PlayerState.h"
 #include "Components/LightComponent.h"
 #include "Heist/RobberEntryPoint.h"
+#include "Heist/RobberExhibitTalk.h"
 #include "Heist/RobberStage.h"
 #include "Heist/RobberJournal.h"
 #include "Heist/RobberSecurityCamera.h"
@@ -31,6 +32,15 @@ namespace
 	const FName PowerJob(TEXT("Power"));
 	const FName GemJob(TEXT("Gem"));
 	const FName PowerLightTag(TEXT("PowerLight"));
+
+	void PlacePawn(APawn* Pawn, const FVector& Location, const FRotator& Rotation)
+	{
+		Pawn->TeleportTo(Location, Rotation);
+		if (AController* Controller = Pawn->GetController())
+		{
+			Controller->ClientSetRotation(Rotation);
+		}
+	}
 
 	// Dev shortcuts until the real win/lose conditions exist. Type them on the host.
 	void RunOnHostGameState(UWorld* World, TFunctionRef<void(ARobberGameState&)> Command)
@@ -104,6 +114,16 @@ void ARobberGameState::BeginPlay()
 		SetGameStage(GetLegacyGameState());
 		// Maps without the night sublevels (the dev levels) keep everything in one level.
 		LoadNight(0);
+#if WITH_EDITOR
+		// A night map played on its own in the editor has no lobby to leave, so it would sit in the lobby stage, where
+		// hiding, talking and quests are all off. Start it mid-heist instead. L_GameLevel streams nights and isn't affected.
+		const bool bStreamsNights = Nights.IsValidIndex(0) && CanStreamLevel(Nights[0]);
+		if (GetWorld()->IsPlayInEditor() && !bStreamsNights && RobberStage::IsInLobby(ReplicatedGameStage)
+			&& TActorIterator<ARobberNightDirector>(GetWorld()))
+		{
+			SetGameStage(RobberStage::Heist);
+		}
+#endif
 	}
 	else
 	{
@@ -420,11 +440,7 @@ bool ARobberGameState::StartBreakIn()
 		if (APawn* Pawn = Player ? Player->GetPawn() : nullptr)
 		{
 			const FTransform Spawn = Entry->GetSpawnTransform(SpawnIndex++);
-			Pawn->TeleportTo(Spawn.GetLocation(), Spawn.Rotator());
-			if (AController* Controller = Pawn->GetController())
-			{
-				Controller->ClientSetRotation(Spawn.Rotator());
-			}
+			PlacePawn(Pawn, Spawn.GetLocation(), Spawn.Rotator());
 		}
 	}
 	SetGameStage(RobberStage::BreakIn);
@@ -516,13 +532,31 @@ void ARobberGameState::SetInside(APlayerState* Player)
 
 void ARobberGameState::TellCrew(const FText& Message) const
 {
-	for (APlayerState* Player : PlayerArray)
+	for (const APlayerState* Player : PlayerArray)
 	{
-		if (ARobberController* Controller = Player ? Cast<ARobberController>(Player->GetOwningController()) : nullptr)
+		ARobberController::Tell(Player, Message);
+	}
+}
+
+TArray<APlayerState*> ARobberGameState::GetPlayersInIdOrder() const
+{
+	TArray<APlayerState*> Players(PlayerArray);
+	Players.Remove(nullptr);
+	Players.Sort([](const APlayerState& A, const APlayerState& B) { return A.GetPlayerId() < B.GetPlayerId(); });
+	return Players;
+}
+
+TArray<TPair<const ARobberEntryPoint*, int32>> ARobberGameState::GetVoteTallies() const
+{
+	TArray<TPair<const ARobberEntryPoint*, int32>> Tallies;
+	for (const FRobberEntryVote& Vote : Votes)
+	{
+		if (Vote.Entry && !Tallies.ContainsByPredicate([&Vote](const TPair<const ARobberEntryPoint*, int32>& Each) { return Each.Key == Vote.Entry; }))
 		{
-			Controller->ClientHeistMessage(Message);
+			Tallies.Emplace(Vote.Entry, GetVoteCount(Vote.Entry));
 		}
 	}
+	return Tallies;
 }
 
 bool ARobberGameState::CanTalkToExhibits() const
@@ -645,37 +679,18 @@ void ARobberGameState::FinishNight(bool bWon)
 
 void ARobberGameState::ReturnToLobby()
 {
-	const FText NightName = GetNightName(CurrentNight, bTutorial);
-	switch (ReplicatedGameStage)
-	{
-	case RobberStage::Lose:
-		NightResultText = FText::Format(NSLOCTEXT("RobberNight", "Lost", "{0} lost. Try it again."), NightName);
-		break;
-	case RobberStage::Continue:
-		NightResultText = FText::Format(NSLOCTEXT("RobberNight", "Won", "{0} done!"), NightName);
-		break;
-	default:
-		NightResultText = FText::Format(NSLOCTEXT("RobberNight", "WonLast", "{0} done! That was the last night."), NightName);
-		break;
-	}
-
+	NightResultText = FText::Format(ReplicatedGameStage == RobberStage::Lose ? NSLOCTEXT("RobberNight", "Lost", "{0} lost. Try it again.")
+		: ReplicatedGameStage == RobberStage::Continue ? NSLOCTEXT("RobberNight", "Won", "{0} done!")
+		: NSLOCTEXT("RobberNight", "WonLast", "{0} done! That was the last night."), GetNightName(CurrentNight, bTutorial));
 	ResetCrewToLobby();
-
-	if (ReplicatedGameStage == RobberStage::Lose)
+	// A lost night reloads, so nothing from the failed attempt carries over.
+	if (ReplicatedGameStage == RobberStage::Lose && bTutorial)
 	{
-		// Reloading gives a fresh copy, so nothing from the failed attempt carries over.
-		if (bTutorial)
-		{
-			LoadTutorial();
-		}
-		else
-		{
-			LoadNight(CurrentNight);
-		}
+		LoadTutorial();
 	}
 	else
 	{
-		LoadNight(ReplicatedGameStage == RobberStage::Win || bTutorial ? 0 : CurrentNight + 1);
+		LoadNight(ReplicatedGameStage == RobberStage::Lose ? CurrentNight : ReplicatedGameStage == RobberStage::Win || bTutorial ? 0 : CurrentNight + 1);
 	}
 	ForceNetUpdate();
 }
@@ -704,13 +719,6 @@ void ARobberGameState::ResetCrewToLobby()
 	SightingCount = 0;
 	GuardsArriveServerTime = 0.;
 	BonusGuardsSeconds = 0.f;
-	for (APlayerState* Player : PlayerArray)
-	{
-		if (URobberJournalComponent* Journal = Player && Player->GetOwningController() ? Player->GetOwningController()->FindComponentByClass<URobberJournalComponent>() : nullptr)
-		{
-			Journal->ResetForNight();
-		}
-	}
 	if (FBoolProperty* PowerProperty = FindFProperty<FBoolProperty>(GetClass(), TEXT("PowerOn?")))
 	{
 		PowerProperty->SetPropertyValue_InContainer(this, true);
@@ -728,8 +736,11 @@ void ARobberGameState::ResetCrewToLobby()
 	int32 StartIndex = 0;
 	for (APlayerState* Player : PlayerArray)
 	{
-		const AController* PlayerController = Player ? Player->GetOwningController() : nullptr;
-		if (UPlayerQuestComponent* Quests = PlayerController ? PlayerController->FindComponentByClass<UPlayerQuestComponent>() : nullptr)
+		if (URobberJournalComponent* Journal = URobberJournalComponent::Of(Player))
+		{
+			Journal->ResetForNight();
+		}
+		if (UPlayerQuestComponent* Quests = UPlayerQuestComponent::Of(Player))
 		{
 			Quests->ResetForNight();
 		}
@@ -737,11 +748,7 @@ void ARobberGameState::ResetCrewToLobby()
 		if (Pawn && LobbyStarts.Num() > 0)
 		{
 			const APlayerStart* Start = LobbyStarts[StartIndex++ % LobbyStarts.Num()];
-			Pawn->TeleportTo(Start->GetActorLocation(), Start->GetActorRotation());
-			if (AController* Controller = Pawn->GetController())
-			{
-				Controller->ClientSetRotation(Start->GetActorRotation());
-			}
+			PlacePawn(Pawn, Start->GetActorLocation(), Start->GetActorRotation());
 		}
 	}
 }

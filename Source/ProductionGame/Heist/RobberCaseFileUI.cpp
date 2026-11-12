@@ -134,20 +134,7 @@ FText URobberCaseFileWidgetBase::Clock(float Seconds)
 
 TArray<APlayerState*> URobberCaseFileWidgetBase::SortedCrew(const ARobberGameState* State)
 {
-	// PlayerId order, so cards and colours match on every machine, like the map pins.
-	TArray<APlayerState*> Crew;
-	if (State)
-	{
-		for (APlayerState* Player : State->PlayerArray)
-		{
-			if (Player)
-			{
-				Crew.Add(Player);
-			}
-		}
-	}
-	Crew.Sort([](const APlayerState& A, const APlayerState& B) { return A.GetPlayerId() < B.GetPlayerId(); });
-	return Crew;
+	return State ? State->GetPlayersInIdOrder() : TArray<APlayerState*>();
 }
 
 FText URobberCaseFileWidgetBase::CrewStatus(const ARobberGameState* State, const APlayerState* Player)
@@ -359,6 +346,15 @@ namespace
 		return Box;
 	}
 
+	USizeBox* StorySized(UWidgetTree* Tree, UWidget* Content, float Width, float Height)
+	{
+		USizeBox* Box = Tree->ConstructWidget<USizeBox>();
+		Box->SetWidthOverride(Width);
+		Box->SetHeightOverride(Height);
+		Box->SetContent(Content);
+		return Box;
+	}
+
 	UTextBlock* StoryLabel(UWidgetTree* Tree, const FSlateFontInfo& Font, const FLinearColor& Colour)
 	{
 		UTextBlock* Text = Tree->ConstructWidget<UTextBlock>();
@@ -431,11 +427,7 @@ FRobberStoryRowUI URobberCaseFileHUD::MakeStoryRow(const FSlateFontInfo& Font)
 	StoryFill(Marker, TickMark);
 	Ui.Tick = TickMark;
 
-	USizeBox* MarkerSize = WidgetTree->ConstructWidget<USizeBox>();
-	MarkerSize->SetWidthOverride(20.f);
-	MarkerSize->SetHeightOverride(22.f);
-	MarkerSize->SetContent(Marker);
-	Row->AddChildToHorizontalBox(MarkerSize)->SetVerticalAlignment(VAlign_Top);
+	Row->AddChildToHorizontalBox(StorySized(WidgetTree, Marker, 20.f, 22.f))->SetVerticalAlignment(VAlign_Top);
 
 	UOverlay* TextStack = WidgetTree->ConstructWidget<UOverlay>();
 	UTextBlock* Text = StoryLabel(WidgetTree, Font, StoryInk);
@@ -494,10 +486,7 @@ FRobberStoryNoteUI URobberCaseFileHUD::MakeStoryNote(const FLinearColor& Paper, 
 
 	UBorder* Pin = WidgetTree->ConstructWidget<UBorder>();
 	Pin->SetBrush(FSlateRoundedBoxBrush(FLinearColor(FColor(0xd6, 0x33, 0x2a)), 10.f, StoryInk, 2.f));
-	USizeBox* PinSize = WidgetTree->ConstructWidget<USizeBox>();
-	PinSize->SetWidthOverride(20.f);
-	PinSize->SetHeightOverride(20.f);
-	PinSize->SetContent(Pin);
+	USizeBox* PinSize = StorySized(WidgetTree, Pin, 20.f, 20.f);
 	PinSize->SetRenderTranslation(FVector2D(0., -10.));
 	UOverlaySlot* PinSlot = Stack->AddChildToOverlay(PinSize);
 	PinSlot->SetHorizontalAlignment(HAlign_Center);
@@ -785,10 +774,7 @@ void URobberCaseFileHUD::BuildMarkerWidgets(UCanvasPanel* Root)
 		Text->AddChildToVerticalBox(Pin.Name);
 		Text->AddChildToVerticalBox(Pin.Detail);
 
-		USizeBox* DiamondSize = WidgetTree->ConstructWidget<USizeBox>();
-		DiamondSize->SetWidthOverride(22.f);
-		DiamondSize->SetHeightOverride(22.f);
-		DiamondSize->SetContent(MarkerBox(WidgetTree, MarkerYellow, 2.f, FMargin(0.f), nullptr));
+		USizeBox* DiamondSize = StorySized(WidgetTree, MarkerBox(WidgetTree, MarkerYellow, 2.f, FMargin(0.f), nullptr), 22.f, 22.f);
 		DiamondSize->SetRenderTransformAngle(45.f);
 
 		UTextBlock* Arrow = StoryLabel(WidgetTree, StoryFont(TEXT("F_Bangers"), 18.f), MarkerInk);
@@ -825,10 +811,7 @@ void URobberCaseFileHUD::BuildMarkerWidgets(UCanvasPanel* Root)
 		Dots->SetJustification(ETextJustify::Center);
 		UBorder* Bubble = MarkerBox(WidgetTree, FLinearColor::White, 10.f, FMargin(12.f, 0.f, 12.f, 6.f), Dots);
 
-		USizeBox* TailSize = WidgetTree->ConstructWidget<USizeBox>();
-		TailSize->SetWidthOverride(9.f);
-		TailSize->SetHeightOverride(9.f);
-		TailSize->SetContent(StorySolid(WidgetTree, FLinearColor::White));
+		USizeBox* TailSize = StorySized(WidgetTree, StorySolid(WidgetTree, FLinearColor::White), 9.f, 9.f);
 		TailSize->SetRenderTransformAngle(45.f);
 
 		UVerticalBox* Column = WidgetTree->ConstructWidget<UVerticalBox>();
@@ -1069,7 +1052,7 @@ void URobberCaseFileHUD::NativeTick(const FGeometry& MyGeometry, float InDeltaTi
 	UpdateHidingView();
 	UpdateNote(State);
 	UpdatePaper(State);
-	UpdateCrew(State);
+	FillCrew(State, TEXT("CrewCard"));
 
 	const ARobberController* Robber = GetRobber();
 	const bool bMessage = Robber && Robber->IsHeistMessageVisible();
@@ -1105,14 +1088,9 @@ void URobberCaseFileHUD::UpdateNote(const ARobberGameState* State)
 	TArray<FRow> Rows;
 	if (RobberStage::IsInLobby(Stage))
 	{
-		TArray<const ARobberEntryPoint*> Counted;
-		for (const FRobberEntryVote& Vote : State->GetVotes())
+		for (const TPair<const ARobberEntryPoint*, int32>& Tally : State->GetVoteTallies())
 		{
-			if (Vote.Entry && !Counted.Contains(Vote.Entry))
-			{
-				Counted.Add(Vote.Entry);
-				Rows.Add({ FText::Format(NSLOCTEXT("RobberCaseFile", "VoteRow", "{0}: {1} {1}|plural(one=vote,other=votes)"), Vote.Entry->DisplayName, State->GetVoteCount(Vote.Entry)), false, false });
-			}
+			Rows.Add({ FText::Format(NSLOCTEXT("RobberCaseFile", "VoteRow", "{0}: {1} {1}|plural(one=vote,other=votes)"), Tally.Key->DisplayName, Tally.Value), false, false });
 		}
 	}
 	else
@@ -1172,13 +1150,13 @@ void URobberCaseFileHUD::UpdatePaper(const ARobberGameState* State)
 	SetText(Find<UTextBlock>(TEXT("GuardsText")), FText::Format(NSLOCTEXT("RobberCaseFile", "Guards", "GUARDS {0}"), Clock(Guards)));
 }
 
-void URobberCaseFileHUD::UpdateCrew(const ARobberGameState* State)
+void URobberCaseFileWidgetBase::FillCrew(const ARobberGameState* State, const TCHAR* RowName)
 {
 	const TArray<APlayerState*> Crew = SortedCrew(State);
 	for (int32 Index = 0; Index < 4; ++Index)
 	{
 		const APlayerState* Player = Crew.IsValidIndex(Index) ? Crew[Index] : nullptr;
-		Show(Find(FString::Printf(TEXT("CrewCard%d"), Index)), Player != nullptr);
+		Show(Find(FString::Printf(TEXT("%s%d"), RowName, Index)), Player != nullptr);
 		if (!Player)
 		{
 			continue;
@@ -1357,23 +1335,7 @@ void URobberJournalWidget::Refresh()
 	}
 	SetText(Find<UTextBlock>(TEXT("KeysText")), Keys.IsEmpty() ? NSLOCTEXT("RobberJournal", "NoKeys", "No keys yet.") : FText::FromString(FString::Join(Keys, TEXT("\n"))));
 
-	// --- CREW ---
-	const TArray<APlayerState*> Crew = SortedCrew(State);
-	for (int32 Index = 0; Index < 4; ++Index)
-	{
-		const APlayerState* Player = Crew.IsValidIndex(Index) ? Crew[Index] : nullptr;
-		Show(Find(FString::Printf(TEXT("CrewRow%d"), Index)), Player != nullptr);
-		if (!Player)
-		{
-			continue;
-		}
-		if (UBorder* Colour = Find<UBorder>(FString::Printf(TEXT("CrewColour%d"), Index)))
-		{
-			Colour->SetBrushColor(CrewColour(Player));
-		}
-		SetText(Find<UTextBlock>(FString::Printf(TEXT("CrewName%d"), Index)), PlayerName(Player));
-		SetText(Find<UTextBlock>(FString::Printf(TEXT("CrewStatus%d"), Index)), CrewStatus(State, Player));
-	}
+	FillCrew(State, TEXT("CrewRow"));
 
 	// --- NIGHT ---
 	TArray<FString> Jobs;
