@@ -411,10 +411,7 @@ ARobberPuzzleChest::ARobberPuzzleChest()
 	Lid = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Lid"));
 	Lid->SetupAttachment(Mesh);
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> Cube(TEXT("/Engine/BasicShapes/Cube.Cube"));
-	if (Cube.Succeeded())
-	{
-		Lid->SetStaticMesh(Cube.Object);
-	}
+	Lid->SetStaticMesh(Cube.Object);
 	// In the body's scaled space: a thin slab on top.
 	Lid->SetRelativeLocation(FVector(0., 0., 58.));
 	Lid->SetRelativeScale3D(FVector(1.04, 1.04, 0.16));
@@ -489,14 +486,7 @@ void ARobberPuzzleChest::OpenChest(APawn* SolvedBy)
 	case ERobberRewardKind::ExtraTime:
 		if (GameState)
 		{
-			if (Contents.Kind == ERobberRewardKind::GuardDistraction)
-			{
-				GameState->CoolHeat(Contents.Value);
-			}
-			else
-			{
-				GameState->AddGuardsTime(Contents.Value);
-			}
+			Contents.Kind == ERobberRewardKind::GuardDistraction ? GameState->CoolHeat(Contents.Value) : GameState->AddGuardsTime(Contents.Value);
 			if (!CrewMessage.IsEmpty())
 			{
 				GameState->TellCrew(CrewMessage);
@@ -514,8 +504,7 @@ void ARobberPuzzleChest::OnServerInteract(APawn* Pawn, APlayerState* Player, ARo
 	{
 		return;
 	}
-	AController* Controller = Pawn->GetController();
-	URobberJournalComponent* Journal = Controller ? Controller->FindComponentByClass<URobberJournalComponent>() : nullptr;
+	URobberJournalComponent* Journal = URobberJournalComponent::Of(Player);
 	if (!Journal)
 	{
 		return;
@@ -532,10 +521,7 @@ void ARobberPuzzleChest::OnServerInteract(APawn* Pawn, APlayerState* Player, ARo
 	{
 		Journal->LearnFact(this, Speaker, Note);
 	}
-	if (ARobberController* Robber = Cast<ARobberController>(Controller))
-	{
-		Robber->ClientHeistMessage(NSLOCTEXT("RobberPuzzle", "NoteRead", "There's a note in the chest. It's in your journal."));
-	}
+	ARobberController::Tell(Pawn, NSLOCTEXT("RobberPuzzle", "NoteRead", "There's a note in the chest. It's in your journal."));
 }
 
 FText ARobberPuzzleChest::GetPrompt(const ARobberGameState* GameState, const APlayerState* Viewer) const

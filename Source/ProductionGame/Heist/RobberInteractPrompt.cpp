@@ -2,6 +2,17 @@
 
 #include "Components/TextBlock.h"
 
+void URobberInteractPrompt::NativeOnInitialized()
+{
+	Super::NativeOnInitialized();
+	if (UWidget* Row = GetWidgetFromName(TEXT("PromptRow")))
+	{
+		// From the E button's end, so it stays where the player's eye already is.
+		Row->SetRenderTransformPivot(FVector2D(0.f, 0.5f));
+		Row->SetRenderScale(FVector2D(PromptScale));
+	}
+}
+
 void URobberInteractPrompt::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 {
 	Super::NativeTick(MyGeometry, InDeltaTime);

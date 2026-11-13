@@ -14,6 +14,12 @@ class PRODUCTIONGAME_API URobberInteractPrompt : public UUserWidget
 {
 	GENERATED_BODY()
 
+public:
+	/** Drawn size of the prompt row. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Case File|Sizes")
+	float PromptScale = 0.85f;
+
 protected:
+	virtual void NativeOnInitialized() override;
 	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
 };

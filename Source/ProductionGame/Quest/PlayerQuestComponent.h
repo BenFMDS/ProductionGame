@@ -4,6 +4,7 @@
 #include "Components/ActorComponent.h"
 #include "PlayerQuestComponent.generated.h"
 
+class APlayerState;
 class UQuestDefinition;
 class UDialogueComponent;
 class UQuestConversationWidget;
@@ -40,13 +41,42 @@ struct FPlayerConversation
 	UPROPERTY(BlueprintReadOnly) int32 Revision = 0;
 	UPROPERTY(BlueprintReadOnly) FText Speaker;
 	UPROPERTY(BlueprintReadOnly) FText Text;
+	/** Room the speaker is in, empty where the map has no room info. */
+	UPROPERTY(BlueprintReadOnly) FText Location;
 	UPROPERTY(BlueprintReadOnly) TObjectPtr<UTexture2D> Portrait;
 	UPROPERTY(BlueprintReadOnly) TObjectPtr<USoundBase> Voice;
 	UPROPERTY(BlueprintReadOnly) TArray<FText> Choices;
 	UPROPERTY(BlueprintReadOnly) TArray<int32> ChoiceIDs;
 };
 
+/** One line on a story quest's pinned note. */
+USTRUCT(BlueprintType)
+struct FRobberStoryLine
+{
+	GENERATED_BODY()
+	UPROPERTY(BlueprintReadOnly) FText Text;
+	UPROPERTY(BlueprintReadOnly) bool bDone = false;
+	/** Red, for warnings ("Don't get caught!"). */
+	UPROPERTY(BlueprintReadOnly) bool bWarning = false;
+};
+
+/** The pinned note for the story quest this player owns, and the smaller note for an errand inside it. */
+USTRUCT(BlueprintType)
+struct FRobberStoryNote
+{
+	GENERATED_BODY()
+	UPROPERTY(BlueprintReadOnly) bool bShown = false;
+	UPROPERTY(BlueprintReadOnly) FText Title;
+	UPROPERTY(BlueprintReadOnly) TArray<FRobberStoryLine> Lines;
+	UPROPERTY(BlueprintReadOnly) FText Footer;
+	/** Empty when no errand is running. */
+	UPROPERTY(BlueprintReadOnly) FText ErrandTitle;
+	UPROPERTY(BlueprintReadOnly) TArray<FRobberStoryLine> ErrandLines;
+};
+
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FPlayerQuestChanged);
+/** Local machine: a NEW QUEST / QUEST COMPLETE stamp is to be shown. */
+DECLARE_MULTICAST_DELEGATE_ThreeParams(FOnStoryStamp, bool /*bComplete*/, const FText& /*Title*/, const FText& /*Subtitle*/);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FQuestRewardGranted, UQuestDefinition*, Quest);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FConversationRejected, FText, Reason);
 /** Server only: Player turned a quest in to Giver. */
@@ -59,6 +89,8 @@ class PRODUCTIONGAME_API UPlayerQuestComponent : public UActorComponent
 	GENERATED_BODY()
 public:
 	UPlayerQuestComponent();
+	/** The quests of the player behind this player state (they live on the controller), or null. */
+	static UPlayerQuestComponent* Of(const APlayerState* Player);
 	/** Any player, any world; listeners check the world themselves (the night director pays rewards on it). */
 	static FOnQuestTurnedIn OnQuestTurnedIn;
 	/** Same, when a player takes a quest on. */
@@ -68,6 +100,14 @@ public:
 	UPROPERTY(ReplicatedUsing=OnRep_Conversation, BlueprintReadOnly, Category="Dialogue") FPlayerConversation Conversation;
 	/** Keys from turned-in quests and pickups. Cleared with the quests when a night ends. */
 	UPROPERTY(Replicated, BlueprintReadOnly, Category="Quest") TArray<FName> Keys;
+	/** Only ever the story quest this player owns. */
+	UPROPERTY(Replicated, BlueprintReadOnly, Category="Quest") FRobberStoryNote StoryNote;
+	FOnStoryStamp OnStoryStamp;
+	/** Server only. */
+	void SetStoryNote(const FRobberStoryNote& Note);
+	UFUNCTION(Client, Reliable) void ClientStoryStamp(bool bComplete, const FText& Title, const FText& Subtitle);
+	/** Black screen and no control for Seconds; Launch is the same knock the server gave, so the owner doesn't get snapped back. */
+	UFUNCTION(Client, Reliable) void ClientStoryCaught(float Seconds, FVector Launch);
 	UPROPERTY(BlueprintAssignable) FPlayerQuestChanged OnQuestsChanged;
 	UPROPERTY(BlueprintAssignable) FPlayerQuestChanged OnConversationChanged;
 	/** Server only, once per turn-in. Connect future item rewards (keys, equipment, etc.) here. */
@@ -116,8 +156,13 @@ protected:
 	virtual void EndPlay(const EEndPlayReason::Type Reason) override;
 private:
 	void RefreshDefaultUI();
+	/** The dialogue of whoever this player is talking to, or null. */
+	UDialogueComponent* CurrentTalker() const;
+	/** This player has the quest, from this giver, in this state. */
+	bool HasQuestIn(const UQuestDefinition* Definition, const AActor* Giver, EPlayerQuestState State) const;
 	UPROPERTY(Transient) TObjectPtr<UQuestConversationWidget> Widget;
 	UFUNCTION() void OnRep_Quests();
 	UFUNCTION() void OnRep_Conversation();
 	double NextTalkTime = 0.0;
+	FTimerHandle CaughtTimer;
 };

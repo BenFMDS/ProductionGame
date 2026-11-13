@@ -3,6 +3,8 @@
 #include "Quest/PlayerQuestComponent.h"
 #include "Quest/QuestDefinition.h"
 #include "Quest/QuestGiverComponent.h"
+#include "Heist/RobberExhibitTalk.h"
+#include "Robber/RobberGameState.h"
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerState.h"
@@ -73,13 +75,28 @@ bool UDialogueComponent::TryStart(UPlayerQuestComponent* Player)
 	StartingPawn = PC->GetPawn();
 	TalkingPlayer = PC->PlayerState;
 	bIsInConversation = true;
-	CurrentNode = Dialogue ? Dialogue->EntryNode : NAME_None;
+	const auto* RobberState = GetWorld()->GetGameState<ARobberGameState>();
+	bSmallTalk = RobberState && RobberState->IsExhibitSmallTalk();
+	if (bSmallTalk) SmallTalkLine = PickSmallTalkLine();
+	else CurrentNode = PickEntryNode(Player);
+	LastActivity = GetWorld()->GetTimeSeconds();
+	GetOwner()->ForceNetUpdate();
+	GetWorld()->GetTimerManager().SetTimer(SessionTimer, this, &UDialogueComponent::ValidateSession, 0.25f, true);
+	PublishNode();
+	// Not for small talk: this is what hands out tips and journal notes.
+	if (!bSmallTalk) OnConversationStarted.Broadcast(GetOwner(), PC->PlayerState);
+	return true;
+}
+
+FName UDialogueComponent::PickEntryNode(UPlayerQuestComponent* Player) const
+{
+	FName Entry = Dialogue ? Dialogue->EntryNode : NAME_None;
 	if (Dialogue && !Dialogue->RandomEntryNodes.IsEmpty())
 	{
 		TArray<FName> ValidRandomEntries;
 		for (const FName NodeID : Dialogue->RandomEntryNodes)
 			if (Dialogue->FindNode(NodeID)) ValidRandomEntries.Add(NodeID);
-		if (!ValidRandomEntries.IsEmpty()) CurrentNode = ValidRandomEntries[FMath::RandHelper(ValidRandomEntries.Num())];
+		if (!ValidRandomEntries.IsEmpty()) Entry = ValidRandomEntries[FMath::RandHelper(ValidRandomEntries.Num())];
 	}
 	if (Dialogue && Dialogue->UsesQuests() && IsValid(Dialogue->ContextQuest))
 	{
@@ -89,18 +106,30 @@ bool UDialogueComponent::TryStart(UPlayerQuestComponent* Player)
 			FName StateEntry = Dialogue->ActiveEntryNode;
 			if (Quest.State == EPlayerQuestState::Completed) StateEntry = Dialogue->CompletedEntryNode;
 			else if (Player->CanTurnIn(Dialogue->ContextQuest, GetOwner())) StateEntry = Dialogue->ReadyEntryNode;
-			if (Dialogue->FindNode(StateEntry)) CurrentNode = StateEntry;
+			if (Dialogue->FindNode(StateEntry)) Entry = StateEntry;
 		}
 	}
-	LastActivity = GetWorld()->GetTimeSeconds();
-	GetOwner()->ForceNetUpdate();
-	GetWorld()->GetTimerManager().SetTimer(SessionTimer, this, &UDialogueComponent::ValidateSession, 0.25f, true);
-	PublishNode();
-	OnConversationStarted.Broadcast(GetOwner(), PC->PlayerState);
-	return true;
+	if (EntryOverride.IsBound())
+	{
+		const FName Override = EntryOverride.Execute(Player);
+		if (Dialogue && Dialogue->FindNode(Override)) Entry = Override;
+	}
+	return Entry;
+}
+
+FText UDialogueComponent::PickSmallTalkLine()
+{
+	// Nights the director hasn't dealt: these talkers still have only their own asset's lines.
+	const TArray<FText> Lines = !SmallTalkLines.IsEmpty() || !Dialogue ? SmallTalkLines : Dialogue->GetGreetingLines();
+	if (Lines.IsEmpty()) return NSLOCTEXT("Dialogue", "NothingToSay", "...");
+	int32 Pick = FMath::RandHelper(Lines.Num());
+	if (Lines.Num() > 1 && Pick == LastSmallTalkLine) Pick = (Pick + 1) % Lines.Num();
+	LastSmallTalkLine = Pick;
+	return Lines[Pick];
 }
 
 FOnConversationStarted UDialogueComponent::OnConversationStarted;
+FOnDialogueEvent UDialogueComponent::OnDialogueEvent;
 
 FText UDialogueComponent::GetCurrentLine() const
 {
@@ -145,6 +174,7 @@ void UDialogueComponent::Release(UPlayerQuestComponent* Player)
 	StartingPawn.Reset();
 	TalkingPlayer = nullptr;
 	bIsInConversation = false;
+	bSmallTalk = false;
 	ErrandLine = FText::GetEmpty();
 	VisibleChoiceIDs.Reset();
 	GetWorld()->GetTimerManager().ClearTimer(SessionTimer);
@@ -158,12 +188,29 @@ void UDialogueComponent::PublishNode()
 	if (!Player) return;
 	FPlayerConversation Snapshot;
 	Snapshot.NPC = GetOwner();
+	for (TActorIterator<ARobberNightDirector> Director(GetWorld()); Director; ++Director)
+	{
+		if (const ARobberRoomInfo* Room = Director->FindRoom(GetOwner()->GetActorLocation()))
+		{
+			Snapshot.Location = Room->RoomName;
+		}
+		break;
+	}
 	VisibleChoiceIDs.Reset();
+	if (bSmallTalk)
+	{
+		// No choices: the screen adds its own Goodbye for a line with none.
+		Snapshot.Speaker = !SmallTalkSpeaker.IsEmpty() ? SmallTalkSpeaker : Dialogue ? Dialogue->SpeakerName : FText::GetEmpty();
+		Snapshot.Portrait = Dialogue ? Dialogue->Portrait : nullptr;
+		Snapshot.Text = SmallTalkLine;
+		Player->SetConversation(Snapshot);
+		return;
+	}
 	if (Dialogue)
 	{
 		const FDialogueNode* Node = Dialogue->FindNode(CurrentNode);
 		if (!Node) { Release(Player); return; }
-		Snapshot.Speaker = Dialogue->SpeakerName;
+		Snapshot.Speaker = Node->Speaker.IsEmpty() ? Dialogue->SpeakerName : Node->Speaker;
 		Snapshot.Portrait = Dialogue->Portrait;
 		Snapshot.Text = Node->Text;
 		Snapshot.Voice = Node->Voice;
@@ -245,6 +292,11 @@ void UDialogueComponent::Choose(UPlayerQuestComponent* Player, int32 ChoiceID, i
 			if (Choice.QuestAction == EDialogueQuestAction::Progress) bSuccess = Player->ProgressQuest(Choice.Quest, GetOwner(), Choice.ProgressAmount);
 		}
 		if (!IsParticipant(Player)) return;
+		if (bSuccess && !Choice.StoryEvent.IsNone())
+		{
+			OnDialogueEvent.Broadcast(GetOwner(), Player, Choice.StoryEvent);
+			if (!IsParticipant(Player)) return;
+		}
 		if (bSuccess)
 		{
 			if (Choice.NextNode.IsNone()) { Release(Player); return; }

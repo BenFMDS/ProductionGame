@@ -31,6 +31,7 @@ enum class ERobberPuzzleType : uint8 { Any, Wire, Combination, CodeLock, Pressur
 
 class URobberPuzzleComponent;
 class ARobberPuzzleChest;
+class ARobberStoryQuest;
 
 /** What an exhibit pays for its quest tonight. It belongs to the exhibit for the night, so any quest can pay any reward. */
 USTRUCT(BlueprintType)
@@ -216,6 +217,8 @@ struct PRODUCTIONGAME_API FRobberExhibitAssignment
 	UPROPERTY() FText JournalClue;
 	/** Crew-wide rewards pay out once per exhibit, however many players finish the quest. */
 	UPROPERTY() bool bCrewRewardPaid = false;
+	/** Helpful: the story quest this exhibit's clue starts. */
+	UPROPERTY() TObjectPtr<ARobberStoryQuest> StoryTip;
 };
 
 /** What's in one puzzle chest tonight. Server only. */
@@ -298,7 +301,9 @@ private:
 	FText PuzzleHintLine(const URobberPuzzleComponent* Puzzle) const;
 	void FillChests();
 	void OnExhibitPuzzleSolved(AActor* Exhibit, AActor* Puzzle, APawn* SolvedBy);
+public:
 	const ARobberRoomInfo* FindRoom(const FVector& Location) const;
+private:
 	void CollectFacts(TArray<FClueFact>& Required, TArray<FClueFact>& Others) const;
 	FText TellFact(const FClueFact& Fact, FText& OutJournal) const;
 	void BuildSilly(FRobberExhibitAssignment& Each, UDialogueComponent* Talker, const TArray<FText>& ExhibitJokes);
@@ -320,6 +325,16 @@ private:
 	UPROPERTY(Transient) TArray<FRobberChestDeal> ChestDeals;
 	/** Every Puzzle component in the night's level. */
 	UPROPERTY(Transient) TArray<TObjectPtr<URobberPuzzleComponent>> LevelPuzzles;
+	UPROPERTY(Transient) TArray<TObjectPtr<ARobberStoryQuest>> StoryQuests;
+
+public:
+	/** A heat or guard-time bonus, drawn from the rewards table by weight. For story quests, so an optional job can't hold back something the night needs. */
+	FRobberReward DrawBonusReward() const;
+
+	/** For the dev menu: every exhibit tonight, what it does and what it pays, plus the story quests. */
+	void DescribeDealForDev(TArray<FString>& OutLines, TArray<AActor*>& OutTargets) const;
+
+private:
 
 	bool bDealt = false;
 	int32 DealAttempts = 0;

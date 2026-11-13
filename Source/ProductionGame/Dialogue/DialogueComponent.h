@@ -12,6 +12,10 @@ class APawn;
 
 /** Server only: an NPC (Talker) started a conversation with Player. */
 DECLARE_MULTICAST_DELEGATE_TwoParams(FOnConversationStarted, AActor* /*Talker*/, APlayerState* /*Player*/);
+/** Server only: a player picked a choice carrying a StoryEvent. */
+DECLARE_MULTICAST_DELEGATE_ThreeParams(FOnDialogueEvent, AActor* /*Talker*/, UPlayerQuestComponent* /*Player*/, FName /*Event*/);
+/** Which node to open on for this player, or None for the dialogue's usual choice. */
+DECLARE_DELEGATE_RetVal_OneParam(FName, FDialogueEntryOverride, UPlayerQuestComponent* /*Player*/);
 
 /** A line this talker can have with a player who's on someone else's quest (ask about the gossip, hand over the parcel). */
 USTRUCT()
@@ -34,6 +38,9 @@ public:
 	UDialogueComponent();
 	/** Any talker, any world; listeners check the world themselves (the journal notes who you've spoken to). */
 	static FOnConversationStarted OnConversationStarted;
+	static FOnDialogueEvent OnDialogueEvent;
+	/** Set by the night director and story quests: the same talker can open differently for each player. */
+	FDialogueEntryOverride EntryOverride;
 	/** The one dialogue asset this actor speaks. A conversation cannot begin without it. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Dialogue", meta=(DisplayName="Dialogue Asset")) TObjectPtr<UDialogueDefinition> Dialogue;
 	/** Optional quests offered through this conversation. New talkers use this instead of a separate Quest Giver Component. */
@@ -46,6 +53,10 @@ public:
 	UPROPERTY(Transient) FText JournalQuote;
 	/** Server only, set by the night director. */
 	UPROPERTY(Transient) TArray<FDialogueErrand> Errands;
+	/** Server only. What this talker can say during Investigate. Must never hold a clue. */
+	UPROPERTY(Transient) TArray<FText> SmallTalkLines;
+	/** Server only. Replaces the dialogue's speaker name during small talk, for talkers whose names are a secret. */
+	UPROPERTY(Transient) FText SmallTalkSpeaker;
 	/** Replicated busy indicator; lock ownership itself is private server state. */
 	UPROPERTY(Replicated, BlueprintReadOnly, Category="Dialogue") bool bIsInConversation = false;
 	UPROPERTY(Replicated, BlueprintReadOnly, Category="Dialogue") TObjectPtr<APlayerState> TalkingPlayer;
@@ -72,6 +83,12 @@ private:
 	FTimerHandle SessionTimer;
 	/** An errand's reply, said instead of the current node's line until the next choice. */
 	FText ErrandLine;
+	bool bSmallTalk = false;
+	FText SmallTalkLine;
+	int32 LastSmallTalkLine = INDEX_NONE;
+	FText PickSmallTalkLine();
+	/** Where a conversation opens: a random greeting, the quest's step, or what the entry override says. */
+	FName PickEntryNode(UPlayerQuestComponent* Player) const;
 	AActor* FindErrandItem(const FDialogueErrand& Errand) const;
 	bool CanDoErrand(const UPlayerQuestComponent* Player, const FDialogueErrand& Errand) const;
 	void ValidateSession();

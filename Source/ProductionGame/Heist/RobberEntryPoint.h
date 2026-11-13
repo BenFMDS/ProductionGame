@@ -16,6 +16,13 @@ class UArrowComponent;
 class UBoxComponent;
 class UTextRenderComponent;
 
+/** Where one quest marker goes and what it's called. */
+struct FRobberMarkerTarget
+{
+	FVector Location = FVector::ZeroVector;
+	FText Label;
+};
+
 /**
  * One way into the museum. Placed where the crew spawns for that break-in; vote stations point at it.
  * Subclasses add the break-in's own rules and decide when it is done.
@@ -59,6 +66,9 @@ public:
 	virtual void EndBreakIn(ARobberGameState* GameState) {}
 	virtual FText GetBreakInStatus(const ARobberGameState* GameState, const APlayerState* Viewer) const;
 
+	/** Runs on every machine. Adds a marker for each thing the viewer's current break-in step points at. */
+	virtual void GetBreakInMarkers(const ARobberGameState* GameState, const APlayerState* Viewer, TArray<FRobberMarkerTarget>& Out) const {}
+
 protected:
 	UPROPERTY(VisibleAnywhere, Category = "Robber|Entry")
 	TObjectPtr<UArrowComponent> Arrow;
@@ -87,6 +97,7 @@ public:
 	virtual void TickBreakIn(ARobberGameState* GameState) override;
 	virtual void EndBreakIn(ARobberGameState* GameState) override;
 	virtual FText GetBreakInStatus(const ARobberGameState* GameState, const APlayerState* Viewer) const override;
+	virtual void GetBreakInMarkers(const ARobberGameState* GameState, const APlayerState* Viewer, TArray<FRobberMarkerTarget>& Out) const override;
 };
 
 /**
@@ -131,6 +142,7 @@ public:
 	virtual void BeginBreakIn(ARobberGameState* GameState) override;
 	/** Nobody counts as in until the rope is down; the skylight sends early jumpers back up. */
 	virtual void TickBreakIn(ARobberGameState* GameState) override;
+	virtual void GetBreakInMarkers(const ARobberGameState* GameState, const APlayerState* Viewer, TArray<FRobberMarkerTarget>& Out) const override;
 
 protected:
 	virtual FText GetOutsideStatus(const ARobberGameState* GameState, const APlayerState* Viewer) const override;
@@ -158,6 +170,7 @@ public:
 	TObjectPtr<ARobberCrowbar> Crowbar;
 
 	virtual void BeginBreakIn(ARobberGameState* GameState) override;
+	virtual void GetBreakInMarkers(const ARobberGameState* GameState, const APlayerState* Viewer, TArray<FRobberMarkerTarget>& Out) const override;
 
 protected:
 	virtual FText GetOutsideStatus(const ARobberGameState* GameState, const APlayerState* Viewer) const override;
@@ -176,6 +189,7 @@ public:
 	TObjectPtr<ARobberRollUpDoor> RollUpDoor;
 
 	virtual void BeginBreakIn(ARobberGameState* GameState) override;
+	virtual void GetBreakInMarkers(const ARobberGameState* GameState, const APlayerState* Viewer, TArray<FRobberMarkerTarget>& Out) const override;
 
 protected:
 	virtual FText GetOutsideStatus(const ARobberGameState* GameState, const APlayerState* Viewer) const override;

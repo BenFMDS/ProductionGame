@@ -1,6 +1,8 @@
 #include "Heist/RobberEntryPoint.h"
 
 #include "Algo/AllOf.h"
+#include "EngineUtils.h"
+#include "ProductionGameCharacter.h"
 #include "Components/ArrowComponent.h"
 #include "Components/BoxComponent.h"
 #include "Components/TextRenderComponent.h"
@@ -53,25 +55,6 @@ ARobberTourEntryPoint::ARobberTourEntryPoint()
 	BreakInTimeLimit = 90.f;
 }
 
-namespace
-{
-	void SetFrozen(APlayerState* Player, bool bFrozen)
-	{
-		if (ARobberController* Controller = Player ? Cast<ARobberController>(Player->GetOwningController()) : nullptr)
-		{
-			Controller->SetHeistFrozen(bFrozen);
-		}
-	}
-
-	void TellPlayer(APlayerState* Player, const FText& Message)
-	{
-		if (ARobberController* Controller = Player ? Cast<ARobberController>(Player->GetOwningController()) : nullptr)
-		{
-			Controller->ClientHeistMessage(Message);
-		}
-	}
-}
-
 bool ARobberTourEntryPoint::TryHide(ARobberGameState* GameState, APlayerState* Player, ARobberHidingSpot* HidingSpot, FText& OutReason)
 {
 	if (!GameState->GetCrewStatus(Player).bHasTicket)
@@ -79,15 +62,75 @@ bool ARobberTourEntryPoint::TryHide(ARobberGameState* GameState, APlayerState* P
 		OutReason = NSLOCTEXT("RobberEntry", "NeedTicket", "Buy a ticket at the desk first.");
 		return false;
 	}
-	APawn* Pawn = Player->GetPawn();
-	if (!Pawn)
+	if (!Player->GetPawn())
 	{
 		return false;
 	}
 	GameState->SetHidingSpot(Player, HidingSpot);
-	Pawn->TeleportTo(HidingSpot->GetHideLocation(), Pawn->GetActorRotation());
-	SetFrozen(Player, true);
 	return true;
+}
+
+void ARobberTourEntryPoint::GetBreakInMarkers(const ARobberGameState* GameState, const APlayerState* Viewer, TArray<FRobberMarkerTarget>& Out) const
+{
+	// Past the ticket the next step is "pick a spot", and which one is the player's choice.
+	if (GameState->GetCrewStatus(Viewer).bHasTicket)
+	{
+		return;
+	}
+	for (TActorIterator<ARobberTicketDesk> It(GetWorld()); It; ++It)
+	{
+		if (It->IsActive(GameState))
+		{
+			Out.Add({ It->GetActorLocation(), NSLOCTEXT("RobberMarker", "Desk", "Ticket desk") });
+			return;
+		}
+	}
+}
+
+void ARobberSkylightEntryPoint::GetBreakInMarkers(const ARobberGameState* GameState, const APlayerState* Viewer, TArray<FRobberMarkerTarget>& Out) const
+{
+	if (!Skylight || IsInside(Viewer ? Viewer->GetPawn() : nullptr))
+	{
+		return;
+	}
+	if (Skylight->IsCut() && !Skylight->IsRopeDown())
+	{
+		Out.Add({ Skylight->GetRopeAnchorLocation(), NSLOCTEXT("RobberMarker", "Anchor", "Rope anchor") });
+		return;
+	}
+	Out.Add({ Skylight->GetActorLocation(), NSLOCTEXT("RobberMarker", "Skylight", "Skylight") });
+}
+
+void ARobberSewerEntryPoint::GetBreakInMarkers(const ARobberGameState* GameState, const APlayerState* Viewer, TArray<FRobberMarkerTarget>& Out) const
+{
+	if (IsInside(Viewer ? Viewer->GetPawn() : nullptr))
+	{
+		return;
+	}
+	if (Water && !Water->IsDrained())
+	{
+		for (const ARobberSewerValve* Valve : Water->Valves)
+		{
+			if (Valve)
+			{
+				Out.Add({ Valve->GetActorLocation(), NSLOCTEXT("RobberMarker", "Valve", "Valve") });
+			}
+		}
+		return;
+	}
+	// Finding the crowbar is the job here, so nothing points at it.
+	if (Grate && (Grate->IsOpen() || !Crowbar || Crowbar->IsTaken()))
+	{
+		Out.Add({ Grate->GetActorLocation(), NSLOCTEXT("RobberMarker", "Grate", "Grate") });
+	}
+}
+
+void ARobberLoadingDockEntryPoint::GetBreakInMarkers(const ARobberGameState* GameState, const APlayerState* Viewer, TArray<FRobberMarkerTarget>& Out) const
+{
+	if (RollUpDoor && !IsInside(Viewer ? Viewer->GetPawn() : nullptr))
+	{
+		Out.Add({ RollUpDoor->GetActorLocation(), NSLOCTEXT("RobberMarker", "RollUp", "Roll-up door") });
+	}
 }
 
 void ARobberTourEntryPoint::BeginBreakIn(ARobberGameState* GameState)
@@ -95,7 +138,7 @@ void ARobberTourEntryPoint::BeginBreakIn(ARobberGameState* GameState)
 	Super::BeginBreakIn(GameState);
 	for (const FRobberCrewStatus& Status : GameState->GetCrew())
 	{
-		TellPlayer(Status.Player, NSLOCTEXT("RobberEntry", "TourStart", "The museum closes soon. Buy a ticket and find somewhere to hide."));
+		ARobberController::Tell(Status.Player, NSLOCTEXT("RobberEntry", "TourStart", "The museum closes soon. Buy a ticket and find somewhere to hide."));
 	}
 }
 
@@ -115,14 +158,18 @@ void ARobberTourEntryPoint::EndBreakIn(ARobberGameState* GameState)
 	{
 		if (Status.HidingSpot)
 		{
-			SetFrozen(Status.Player, false);
-			TellPlayer(Status.Player, NSLOCTEXT("RobberEntry", "Closed", "The museum is closed. Time to sneak out."));
+			// Closing's the point of hiding on the Tour, so everyone comes back out to start the night.
+			if (AProductionGameCharacter* Character = Status.Player ? Cast<AProductionGameCharacter>(Status.Player->GetPawn()) : nullptr)
+			{
+				Character->ExitHiding();
+			}
+			ARobberController::Tell(Status.Player, NSLOCTEXT("RobberEntry", "Closed", "The museum is closed. Time to sneak out."));
 		}
 		else
 		{
 			// Getting caught isn't built yet, so for now they just carry on.
 			UE_LOG(LogTemp, Warning, TEXT("Closing-Time Tour: %s wasn't hidden at closing"), Status.Player ? *Status.Player->GetPlayerName() : TEXT("?"));
-			TellPlayer(Status.Player, NSLOCTEXT("RobberEntry", "NotHidden", "You weren't hidden at closing! (Getting caught isn't built yet.)"));
+			ARobberController::Tell(Status.Player, NSLOCTEXT("RobberEntry", "NotHidden", "You weren't hidden at closing! (Getting caught isn't built yet.)"));
 		}
 	}
 }
@@ -178,13 +225,13 @@ void ARobberSneakInEntryPoint::EndBreakIn(ARobberGameState* GameState)
 	{
 		if (Status.bInside)
 		{
-			TellPlayer(Status.Player, NSLOCTEXT("RobberEntry", "AllIn", "Everyone's in. Find the gem room."));
+			ARobberController::Tell(Status.Player, NSLOCTEXT("RobberEntry", "AllIn", "Everyone's in. Find the gem room."));
 		}
 		else
 		{
 			// Getting caught isn't built yet, so for now they just carry on.
 			UE_LOG(LogTemp, Warning, TEXT("%s: %s wasn't inside when the break-in ended"), *DisplayName.ToString(), Status.Player ? *Status.Player->GetPlayerName() : TEXT("?"));
-			TellPlayer(Status.Player, NSLOCTEXT("RobberEntry", "NotInside", "Out of time and you're not in! (Getting caught isn't built yet.)"));
+			ARobberController::Tell(Status.Player, NSLOCTEXT("RobberEntry", "NotInside", "Out of time and you're not in! (Getting caught isn't built yet.)"));
 		}
 	}
 }

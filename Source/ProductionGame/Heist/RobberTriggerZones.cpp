@@ -27,10 +27,7 @@ ARobberTriggerZone::ARobberTriggerZone()
 	DoorMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("DoorMesh"));
 	DoorMesh->SetupAttachment(Box);
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> Cube(TEXT("/Engine/BasicShapes/Cube.Cube"));
-	if (Cube.Succeeded())
-	{
-		DoorMesh->SetStaticMesh(Cube.Object);
-	}
+	DoorMesh->SetStaticMesh(Cube.Object);
 	// The cube is 100 units across; match the default box.
 	DoorMesh->SetRelativeScale3D(FVector(2.f, 3.f, 3.f));
 	DoorMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
@@ -118,10 +115,7 @@ ARobberManhole::ARobberManhole()
 	Label = NSLOCTEXT("RobberZone", "Manhole", "MANHOLE");
 	Box->SetBoxExtent(FVector(150, 150, 100));
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> Cylinder(TEXT("/Engine/BasicShapes/Cylinder.Cylinder"));
-	if (Cylinder.Succeeded())
-	{
-		DoorMesh->SetStaticMesh(Cylinder.Object);
-	}
+	DoorMesh->SetStaticMesh(Cylinder.Object);
 	// A lid lying on the floor: the box's bottom is at -100.
 	DoorMesh->SetRelativeLocation(FVector(0, 0, -97));
 	DoorMesh->SetRelativeScale3D(FVector(2.4, 2.4, 0.05));

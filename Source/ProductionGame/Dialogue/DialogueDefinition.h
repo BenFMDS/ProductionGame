@@ -37,6 +37,8 @@ struct FDialogueChoice
 	UPROPERTY(EditAnywhere, BlueprintReadOnly) TObjectPtr<UQuestDefinition> Quest;
 	/** Amount awarded by a correct dialogue answer. Ignored by non-progress actions. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, meta=(ClampMin="1")) int32 ProgressAmount = 1;
+	/** Told to story quests when this is picked, so a conversation can move a quest on. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly) FName StoryEvent;
 };
 
 USTRUCT(BlueprintType)
@@ -45,6 +47,8 @@ struct FDialogueNode
 	GENERATED_BODY()
 	UPROPERTY(EditAnywhere, BlueprintReadOnly) FName ID;
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, meta=(MultiLine=true)) FText Text;
+	/** Who says this line, when it isn't the dialogue's own speaker (a group talking together). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly) FText Speaker;
 	UPROPERTY(EditAnywhere, BlueprintReadOnly) TObjectPtr<USoundBase> Voice;
 	UPROPERTY(EditAnywhere, BlueprintReadOnly) TArray<FDialogueChoice> Choices;
 };
@@ -74,5 +78,15 @@ public:
 	const FDialogueNode* FindNode(FName ID) const
 	{
 		return Nodes.FindByPredicate([ID](const FDialogueNode& Node) { return Node.ID == ID; });
+	}
+	/** What the talker can open with: the entry node's line and the random entries'. */
+	TArray<FText> GetGreetingLines() const
+	{
+		TArray<FText> Lines;
+		for (const FDialogueNode& Node : Nodes)
+		{
+			if (!Node.Text.IsEmpty() && (RandomEntryNodes.Contains(Node.ID) || EntryNode == Node.ID)) Lines.Add(Node.Text);
+		}
+		return Lines;
 	}
 };

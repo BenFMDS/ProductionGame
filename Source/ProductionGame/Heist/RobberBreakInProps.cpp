@@ -21,26 +21,6 @@ namespace
 		return GameState && !RobberStage::IsInLobby(GameState->GetGameStage());
 	}
 
-	void TellPlayer(const APawn* Pawn, const FText& Message)
-	{
-		if (ARobberController* Controller = Pawn ? Cast<ARobberController>(Pawn->GetController()) : nullptr)
-		{
-			Controller->ClientHeistMessage(Message);
-		}
-	}
-
-	UPlayerQuestComponent* FindPlayerQuests(const APlayerState* Player)
-	{
-		const AController* Controller = Player ? Player->GetOwningController() : nullptr;
-		return Controller ? Controller->FindComponentByClass<UPlayerQuestComponent>() : nullptr;
-	}
-
-	void SetShown(UPrimitiveComponent* Component, bool bShown)
-	{
-		Component->SetHiddenInGame(!bShown, true);
-		Component->SetCollisionEnabled(bShown ? ECollisionEnabled::QueryAndPhysics : ECollisionEnabled::NoCollision);
-	}
-
 	FText Percent(float Fraction)
 	{
 		return FText::AsNumber(FMath::RoundToInt(Fraction * 100.f));
@@ -68,14 +48,8 @@ ARobberSkylight::ARobberSkylight()
 	RopeAnchor->SetupAttachment(Root);
 	Rope = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Rope"));
 	Rope->SetupAttachment(Root);
-	if (Cube.Succeeded())
-	{
-		RopeAnchor->SetStaticMesh(Cube.Object);
-	}
-	if (Cylinder.Succeeded())
-	{
-		Rope->SetStaticMesh(Cylinder.Object);
-	}
+	RopeAnchor->SetStaticMesh(Cube.Object);
+	Rope->SetStaticMesh(Cylinder.Object);
 	Rope->SetHiddenInGame(true);
 	Rope->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 }
@@ -133,7 +107,7 @@ void ARobberSkylight::SendBackUpJumpers()
 		if (Pawn && Column.IsInside(Pawn->GetActorLocation()))
 		{
 			Pawn->TeleportTo(Roof, Pawn->GetActorRotation());
-			TellPlayer(Pawn, NSLOCTEXT("RobberSkylight", "TooFar", "Too far to jump! Drop the rope down first."));
+			ARobberController::Tell(Pawn,NSLOCTEXT("RobberSkylight", "TooFar", "Too far to jump! Drop the rope down first."));
 		}
 	}
 }
@@ -218,7 +192,7 @@ void ARobberSkylight::OnServerInteract(APawn* Pawn, APlayerState* Player, ARobbe
 	}
 	if (bTooLoud)
 	{
-		TellPlayer(Pawn, NSLOCTEXT("RobberSkylight", "WaitQuiet", "Too loud. Wait for it to go quiet."));
+		ARobberController::Tell(Pawn,NSLOCTEXT("RobberSkylight", "WaitQuiet", "Too loud. Wait for it to go quiet."));
 		return;
 	}
 	Cutters.Add(Player);
@@ -243,13 +217,13 @@ FText ARobberSkylight::GetPrompt(const ARobberGameState* GameState, const APlaye
 
 FText ARobberSkylight::GetLabel(const ARobberGameState* GameState) const
 {
-	if (bCut || !IsNightRunning(GameState))
+	if (bCut)
 	{
-		if (!bCut)
-		{
-			return Label;
-		}
 		return bRopeDown ? NSLOCTEXT("RobberSkylight", "RopeLabel", "ROPE") : NSLOCTEXT("RobberSkylight", "RopeCoiled", "ROPE\nDrop it down");
+	}
+	if (!IsNightRunning(GameState))
+	{
+		return Label;
 	}
 	return FText::Format(NSLOCTEXT("RobberSkylight", "Progress", "{0}\nCut {1}%   Noise {2}%{3}"), Label, Percent(CutProgress), Percent(Noise),
 		bTooLoud ? NSLOCTEXT("RobberSkylight", "TooLoudLabel", "\nTOO LOUD - WAIT") : FText::GetEmpty());
@@ -257,7 +231,7 @@ FText ARobberSkylight::GetLabel(const ARobberGameState* GameState) const
 
 void ARobberSkylight::OnRep_Cut()
 {
-	SetShown(Mesh, !bCut);
+	ShowPart(Mesh, !bCut);
 	Rope->SetHiddenInGame(!bRopeDown);
 }
 
@@ -301,13 +275,13 @@ void ARobberSewerValve::OnServerInteract(APawn* Pawn, APlayerState* Player, ARob
 	if (GameState->PlayerArray.Num() <= 1)
 	{
 		Jam();
-		TellPlayer(Pawn, NSLOCTEXT("RobberSewer", "Jammed", "The valve jams open."));
+		ARobberController::Tell(Pawn,NSLOCTEXT("RobberSewer", "Jammed", "The valve jams open."));
 		return;
 	}
 	OpenUntil = GameState->GetServerWorldTimeSeconds() + OpenSeconds;
 	ForceNetUpdate();
 	GameState->AddHeat(RobberHeatCosts::Clank, TEXT("sewer valve"));
-	TellPlayer(Pawn, FText::Format(NSLOCTEXT("RobberSewer", "Opened", "It springs shut in {0} seconds. Someone has to open the other valve at the same time!"), FMath::RoundToInt(OpenSeconds)));
+	ARobberController::Tell(Pawn,FText::Format(NSLOCTEXT("RobberSewer", "Opened", "It springs shut in {0} seconds. Someone has to open the other valve at the same time!"), FMath::RoundToInt(OpenSeconds)));
 }
 
 FText ARobberSewerValve::GetPrompt(const ARobberGameState* GameState, const APlayerState* Viewer) const
@@ -342,10 +316,7 @@ ARobberSewerWater::ARobberSewerWater()
 	Mesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Mesh"));
 	Mesh->SetupAttachment(Root);
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> Cube(TEXT("/Engine/BasicShapes/Cube.Cube"));
-	if (Cube.Succeeded())
-	{
-		Mesh->SetStaticMesh(Cube.Object);
-	}
+	Mesh->SetStaticMesh(Cube.Object);
 
 	LabelText = CreateDefaultSubobject<UTextRenderComponent>(TEXT("Label"));
 	LabelText->SetupAttachment(Root);
@@ -394,7 +365,7 @@ void ARobberSewerWater::Tick(float DeltaSeconds)
 
 void ARobberSewerWater::OnRep_Drained()
 {
-	SetShown(Mesh, !bDrained);
+	ARobberInteractable::ShowPart(Mesh, !bDrained);
 	LabelText->SetHiddenInGame(bDrained);
 }
 
@@ -415,7 +386,7 @@ void ARobberCrowbar::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLi
 
 void ARobberCrowbar::OnServerInteract(APawn* Pawn, APlayerState* Player, ARobberGameState* GameState)
 {
-	UPlayerQuestComponent* Quests = FindPlayerQuests(Player);
+	UPlayerQuestComponent* Quests = UPlayerQuestComponent::Of(Player);
 	if (bTaken || !Quests || !IsNightRunning(GameState))
 	{
 		return;
@@ -439,7 +410,7 @@ FText ARobberCrowbar::GetLabel(const ARobberGameState* GameState) const
 
 void ARobberCrowbar::OnRep_Taken()
 {
-	SetShown(Mesh, !bTaken);
+	ShowPart(Mesh, !bTaken);
 	LabelText->SetHiddenInGame(bTaken);
 }
 
@@ -473,10 +444,10 @@ void ARobberSewerGrate::OnServerInteract(APawn* Pawn, APlayerState* Player, ARob
 		Pawn->TeleportTo(GetActorLocation() + FRotator(0, GetActorRotation().Yaw, 0).RotateVector(ClimbOffset), Pawn->GetActorRotation());
 		return;
 	}
-	const UPlayerQuestComponent* Quests = FindPlayerQuests(Player);
+	const UPlayerQuestComponent* Quests = UPlayerQuestComponent::Of(Player);
 	if (!Quests || !Quests->HasKey(KeyId))
 	{
-		TellPlayer(Pawn, NSLOCTEXT("RobberSewer", "Rusted", "It's rusted shut. You need something to pry it with."));
+		ARobberController::Tell(Pawn,NSLOCTEXT("RobberSewer", "Rusted", "It's rusted shut. You need something to pry it with."));
 		return;
 	}
 	bOpen = true;
@@ -496,7 +467,7 @@ FText ARobberSewerGrate::GetPrompt(const ARobberGameState* GameState, const APla
 	{
 		return NSLOCTEXT("RobberSewer", "ClimbUp", "Climb up into the museum");
 	}
-	const UPlayerQuestComponent* Quests = FindPlayerQuests(Viewer);
+	const UPlayerQuestComponent* Quests = UPlayerQuestComponent::Of(Viewer);
 	return Quests && Quests->HasKey(KeyId)
 		? NSLOCTEXT("RobberSewer", "Pry", "Pry the grate open")
 		: NSLOCTEXT("RobberSewer", "NeedCrowbar", "Rusted shut (needs a crowbar)");
@@ -650,12 +621,12 @@ void ARobberRollUpDoor::OnServerInteract(APawn* Pawn, APlayerState* Player, ARob
 	}
 	if (bTooLoud)
 	{
-		TellPlayer(Pawn, NSLOCTEXT("RobberRollUpDoor", "WaitQuiet", "Too loud. Wait for it to go quiet."));
+		ARobberController::Tell(Pawn,NSLOCTEXT("RobberRollUpDoor", "WaitQuiet", "Too loud. Wait for it to go quiet."));
 		return;
 	}
 	if (Holder)
 	{
-		TellPlayer(Pawn, FText::Format(NSLOCTEXT("RobberRollUpDoor", "AlreadyHeld", "{0} is already holding it up."), FText::FromString(Holder->GetPlayerName())));
+		ARobberController::Tell(Pawn,FText::Format(NSLOCTEXT("RobberRollUpDoor", "AlreadyHeld", "{0} is already holding it up."), FText::FromString(Holder->GetPlayerName())));
 		return;
 	}
 	Holder = Player;

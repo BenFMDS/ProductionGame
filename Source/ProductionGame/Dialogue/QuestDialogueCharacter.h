@@ -8,6 +8,17 @@ class UDialogueDefinition;
 class UMaterialInterface;
 class UQuestGiverComponent;
 class UQuestDefinition;
+class USkeletalMesh;
+class UStaticMesh;
+class UStaticMeshComponent;
+
+UENUM(BlueprintType)
+enum class EExhibitLook : uint8
+{
+	Cube,
+	Painting,
+	Statue
+};
 
 /** Parent for talking-character Blueprints. The Dialogue Component's asset is the runtime source of truth. */
 UCLASS(Blueprintable)
@@ -23,10 +34,27 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Quest", meta=(DisplayName="Available Quests")) TArray<TObjectPtr<UQuestDefinition>> NativeQuestDefinitions;
 	/** Placeholder colour for the Model Mesh until this NPC has real art. Leave empty to keep the mesh's own material. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Dialogue", meta=(DisplayName="Temp Cube Material")) TObjectPtr<UMaterialInterface> TempCubeMaterial;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Exhibit Look") EExhibitLook ExhibitLook = EExhibitLook::Cube;
+	// The rest are set once on BP_TalkingMaster and inherited. They're properties, not paths, so the assets get cooked.
+	UPROPERTY(EditDefaultsOnly, Category="Exhibit Look") TObjectPtr<UStaticMesh> PaintingPlane;
+	UPROPERTY(EditDefaultsOnly, Category="Exhibit Look") TObjectPtr<UStaticMesh> FrameBar;
+	UPROPERTY(EditDefaultsOnly, Category="Exhibit Look") TObjectPtr<UMaterialInterface> FrameMaterial;
+	/** Width, height of the picture in cm, not counting the frame. */
+	UPROPERTY(EditDefaultsOnly, Category="Exhibit Look") FVector2D PaintingSize = FVector2D(140., 180.);
+	UPROPERTY(EditDefaultsOnly, Category="Exhibit Look") TObjectPtr<USkeletalMesh> StatueMesh;
+	UPROPERTY(EditDefaultsOnly, Category="Exhibit Look") TArray<TObjectPtr<UMaterialInterface>> StatueMaterials;
+	UPROPERTY(VisibleAnywhere, Category="Exhibit Look") TArray<TObjectPtr<UStaticMeshComponent>> FrameBars;
+	/** How far a painting's actor stands off its wall, so the capsule clears it. The picture sits back against the wall. */
+	static constexpr double PaintingWallGap = 45.;
+	/** Picture centre above the actor's origin: eye level for a capsule standing on the floor. */
+	static constexpr double PaintingCentreHeight = 65.;
+	static constexpr double FrameThickness = 12.;
 	virtual void OnConstruction(const FTransform& Transform) override;
 	/** BP_TalkingMaster's On Puzzle Solved (BPI_PuzzleSolver) calls this. Passes it to the night director, server only. */
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category="Quest")
 	void HandlePuzzleSolved(AActor* Puzzle, APawn* SolvedBy);
 protected:
 	virtual void BeginPlay() override;
+private:
+	void ApplyExhibitLook();
 };

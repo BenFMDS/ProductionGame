@@ -42,8 +42,7 @@ namespace RobberMap
 
 	UStaticMesh* LoadShape(const TCHAR* Path)
 	{
-		ConstructorHelpers::FObjectFinder<UStaticMesh> Shape(Path);
-		return Shape.Succeeded() ? Shape.Object : nullptr;
+		return ConstructorHelpers::FObjectFinder<UStaticMesh>(Path).Object;
 	}
 
 	ARobberController* LocalRobber(const UWorld* World)
@@ -70,10 +69,7 @@ ARobberMapTable::ARobberMapTable()
 	MapSurface->SetStaticMesh(Plane.Object);
 	MapSurface->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	MapSurface->SetCastShadow(false);
-	if (MapMaterialBase.Succeeded())
-	{
-		MapSurface->SetMaterial(0, MapMaterialBase.Object);
-	}
+	MapSurface->SetMaterial(0, MapMaterialBase.Object);
 
 	for (int32 Index = 0; Index < 4; ++Index)
 	{
@@ -425,16 +421,8 @@ void ARobberMapObject::UpdatePins(const ARobberGameState* GameState)
 {
 	using namespace RobberMap;
 	const ARobberEntryPoint* Target = GetEntry(GameState);
-	// Ordered by PlayerId, which every machine agrees on, so a player's pin has the same colour and spot everywhere.
-	TArray<APlayerState*> Players;
-	for (APlayerState* Player : GameState->PlayerArray)
-	{
-		if (Player)
-		{
-			Players.Add(Player);
-		}
-	}
-	Players.Sort([](const APlayerState& A, const APlayerState& B) { return A.GetPlayerId() < B.GetPlayerId(); });
+	// Same order on every machine, so a player's pin has the same colour and spot everywhere.
+	const TArray<APlayerState*> Players = GameState->GetPlayersInIdOrder();
 	if (Pins.Num() < Players.Num())
 	{
 		Pins.SetNum(Players.Num());

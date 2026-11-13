@@ -110,6 +110,7 @@ private:
 
 	enum class EAfterSession : uint8 { None, OpenParty, OpenGame };
 
+	UWorld* GetGameWorld() const;
 	IOnlineSessionPtr GetSessions() const;
 	FUniqueNetIdPtr GetLocalId() const;
 	bool HasSession() const;

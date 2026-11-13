@@ -1,40 +1,34 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Robber/RobberController.h"
+#include "Robber/RobberAchievementPopup.h"
 #include "Robber/RobberAchievementTracker.h"
 #include "RobberMenu/RobberSettings.h"
 
 #include "AchievementBlueprintFunctionLibrary.h"
 #include "AchievementDefinitionAsset.h"
-#include "AchievementPopupWidget.h"
 #include "AchievementSubsystem.h"
 #include "Blueprint/UserWidget.h"
 #include "Components/Widget.h"
-#include "Engine/GameViewportClient.h"
 #include "EnhancedInputComponent.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/PlayerInput.h"
+#include "GameFramework/PlayerState.h"
 #include "Heist/RobberCaseFileUI.h"
 #include "Heist/RobberJournal.h"
 #include "Heist/RobberMapTable.h"
+#include "Heist/RobberShop.h"
 #include "Heist/RobberStage.h"
 #include "InputAction.h"
 #include "InputMappingContext.h"
 #include "Kismet/GameplayStatics.h"
-#include "Kismet/KismetSystemLibrary.h"
 #include "ProductionGameCharacter.h"
 #include "Robber/RobberGameState.h"
 #include "RobberMenu/RobberMenuWidgets.h"
 #include "Sound/SoundMix.h"
-#include "Styling/CoreStyle.h"
 #include "TimerManager.h"
 #include "UObject/ConstructorHelpers.h"
-#include "Widgets/Input/SButton.h"
-#include "Widgets/Layout/SBorder.h"
-#include "Widgets/Layout/SBox.h"
-#include "Widgets/SBoxPanel.h"
-#include "Widgets/Text/STextBlock.h"
 
 ARobberController::ARobberController()
 {
@@ -76,10 +70,46 @@ ARobberController::ARobberController()
 	DevUIWidgetClass = TSoftClassPtr<UUserWidget>(FSoftObjectPath(TEXT("/Game/OurStuff/Widgets/WBP_DevUI.WBP_DevUI_C")));
 	CaseFileHUDClass = TSoftClassPtr<URobberCaseFileHUD>(FSoftObjectPath(TEXT("/Game/OurStuff/UI/CaseFile/WBP_CaseFileHUD.WBP_CaseFileHUD_C")));
 	JournalWidgetClass = TSoftClassPtr<URobberJournalWidget>(FSoftObjectPath(TEXT("/Game/OurStuff/UI/CaseFile/WBP_Journal.WBP_Journal_C")));
-	AchievementPopupClass = TSoftClassPtr<UAchievementPopupWidget>(FSoftObjectPath(TEXT("/AchievementPlugin/Widgets/WBP_AchievementPopUp.WBP_AchievementPopUp_C")));
 	MuteVoiceSoundMix = MuteVoice.Object;
 	UnmuteVoiceSoundMix = UnmuteVoice.Object;
 	PauseInputAction = PauseAction.Object;
+}
+
+void ARobberController::Tell(const APlayerState* Player, const FText& Message)
+{
+	if (ARobberController* Controller = Player ? Cast<ARobberController>(Player->GetOwningController()) : nullptr)
+	{
+		Controller->ClientHeistMessage(Message);
+	}
+}
+
+void ARobberController::Tell(const APawn* Pawn, const FText& Message)
+{
+	if (ARobberController* Controller = Pawn ? Cast<ARobberController>(Pawn->GetController()) : nullptr)
+	{
+		Controller->ClientHeistMessage(Message);
+	}
+}
+
+bool ARobberController::EnterModal(APlayerController* Controller, UWidget* Focus)
+{
+	const bool bCursorWasShown = Controller->bShowMouseCursor;
+	Controller->SetIgnoreLookInput(true);
+	Controller->SetIgnoreMoveInput(true);
+	Controller->bShowMouseCursor = true;
+	FInputModeUIOnly Mode;
+	Mode.SetWidgetToFocus(Focus->TakeWidget());
+	Mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+	Controller->SetInputMode(Mode);
+	return bCursorWasShown;
+}
+
+void ARobberController::LeaveModal(APlayerController* Controller, bool bCursorWasShown)
+{
+	Controller->SetIgnoreLookInput(false);
+	Controller->SetIgnoreMoveInput(false);
+	Controller->bShowMouseCursor = bCursorWasShown;
+	Controller->SetInputMode(FInputModeGameOnly());
 }
 
 void ARobberController::BeginPlay()
@@ -91,32 +121,20 @@ void ARobberController::BeginPlay()
 		return;
 	}
 
-	if (!InteractionWidgetClass.IsNull() && !InteractWidgetRef)
+	const auto AddWidget = [this](const TSoftClassPtr<UUserWidget>& Class, TObjectPtr<UUserWidget>& Widget)
 	{
-		InteractWidgetRef = CreateWidget<UUserWidget>(this, InteractionWidgetClass.LoadSynchronous());
-		if (InteractWidgetRef)
+		if (!Class.IsNull() && !Widget)
 		{
-			InteractWidgetRef->AddToViewport();
+			Widget = CreateWidget<UUserWidget>(this, Class.LoadSynchronous());
+			if (Widget)
+			{
+				Widget->AddToViewport();
+			}
 		}
-	}
-
-	if (!GameUIWidgetClass.IsNull() && !GameUIRef)
-	{
-		GameUIRef = CreateWidget<UUserWidget>(this, GameUIWidgetClass.LoadSynchronous());
-		if (GameUIRef)
-		{
-			GameUIRef->AddToViewport();
-		}
-	}
-
-	if (!DevUIWidgetClass.IsNull() && !DevUIRef)
-	{
-		DevUIRef = CreateWidget<UUserWidget>(this, DevUIWidgetClass.LoadSynchronous());
-		if (DevUIRef)
-		{
-			DevUIRef->AddToViewport();
-		}
-	}
+	};
+	AddWidget(InteractionWidgetClass, InteractWidgetRef);
+	AddWidget(GameUIWidgetClass, GameUIRef);
+	AddWidget(DevUIWidgetClass, DevUIRef);
 
 	// The Case File HUD sits under the interaction prompt and dev UI; it takes over the debug text and the tracker's heist card.
 	// Without WBP_CaseFileHUD (not made yet) ARobberHUD's debug text and the tracker's heist card stay instead.
@@ -176,6 +194,44 @@ void ARobberController::CloseJournal()
 	SetInputMode(FInputModeGameOnly());
 }
 
+void ARobberController::OpenShopCatalogue()
+{
+	if (!IsLocalController() || IsShopOpen())
+	{
+		return;
+	}
+	CloseJournal();
+	if (!ShopWidget)
+	{
+		if (UClass* ShopClass = StaticLoadClass(URobberShopCatalogue::StaticClass(), nullptr, TEXT("/Game/OurStuff/UI/CaseFile/WBP_ShopCatalogue.WBP_ShopCatalogue_C"), nullptr, LOAD_Quiet | LOAD_NoWarn))
+		{
+			ShopWidget = CreateWidget<URobberShopCatalogue>(this, ShopClass);
+		}
+	}
+	if (!ShopWidget)
+	{
+		return;
+	}
+	ShopWidget->AddToViewport(25);
+	ShopWidget->OnOpened();
+	EnterModal(this, ShopWidget);
+}
+
+void ARobberController::CloseShopCatalogue()
+{
+	if (!IsShopOpen())
+	{
+		return;
+	}
+	ShopWidget->RemoveFromParent();
+	LeaveModal(this, false);
+}
+
+bool ARobberController::IsShopOpen() const
+{
+	return ShopWidget && ShopWidget->IsInViewport();
+}
+
 bool ARobberController::IsJournalOpen() const
 {
 	return JournalWidget && JournalWidget->IsInViewport();
@@ -183,8 +239,6 @@ bool ARobberController::IsJournalOpen() const
 
 void ARobberController::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
-	// Slate content outlives the controller otherwise and stays on screen after PIE ends.
-	CloseNightSwitcher();
 	if (URobberSettingsSubsystem* SettingsSystem = GetGameInstance() ? GetGameInstance()->GetSubsystem<URobberSettingsSubsystem>() : nullptr)
 	{
 		SettingsSystem->OnControlsChanged.Remove(ControlsChangedHandle);
@@ -217,7 +271,7 @@ void ARobberController::SetupInputComponent()
 		}
 	}
 #if !UE_BUILD_SHIPPING
-	InputComponent->BindKey(EKeys::F10, IE_Pressed, this, &ARobberController::ToggleNightSwitcher);
+	InputComponent->BindKey(EKeys::F10, IE_Pressed, this, &ARobberController::ToggleDevMenu);
 #endif
 	// Not consumed: Space is still jump and Esc still the menu when nobody's at the map.
 	for (const FKey& Key : { EKeys::SpaceBar, EKeys::Escape })
@@ -273,92 +327,30 @@ void ARobberController::ClientAchievement_Implementation(FName AchievementId, ER
 	}
 }
 
-void ARobberController::ToggleNightSwitcher()
+void ARobberController::ToggleDevMenu()
 {
 #if !UE_BUILD_SHIPPING
-	if (NightSwitcher.IsValid())
+	if (IsDevMenuOpen())
 	{
-		CloseNightSwitcher();
+		CloseDevMenu();
 		return;
 	}
-	UGameViewportClient* Viewport = GetWorld() ? GetWorld()->GetGameViewport() : nullptr;
-	const ARobberGameState* RobberGameState = GetWorld() ? GetWorld()->GetGameState<ARobberGameState>() : nullptr;
-	if (!Viewport || !RobberGameState)
+	CloseJournal();
+	CloseShopCatalogue();
+	if (!DevMenu)
+	{
+		if (UClass* MenuClass = StaticLoadClass(URobberDevMenu::StaticClass(), nullptr, TEXT("/Game/OurStuff/UI/CaseFile/WBP_DevMenu.WBP_DevMenu_C"), nullptr, LOAD_Quiet | LOAD_NoWarn))
+		{
+			DevMenu = CreateWidget<URobberDevMenu>(this, MenuClass);
+		}
+	}
+	if (!DevMenu)
 	{
 		return;
 	}
+	DevMenu->AddToViewport(100);
 
-	TWeakObjectPtr<ARobberController> WeakThis(this);
-	auto MakeButton = [WeakThis](const FText& Label, int32 NightIndex) -> TSharedRef<SWidget>
-	{
-		return SNew(SBox)
-			.Padding(2.f)
-			[
-				SNew(SButton)
-				.IsFocusable(false)
-				.Text(Label)
-				.OnClicked_Lambda([WeakThis, NightIndex]()
-				{
-					if (WeakThis.IsValid())
-					{
-						WeakThis->ServerSwitchNight(NightIndex);
-					}
-					return FReply::Handled();
-				})
-			];
-	};
-
-	TSharedRef<SHorizontalBox> NightButtons = SNew(SHorizontalBox);
-	for (int32 NightIndex = 0; NightIndex < RobberGameState->GetNightCount(); ++NightIndex)
-	{
-		NightButtons->AddSlot().AutoWidth()[MakeButton(FText::AsNumber(NightIndex + 1), NightIndex)];
-	}
-
-	NightSwitcher = SNew(SBox)
-		.Visibility(EVisibility::SelfHitTestInvisible)
-		.HAlign(HAlign_Right)
-		.VAlign(VAlign_Top)
-		.Padding(FMargin(0.f, 80.f, 20.f, 0.f))
-		[
-			SNew(SBorder)
-			.BorderImage(FCoreStyle::Get().GetBrush("WhiteBrush"))
-			.BorderBackgroundColor(FLinearColor(0.f, 0.f, 0.f, 0.75f))
-			.Padding(10.f)
-			[
-				SNew(SVerticalBox)
-				+ SVerticalBox::Slot().AutoHeight().Padding(2.f)
-				[
-					SNew(STextBlock).Text(INVTEXT("Dev: switch night (F10)"))
-				]
-				+ SVerticalBox::Slot().AutoHeight().Padding(2.f)
-				[
-					SNew(STextBlock)
-					.ColorAndOpacity(FLinearColor(0.7f, 0.7f, 0.7f))
-					.Text_Lambda([WeakThis]()
-					{
-						const ARobberGameState* State = WeakThis.IsValid() ? WeakThis->GetWorld()->GetGameState<ARobberGameState>() : nullptr;
-						if (!State)
-						{
-							return FText::GetEmpty();
-						}
-						const FText Night = State->IsTutorial() ? INVTEXT("Tutorial")
-							: State->GetCurrentNight() == INDEX_NONE ? INVTEXT("No night")
-							: FText::Format(INVTEXT("Night {0}"), State->GetCurrentNight() + 1);
-						return FText::Format(INVTEXT("Now: {0} - {1}"), Night, RobberStage::GetDisplayName(State->GetGameStage()));
-					})
-				]
-				+ SVerticalBox::Slot().AutoHeight()
-				[
-					NightButtons
-				]
-				+ SVerticalBox::Slot().AutoHeight()
-				[
-					MakeButton(INVTEXT("Tutorial"), INDEX_NONE)
-				]
-			]
-		];
-	Viewport->AddViewportWidgetContent(NightSwitcher.ToSharedRef(), 100);
-
+	// Game and UI, with nothing focused: F10 still reaches this controller to close it, and the player can keep walking.
 	FInputModeGameAndUI InputMode;
 	InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
 	InputMode.SetHideCursorDuringCapture(true);
@@ -367,40 +359,20 @@ void ARobberController::ToggleNightSwitcher()
 #endif
 }
 
-bool ARobberController::IsNightSwitcherOpen() const
+bool ARobberController::IsDevMenuOpen() const
 {
-#if !UE_BUILD_SHIPPING
-	return NightSwitcher.IsValid();
-#else
-	return false;
-#endif
+	return DevMenu && DevMenu->IsInViewport();
 }
 
-void ARobberController::CloseNightSwitcher()
+void ARobberController::CloseDevMenu()
 {
-#if !UE_BUILD_SHIPPING
-	if (!NightSwitcher.IsValid())
+	if (!IsDevMenuOpen())
 	{
 		return;
 	}
-	if (UGameViewportClient* Viewport = GetWorld() ? GetWorld()->GetGameViewport() : nullptr)
-	{
-		Viewport->RemoveViewportWidgetContent(NightSwitcher.ToSharedRef());
-	}
-	NightSwitcher.Reset();
+	DevMenu->RemoveFromParent();
 	SetInputMode(FInputModeGameOnly());
 	bShowMouseCursor = false;
-#endif
-}
-
-void ARobberController::ServerSwitchNight_Implementation(int32 NightIndex)
-{
-#if !UE_BUILD_SHIPPING
-	if (ARobberGameState* RobberGameState = GetWorld()->GetGameState<ARobberGameState>())
-	{
-		RobberGameState->SwitchNight(NightIndex);
-	}
-#endif
 }
 
 void ARobberController::TogglePauseMenu()
@@ -428,6 +400,11 @@ void ARobberController::ClientOpenLobbyMenu_Implementation(ERobberLobbyMenu Menu
 		{
 			Pause->ShowQuitCheckOnly();
 		}
+		return;
+	}
+	if (Menu == ERobberLobbyMenu::Catalogue)
+	{
+		OpenShopCatalogue();
 		return;
 	}
 	const TSoftClassPtr<UUserWidget>& Class = Menu == ERobberLobbyMenu::Settings ? LobbySettingsClass : LobbyAchievementsClass;
@@ -637,18 +614,31 @@ bool ARobberController::IsHeistMessageVisible() const
 
 void ARobberController::ShowAchievementCompletePopup(UAchievementDefinitionAsset* AchievementAsset, FAchievementProgressState ProgressState)
 {
-	UKismetSystemLibrary::PrintString(this, TEXT("ShowAchievementCompletePopup Called"), true, true, FLinearColor(0.0f, 0.66f, 1.0f), 5.0f);
-	if (UClass* PopupClass = AchievementPopupClass.LoadSynchronous())
+	if (URobberAchievementPopup* Popup = GetOrMakeAchievementPopup())
 	{
-		UAchievementPopupWidget::CreateAndShowPopup(this, PopupClass, AchievementAsset, ProgressState, 2.5f, 100);
+		Popup->Enqueue(AchievementAsset, ProgressState, false);
 	}
 }
 
 void ARobberController::ShowAchievementProgressPopup(UAchievementDefinitionAsset* AchievementAsset, FAchievementProgressState ProgressState)
 {
-	UKismetSystemLibrary::PrintString(this, TEXT("ShowAchievementProgressPopup Called"), true, true, FLinearColor(0.0f, 0.66f, 1.0f), 5.0f);
-	if (UAchievementPopupWidget* Popup = CreateWidget<UAchievementPopupWidget>(this, UAchievementPopupWidget::StaticClass()))
+	// The plugin only sends these at 25, 50 and 75%, so Good Listener's 43 exhibits pop three times, not 43.
+	if (URobberAchievementPopup* Popup = GetOrMakeAchievementPopup())
 	{
-		Popup->SetPopupDataFromDefinition(AchievementAsset, ProgressState);
+		Popup->Enqueue(AchievementAsset, ProgressState, true);
 	}
+}
+
+URobberAchievementPopup* ARobberController::GetOrMakeAchievementPopup()
+{
+	if (!AchievementPopup && IsLocalPlayerController())
+	{
+		AchievementPopup = CreateWidget<URobberAchievementPopup>(this, URobberAchievementPopup::StaticClass());
+		if (AchievementPopup)
+		{
+			// Over the HUD, journal, shop and lobby menus (10-25), so an unlock isn't hidden; under the dev menu and dialogue.
+			AchievementPopup->AddToViewport(30);
+		}
+	}
+	return AchievementPopup;
 }
