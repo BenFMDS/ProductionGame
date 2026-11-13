@@ -7,6 +7,7 @@
 #include "Camera/PlayerCameraManager.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/PlayerController.h"
+#include "GameFramework/PlayerState.h"
 #include "GameFramework/Pawn.h"
 #include "Engine/World.h"
 #include "TimerManager.h"
@@ -17,6 +18,12 @@
 UPlayerQuestComponent::UPlayerQuestComponent()
 {
 	SetIsReplicatedByDefault(true);
+}
+
+UPlayerQuestComponent* UPlayerQuestComponent::Of(const APlayerState* Player)
+{
+	const AController* Controller = Player ? Player->GetOwningController() : nullptr;
+	return Controller ? Controller->FindComponentByClass<UPlayerQuestComponent>() : nullptr;
 }
 
 void UPlayerQuestComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -58,11 +65,15 @@ void UPlayerQuestComponent::ClientStoryCaught_Implementation(float Seconds, FVec
 	}), Seconds, false);
 }
 
+UDialogueComponent* UPlayerQuestComponent::CurrentTalker() const
+{
+	return IsValid(Conversation.NPC) ? Conversation.NPC->FindComponentByClass<UDialogueComponent>() : nullptr;
+}
+
 void UPlayerQuestComponent::ResetForNight()
 {
 	if (!GetOwner()->HasAuthority()) return;
-	if (IsValid(Conversation.NPC))
-		if (auto* Dialogue = Conversation.NPC->FindComponentByClass<UDialogueComponent>()) Dialogue->Release(this);
+	if (auto* Dialogue = CurrentTalker()) Dialogue->Release(this);
 	CloseConversation();
 	Quests.Reset();
 	Keys.Reset();
@@ -125,11 +136,7 @@ void UPlayerQuestComponent::RefreshDefaultUI()
 
 void UPlayerQuestComponent::EndPlay(const EEndPlayReason::Type Reason)
 {
-	if (GetOwner()->HasAuthority())
-	{
-		if (IsValid(Conversation.NPC))
-			if (auto* Dialogue = Conversation.NPC->FindComponentByClass<UDialogueComponent>()) Dialogue->Release(this);
-	}
+	if (auto* Dialogue = GetOwner()->HasAuthority() ? CurrentTalker() : nullptr) Dialogue->Release(this);
 	if (Widget) Widget->RemoveFromParent();
 	Super::EndPlay(Reason);
 }
@@ -160,15 +167,12 @@ void UPlayerQuestComponent::ServerTalkTo_Implementation(AActor* NPC)
 
 void UPlayerQuestComponent::ServerChoose_Implementation(int32 ChoiceID, int32 Revision)
 {
-	if (IsValid(Conversation.NPC))
-		if (auto* Dialogue = Conversation.NPC->FindComponentByClass<UDialogueComponent>()) Dialogue->Choose(this, ChoiceID, Revision);
+	if (auto* Dialogue = CurrentTalker()) Dialogue->Choose(this, ChoiceID, Revision);
 }
 
 void UPlayerQuestComponent::ServerEndConversation_Implementation(int32 Revision)
 {
-	if (Revision != Conversation.Revision) return;
-	if (IsValid(Conversation.NPC))
-		if (auto* Dialogue = Conversation.NPC->FindComponentByClass<UDialogueComponent>()) Dialogue->Release(this);
+	if (auto* Dialogue = Revision == Conversation.Revision ? CurrentTalker() : nullptr) Dialogue->Release(this);
 }
 
 void UPlayerQuestComponent::ServerCollectQuestObject_Implementation(AActor* QuestObject)
@@ -199,20 +203,21 @@ bool UPlayerQuestComponent::CanAccept(UQuestDefinition* Definition, AActor* Give
 	return Talker && Talker->OffersQuest(Definition) && !GetQuest(Definition->QuestID, Existing);
 }
 
+bool UPlayerQuestComponent::HasQuestIn(const UQuestDefinition* Definition, const AActor* Giver, EPlayerQuestState State) const
+{
+	FPlayerQuest Quest;
+	return IsValid(Definition) && IsValid(Giver) && GetQuest(Definition->QuestID, Quest) && Quest.Definition == Definition
+		&& Quest.Giver == Giver && Quest.State == State;
+}
+
 bool UPlayerQuestComponent::CanTurnIn(UQuestDefinition* Definition, AActor* Giver) const
 {
-	if (!IsValid(Definition) || !IsValid(Giver)) return false;
-	FPlayerQuest Quest;
-	return GetQuest(Definition->QuestID, Quest) && Quest.Definition == Definition && Quest.Giver == Giver
-		&& Quest.State == EPlayerQuestState::ReadyToTurnIn;
+	return HasQuestIn(Definition, Giver, EPlayerQuestState::ReadyToTurnIn);
 }
 
 bool UPlayerQuestComponent::CanProgressQuest(UQuestDefinition* Definition, AActor* Giver) const
 {
-	if (!IsValid(Definition) || !IsValid(Giver)) return false;
-	FPlayerQuest Quest;
-	return GetQuest(Definition->QuestID, Quest) && Quest.Definition == Definition && Quest.Giver == Giver
-		&& Quest.State == EPlayerQuestState::Active;
+	return HasQuestIn(Definition, Giver, EPlayerQuestState::Active);
 }
 
 bool UPlayerQuestComponent::AcceptQuest(UQuestDefinition* Definition, AActor* Giver)
@@ -275,8 +280,7 @@ bool UPlayerQuestComponent::AddQuestProgress(FName QuestID, int32 Amount)
 		if (Quest.Amount >= Required) Quest.State = EPlayerQuestState::ReadyToTurnIn;
 		GetOwner()->ForceNetUpdate();
 		OnRep_Quests();
-		if (IsValid(Conversation.NPC))
-			if (auto* Dialogue = Conversation.NPC->FindComponentByClass<UDialogueComponent>()) Dialogue->Refresh();
+		if (auto* Dialogue = CurrentTalker()) Dialogue->Refresh();
 		return true;
 	}
 	return false;

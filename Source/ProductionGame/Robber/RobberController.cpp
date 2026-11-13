@@ -1,12 +1,12 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Robber/RobberController.h"
+#include "Robber/RobberAchievementPopup.h"
 #include "Robber/RobberAchievementTracker.h"
 #include "RobberMenu/RobberSettings.h"
 
 #include "AchievementBlueprintFunctionLibrary.h"
 #include "AchievementDefinitionAsset.h"
-#include "AchievementPopupWidget.h"
 #include "AchievementSubsystem.h"
 #include "Blueprint/UserWidget.h"
 #include "Components/Widget.h"
@@ -14,6 +14,7 @@
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/PlayerInput.h"
+#include "GameFramework/PlayerState.h"
 #include "Heist/RobberCaseFileUI.h"
 #include "Heist/RobberJournal.h"
 #include "Heist/RobberMapTable.h"
@@ -22,7 +23,6 @@
 #include "InputAction.h"
 #include "InputMappingContext.h"
 #include "Kismet/GameplayStatics.h"
-#include "Kismet/KismetSystemLibrary.h"
 #include "ProductionGameCharacter.h"
 #include "Robber/RobberGameState.h"
 #include "RobberMenu/RobberMenuWidgets.h"
@@ -70,10 +70,46 @@ ARobberController::ARobberController()
 	DevUIWidgetClass = TSoftClassPtr<UUserWidget>(FSoftObjectPath(TEXT("/Game/OurStuff/Widgets/WBP_DevUI.WBP_DevUI_C")));
 	CaseFileHUDClass = TSoftClassPtr<URobberCaseFileHUD>(FSoftObjectPath(TEXT("/Game/OurStuff/UI/CaseFile/WBP_CaseFileHUD.WBP_CaseFileHUD_C")));
 	JournalWidgetClass = TSoftClassPtr<URobberJournalWidget>(FSoftObjectPath(TEXT("/Game/OurStuff/UI/CaseFile/WBP_Journal.WBP_Journal_C")));
-	AchievementPopupClass = TSoftClassPtr<UAchievementPopupWidget>(FSoftObjectPath(TEXT("/AchievementPlugin/Widgets/WBP_AchievementPopUp.WBP_AchievementPopUp_C")));
 	MuteVoiceSoundMix = MuteVoice.Object;
 	UnmuteVoiceSoundMix = UnmuteVoice.Object;
 	PauseInputAction = PauseAction.Object;
+}
+
+void ARobberController::Tell(const APlayerState* Player, const FText& Message)
+{
+	if (ARobberController* Controller = Player ? Cast<ARobberController>(Player->GetOwningController()) : nullptr)
+	{
+		Controller->ClientHeistMessage(Message);
+	}
+}
+
+void ARobberController::Tell(const APawn* Pawn, const FText& Message)
+{
+	if (ARobberController* Controller = Pawn ? Cast<ARobberController>(Pawn->GetController()) : nullptr)
+	{
+		Controller->ClientHeistMessage(Message);
+	}
+}
+
+bool ARobberController::EnterModal(APlayerController* Controller, UWidget* Focus)
+{
+	const bool bCursorWasShown = Controller->bShowMouseCursor;
+	Controller->SetIgnoreLookInput(true);
+	Controller->SetIgnoreMoveInput(true);
+	Controller->bShowMouseCursor = true;
+	FInputModeUIOnly Mode;
+	Mode.SetWidgetToFocus(Focus->TakeWidget());
+	Mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+	Controller->SetInputMode(Mode);
+	return bCursorWasShown;
+}
+
+void ARobberController::LeaveModal(APlayerController* Controller, bool bCursorWasShown)
+{
+	Controller->SetIgnoreLookInput(false);
+	Controller->SetIgnoreMoveInput(false);
+	Controller->bShowMouseCursor = bCursorWasShown;
+	Controller->SetInputMode(FInputModeGameOnly());
 }
 
 void ARobberController::BeginPlay()
@@ -85,32 +121,20 @@ void ARobberController::BeginPlay()
 		return;
 	}
 
-	if (!InteractionWidgetClass.IsNull() && !InteractWidgetRef)
+	const auto AddWidget = [this](const TSoftClassPtr<UUserWidget>& Class, TObjectPtr<UUserWidget>& Widget)
 	{
-		InteractWidgetRef = CreateWidget<UUserWidget>(this, InteractionWidgetClass.LoadSynchronous());
-		if (InteractWidgetRef)
+		if (!Class.IsNull() && !Widget)
 		{
-			InteractWidgetRef->AddToViewport();
+			Widget = CreateWidget<UUserWidget>(this, Class.LoadSynchronous());
+			if (Widget)
+			{
+				Widget->AddToViewport();
+			}
 		}
-	}
-
-	if (!GameUIWidgetClass.IsNull() && !GameUIRef)
-	{
-		GameUIRef = CreateWidget<UUserWidget>(this, GameUIWidgetClass.LoadSynchronous());
-		if (GameUIRef)
-		{
-			GameUIRef->AddToViewport();
-		}
-	}
-
-	if (!DevUIWidgetClass.IsNull() && !DevUIRef)
-	{
-		DevUIRef = CreateWidget<UUserWidget>(this, DevUIWidgetClass.LoadSynchronous());
-		if (DevUIRef)
-		{
-			DevUIRef->AddToViewport();
-		}
-	}
+	};
+	AddWidget(InteractionWidgetClass, InteractWidgetRef);
+	AddWidget(GameUIWidgetClass, GameUIRef);
+	AddWidget(DevUIWidgetClass, DevUIRef);
 
 	// The Case File HUD sits under the interaction prompt and dev UI; it takes over the debug text and the tracker's heist card.
 	// Without WBP_CaseFileHUD (not made yet) ARobberHUD's debug text and the tracker's heist card stay instead.
@@ -190,13 +214,7 @@ void ARobberController::OpenShopCatalogue()
 	}
 	ShopWidget->AddToViewport(25);
 	ShopWidget->OnOpened();
-	SetIgnoreLookInput(true);
-	SetIgnoreMoveInput(true);
-	FInputModeUIOnly Mode;
-	Mode.SetWidgetToFocus(ShopWidget->TakeWidget());
-	Mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
-	SetInputMode(Mode);
-	SetShowMouseCursor(true);
+	EnterModal(this, ShopWidget);
 }
 
 void ARobberController::CloseShopCatalogue()
@@ -206,10 +224,7 @@ void ARobberController::CloseShopCatalogue()
 		return;
 	}
 	ShopWidget->RemoveFromParent();
-	SetIgnoreLookInput(false);
-	SetIgnoreMoveInput(false);
-	SetShowMouseCursor(false);
-	SetInputMode(FInputModeGameOnly());
+	LeaveModal(this, false);
 }
 
 bool ARobberController::IsShopOpen() const
@@ -599,18 +614,31 @@ bool ARobberController::IsHeistMessageVisible() const
 
 void ARobberController::ShowAchievementCompletePopup(UAchievementDefinitionAsset* AchievementAsset, FAchievementProgressState ProgressState)
 {
-	UKismetSystemLibrary::PrintString(this, TEXT("ShowAchievementCompletePopup Called"), true, true, FLinearColor(0.0f, 0.66f, 1.0f), 5.0f);
-	if (UClass* PopupClass = AchievementPopupClass.LoadSynchronous())
+	if (URobberAchievementPopup* Popup = GetOrMakeAchievementPopup())
 	{
-		UAchievementPopupWidget::CreateAndShowPopup(this, PopupClass, AchievementAsset, ProgressState, 2.5f, 100);
+		Popup->Enqueue(AchievementAsset, ProgressState, false);
 	}
 }
 
 void ARobberController::ShowAchievementProgressPopup(UAchievementDefinitionAsset* AchievementAsset, FAchievementProgressState ProgressState)
 {
-	UKismetSystemLibrary::PrintString(this, TEXT("ShowAchievementProgressPopup Called"), true, true, FLinearColor(0.0f, 0.66f, 1.0f), 5.0f);
-	if (UAchievementPopupWidget* Popup = CreateWidget<UAchievementPopupWidget>(this, UAchievementPopupWidget::StaticClass()))
+	// The plugin only sends these at 25, 50 and 75%, so Good Listener's 43 exhibits pop three times, not 43.
+	if (URobberAchievementPopup* Popup = GetOrMakeAchievementPopup())
 	{
-		Popup->SetPopupDataFromDefinition(AchievementAsset, ProgressState);
+		Popup->Enqueue(AchievementAsset, ProgressState, true);
 	}
+}
+
+URobberAchievementPopup* ARobberController::GetOrMakeAchievementPopup()
+{
+	if (!AchievementPopup && IsLocalPlayerController())
+	{
+		AchievementPopup = CreateWidget<URobberAchievementPopup>(this, URobberAchievementPopup::StaticClass());
+		if (AchievementPopup)
+		{
+			// Over the HUD, journal, shop and lobby menus (10-25), so an unlock isn't hidden; under the dev menu and dialogue.
+			AchievementPopup->AddToViewport(30);
+		}
+	}
+	return AchievementPopup;
 }

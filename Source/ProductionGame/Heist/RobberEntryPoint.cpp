@@ -55,17 +55,6 @@ ARobberTourEntryPoint::ARobberTourEntryPoint()
 	BreakInTimeLimit = 90.f;
 }
 
-namespace
-{
-	void TellPlayer(APlayerState* Player, const FText& Message)
-	{
-		if (ARobberController* Controller = Player ? Cast<ARobberController>(Player->GetOwningController()) : nullptr)
-		{
-			Controller->ClientHeistMessage(Message);
-		}
-	}
-}
-
 bool ARobberTourEntryPoint::TryHide(ARobberGameState* GameState, APlayerState* Player, ARobberHidingSpot* HidingSpot, FText& OutReason)
 {
 	if (!GameState->GetCrewStatus(Player).bHasTicket)
@@ -149,7 +138,7 @@ void ARobberTourEntryPoint::BeginBreakIn(ARobberGameState* GameState)
 	Super::BeginBreakIn(GameState);
 	for (const FRobberCrewStatus& Status : GameState->GetCrew())
 	{
-		TellPlayer(Status.Player, NSLOCTEXT("RobberEntry", "TourStart", "The museum closes soon. Buy a ticket and find somewhere to hide."));
+		ARobberController::Tell(Status.Player, NSLOCTEXT("RobberEntry", "TourStart", "The museum closes soon. Buy a ticket and find somewhere to hide."));
 	}
 }
 
@@ -174,13 +163,13 @@ void ARobberTourEntryPoint::EndBreakIn(ARobberGameState* GameState)
 			{
 				Character->ExitHiding();
 			}
-			TellPlayer(Status.Player, NSLOCTEXT("RobberEntry", "Closed", "The museum is closed. Time to sneak out."));
+			ARobberController::Tell(Status.Player, NSLOCTEXT("RobberEntry", "Closed", "The museum is closed. Time to sneak out."));
 		}
 		else
 		{
 			// Getting caught isn't built yet, so for now they just carry on.
 			UE_LOG(LogTemp, Warning, TEXT("Closing-Time Tour: %s wasn't hidden at closing"), Status.Player ? *Status.Player->GetPlayerName() : TEXT("?"));
-			TellPlayer(Status.Player, NSLOCTEXT("RobberEntry", "NotHidden", "You weren't hidden at closing! (Getting caught isn't built yet.)"));
+			ARobberController::Tell(Status.Player, NSLOCTEXT("RobberEntry", "NotHidden", "You weren't hidden at closing! (Getting caught isn't built yet.)"));
 		}
 	}
 }
@@ -236,13 +225,13 @@ void ARobberSneakInEntryPoint::EndBreakIn(ARobberGameState* GameState)
 	{
 		if (Status.bInside)
 		{
-			TellPlayer(Status.Player, NSLOCTEXT("RobberEntry", "AllIn", "Everyone's in. Find the gem room."));
+			ARobberController::Tell(Status.Player, NSLOCTEXT("RobberEntry", "AllIn", "Everyone's in. Find the gem room."));
 		}
 		else
 		{
 			// Getting caught isn't built yet, so for now they just carry on.
 			UE_LOG(LogTemp, Warning, TEXT("%s: %s wasn't inside when the break-in ended"), *DisplayName.ToString(), Status.Player ? *Status.Player->GetPlayerName() : TEXT("?"));
-			TellPlayer(Status.Player, NSLOCTEXT("RobberEntry", "NotInside", "Out of time and you're not in! (Getting caught isn't built yet.)"));
+			ARobberController::Tell(Status.Player, NSLOCTEXT("RobberEntry", "NotInside", "Out of time and you're not in! (Getting caught isn't built yet.)"));
 		}
 	}
 }

@@ -13,6 +13,7 @@ class UProgressBar;
 class USizeBox;
 class USlider;
 class UWidgetSwitcher;
+class URobberSettingsSave;
 class URobberSettingsSubsystem;
 struct FAchievementDefinition;
 struct FAchievementProgressState;
@@ -242,6 +243,8 @@ private:
 	void RefreshUiSize();
 	void RefreshApply();
 	void MarkChanged();
+	/** A control the player moved: edits the settings (never while loading them in) and marks the menu changed. */
+	void ChangeSettings(TFunctionRef<void(URobberSettingsSave&)> Edit, bool bAudio = false);
 	void CaptureKey(const FKey& Key);
 	void SetWindowMode(EWindowMode::Type Mode);
 	void StepResolution(int32 Delta);

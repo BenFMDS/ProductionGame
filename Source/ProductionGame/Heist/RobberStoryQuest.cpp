@@ -18,6 +18,9 @@
 #include "Robber/RobberController.h"
 #include "Robber/RobberGameState.h"
 #include "TimerManager.h"
+#include "UObject/ConstructorHelpers.h"
+
+DEFINE_LOG_CATEGORY_STATIC(LogStoryQuest, Log, All);
 
 const FName ARobberStoryQuest::NpcTag(TEXT("StoryNpc"));
 
@@ -30,6 +33,155 @@ ARobberStoryQuest::ARobberStoryQuest()
 	SetActorHiddenInGame(true);
 	bReplicates = true;
 	bAlwaysRelevant = true;
+}
+
+void ARobberStoryQuest::UseScript(const TCHAR* Name)
+{
+	ConstructorHelpers::FObjectFinder<UDataTable> Table(*FString::Printf(TEXT("/Game/OurStuff/Core/Dialogue/StoryScripts/%s.%s"), Name, Name));
+	ScriptTable = Table.Object;
+}
+
+void ARobberStoryQuest::BeginPlay()
+{
+	Super::BeginPlay();
+	// Before the director deals: its deal waits for the level to be visible, which is after this.
+	TipLine = Line(TEXT("Tip"));
+	TipTakenLine = Line(TEXT("TipTaken"));
+	TipJournal = Line(TEXT("TipJournal"));
+}
+
+FText ARobberStoryQuest::Line(FName Key) const
+{
+	if (const FRobberScriptRow* Row = ScriptTable ? ScriptTable->FindRow<FRobberScriptRow>(Key, TEXT("StoryQuest"), false) : nullptr)
+	{
+		return Row->Text;
+	}
+	UE_LOG(LogStoryQuest, Error, TEXT("%s: no script row %s"), *GetClass()->GetName(), *Key.ToString());
+	return FText::FromName(Key);
+}
+
+TArray<FText> ARobberStoryQuest::SceneLines(FName Scene) const
+{
+	TArray<FText> Lines;
+	if (ScriptTable)
+	{
+		ScriptTable->ForeachRow<FRobberScriptRow>(TEXT("StoryQuest"), [&Lines, Scene](const FName&, const FRobberScriptRow& Row)
+		{
+			if (Row.Scene == Scene)
+			{
+				Lines.Add(Row.Text);
+			}
+		});
+	}
+	return Lines;
+}
+
+FText ARobberStoryQuest::SpeakerName(FName Speaker) const
+{
+	const FName Key(*(TEXT("Speaker") + Speaker.ToString()));
+	const FRobberScriptRow* Row = ScriptTable ? ScriptTable->FindRow<FRobberScriptRow>(Key, TEXT("StoryQuest"), false) : nullptr;
+	return Row ? Row->Text : FText::FromName(Speaker);
+}
+
+UDialogueDefinition* ARobberStoryQuest::NewScript(const FText& Speaker)
+{
+	UDialogueDefinition* Script = NewObject<UDialogueDefinition>(this);
+	Generated.Add(Script);
+	Script->DialogueType = EDialogueType::DialogueOnly;
+	Script->bIncludeQuestChoices = false;
+	Script->SpeakerName = Speaker;
+	return Script;
+}
+
+void ARobberStoryQuest::AddScene(UDialogueDefinition* Script, FName Scene, FName LastEvent, FName Then) const
+{
+	const FName You(TEXT("You"));
+	TArray<const FRobberScriptRow*> Rows;
+	if (ScriptTable)
+	{
+		ScriptTable->ForeachRow<FRobberScriptRow>(TEXT("StoryQuest"), [&Rows, Scene](const FName&, const FRobberScriptRow& Row)
+		{
+			if (Row.Scene == Scene)
+			{
+				Rows.Add(&Row);
+			}
+		});
+	}
+	const auto NodeId = [&Scene](int32 Position) { return FName(*FString::Printf(TEXT("%s%d"), *Scene.ToString(), Position)); };
+	int32 Position = 0;
+	for (int32 Index = 0; Index < Rows.Num(); ++Index)
+	{
+		if (Rows[Index]->Speaker == You)
+		{
+			continue;
+		}
+		bool bHasNext = false;
+		for (int32 Later = Index + 1; Later < Rows.Num() && !bHasNext; ++Later)
+		{
+			bHasNext = Rows[Later]->Speaker != You;
+		}
+		const bool bAnswered = Rows.IsValidIndex(Index + 1) && Rows[Index + 1]->Speaker == You;
+		FDialogueNode Node;
+		Node.ID = NodeId(++Position);
+		Node.Speaker = SpeakerName(Rows[Index]->Speaker);
+		Node.Text = Rows[Index]->Text;
+		FDialogueChoice& Choice = Node.Choices.AddDefaulted_GetRef();
+		Choice.Text = bAnswered ? Rows[Index + 1]->Text : Line(bHasNext ? FName(TEXT("GoOn")) : FName(*(Scene.ToString() + TEXT("End"))));
+		Choice.NextNode = bHasNext ? NodeId(Position + 1) : Then;
+		Choice.StoryEvent = bHasNext ? NAME_None : LastEvent;
+		Script->Nodes.Add(Node);
+	}
+}
+
+void ARobberStoryQuest::AddSingle(UDialogueDefinition* Script, FName Id, FName Speaker, const FText& Text, FName Answer, FName Next, FName Event) const
+{
+	FDialogueNode& Node = Script->Nodes.AddDefaulted_GetRef();
+	Node.ID = Id;
+	Node.Speaker = SpeakerName(Speaker);
+	Node.Text = Text;
+	FDialogueChoice& Choice = Node.Choices.AddDefaulted_GetRef();
+	Choice.Text = Line(Answer);
+	Choice.NextNode = Next;
+	Choice.StoryEvent = Event;
+}
+
+UDialogueComponent* ARobberStoryQuest::GiveScript(AActor* Talker, UDialogueDefinition* Script, FName Entry, const TArray<FText>& SmallTalk) const
+{
+	Script->EntryNode = Entry;
+	UDialogueComponent* Dialogue = Talker->FindComponentByClass<UDialogueComponent>();
+	Dialogue->Dialogue = Script;
+	Dialogue->SmallTalkLines = SmallTalk;
+	Dialogue->OfferedQuests.Reset();
+	return Dialogue;
+}
+
+FRobberStoryLine ARobberStoryQuest::NoteLine(const FText& Text, bool bDone, bool bWarning)
+{
+	FRobberStoryLine Note;
+	Note.Text = Text;
+	Note.bDone = bDone;
+	Note.bWarning = bWarning;
+	return Note;
+}
+
+int32 ARobberStoryQuest::VaultDigit(int32 Index) const
+{
+	for (TActorIterator<ARobberVaultDoor> It(GetWorld()); It; ++It)
+	{
+		if (It->GetLevel() == GetLevel() && It->GetCode().IsValidIndex(Index))
+		{
+			return It->GetCode()[Index];
+		}
+	}
+	return INDEX_NONE;
+}
+
+void ARobberStoryQuest::TellOwnerDigit(AActor* Talker, const FText& Speaker, int32 Index, int32 Value) const
+{
+	if (URobberJournalComponent* Journal = IsValid(QuestOwner) ? URobberJournalComponent::Of(QuestOwner) : nullptr)
+	{
+		Journal->LearnVaultDigit(Talker, Speaker, Index, Value, ARobberVaultDoor::CodeLength);
+	}
 }
 
 void ARobberStoryQuest::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -62,8 +214,7 @@ void ARobberStoryQuest::TakeTip(APlayerState* Player)
 
 UPlayerQuestComponent* ARobberStoryQuest::OwnerQuests() const
 {
-	const AController* Controller = IsValid(QuestOwner) ? QuestOwner->GetOwningController() : nullptr;
-	return Controller ? Controller->FindComponentByClass<UPlayerQuestComponent>() : nullptr;
+	return IsValid(QuestOwner) ? UPlayerQuestComponent::Of(QuestOwner) : nullptr;
 }
 
 ARobberController* ARobberStoryQuest::OwnerController() const
@@ -394,40 +545,11 @@ namespace CaveMen
 	const FName Unknown(TEXT("???"));
 
 	FText Who(FName Name) { return FText::FromName(Name); }
-	#define CAVE_LOC(Key, Text) NSLOCTEXT("CaveMen", Key, Text)
-
-	FRobberStoryLine Open(const FText& Text) { FRobberStoryLine Line; Line.Text = Text; return Line; }
-	FRobberStoryLine Done(const FText& Text) { FRobberStoryLine Line; Line.Text = Text; Line.bDone = true; return Line; }
-	FRobberStoryLine Warn(const FText& Text) { FRobberStoryLine Line; Line.Text = Text; Line.bWarning = true; return Line; }
-
-	FDialogueChoice Choice(const FText& Text, FName Next, FName Event = NAME_None)
-	{
-		FDialogueChoice Result;
-		Result.Text = Text;
-		Result.NextNode = Next;
-		Result.StoryEvent = Event;
-		return Result;
-	}
-
-	FDialogueNode Node(FName Id, FName Speaker, const FText& Text)
-	{
-		FDialogueNode Result;
-		Result.ID = Id;
-		Result.Speaker = Who(Speaker);
-		Result.Text = Text;
-		return Result;
-	}
-
-	FText GoOn() { return CAVE_LOC("GoOn", "Go on, then."); }
-	FText OffIGo() { return CAVE_LOC("OffIGo", "I'll get on with it."); }
-	FText Right() { return CAVE_LOC("Right", "...Right."); }
 }
 
 ARobberCaveMenQuest::ARobberCaveMenQuest()
 {
-	TipLine = CAVE_LOC("Tip", "Have you met the cave men in the {room}? {floor}. They've been watching the vault for years, if you can work out a word they say.");
-	TipTakenLine = CAVE_LOC("TipTaken", "One of your lot's already been asking after the cave men. Best leave them to it.");
-	TipJournal = CAVE_LOC("TipJournal", "The cave men in the {room} ({floor}) know part of the vault code.");
+	UseScript(TEXT("DT_CaveMenScript"));
 }
 
 void ARobberCaveMenQuest::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -527,131 +649,39 @@ void ARobberCaveMenQuest::GetRequiredActors(TArray<AActor*>& OutActors) const
 	}
 }
 
-void ARobberCaveMenQuest::AddScene(UDialogueDefinition* Dialogue, const FString& Prefix, const TArray<TPair<FText, FText>>& Lines, FName LastEvent, FName Then, const FText& LastChoice) const
-{
-	for (int32 Index = 0; Index < Lines.Num(); ++Index)
-	{
-		const FName Id(*FString::Printf(TEXT("%s%d"), *Prefix, Index + 1));
-		FDialogueNode Node = CaveMen::Node(Id, FName(*Lines[Index].Key.ToString()), Lines[Index].Value);
-		const bool bLast = Index == Lines.Num() - 1;
-		Node.Choices.Add(bLast
-			? CaveMen::Choice(LastChoice, Then, LastEvent)
-			: CaveMen::Choice(CaveMen::GoOn(), FName(*FString::Printf(TEXT("%s%d"), *Prefix, Index + 2))));
-		Dialogue->Nodes.Add(Node);
-	}
-}
-
 void ARobberCaveMenQuest::BuildDialogues()
 {
 	using namespace CaveMen;
-	using FLines = TArray<TPair<FText, FText>>;
-	const auto R = [](const FText& Text) { return TPair<FText, FText>(Who(Reginald), Text); };
-	const auto M = [](const FText& Text) { return TPair<FText, FText>(Who(Montague), Text); };
-	const auto U = [](const FText& Text) { return TPair<FText, FText>(Who(Ug), Text); };
-
-	const auto Stranger = [](const FText& Text) { return TPair<FText, FText>(Who(Unknown), Text); };
-	const FLines NoBook = {
-		Stranger(CAVE_LOC("NoBook1", "UNGA. Bunga bunga? Ooga.")),
-		Stranger(CAVE_LOC("NoBook2", "Bunga! Ooga bunga bunga.")),
-		Stranger(CAVE_LOC("NoBook3", "UG.")) };
-	const FLines WithBook = {
-		R(CAVE_LOC("Book1", "By Jove, he can understand us! It's a miracle! Thank God. You have no idea how dull the past few million years have been.")),
-		M(CAVE_LOC("Book2", "Forty thousand years I've been telling Ug the one about the mammoth.")),
-		U(CAVE_LOC("Book3", "Unga.")),
-		R(CAVE_LOC("Book4", "Ignore Ug. He never took to the language. Now then, I should very much like an omelette, and there is only one place to get an egg.")),
-		R(CAVE_LOC("Book5", "Now, poor Tina is as dumb as a dodo. Lucky for you, she can't count awfully well, so she won't notice an egg missing.")),
-		R(CAVE_LOC("BookTinaHome", "You'll find her nesting in Fossil Storage, down in the basement.")),
-		R(CAVE_LOC("Book6", "Bad for you, if she catches you she will get awfully mad and attempt to eat you. So don't get caught. Right, well, off you go, and good luck.")) };
-	const FLines Deliver = {
-		R(CAVE_LOC("Deliver1", "Good heavens, you've still got all your limbs. Tina must be slipping.")),
-		M(CAVE_LOC("Deliver2", "Is it warm? Do say it's warm.")),
-		U(CAVE_LOC("Deliver3", "Bunga!")) };
-	const FLines AskFire = {
-		R(CAVE_LOC("Fire1", "We now have an egg and no means of cooking it. We've been rubbing these sticks together since the Ice Age.")),
-		M(CAVE_LOC("Fire2", "Between you and me, it's the sticks.")),
-		R(CAVE_LOC("Fire3", "Find us something that makes fire, would you? I believe the staff keep little metal ones in their lockers.")) };
-	const FLines Lit = {
-		R(CAVE_LOC("Lit1", "Fire! Glorious, terrifying fire! Montague, do stop touching it.")),
-		M(CAVE_LOC("Lit2", "It's hot, Reginald.")),
-		U(CAVE_LOC("Lit3", "UNGA BUNGA!")),
-		R(CAVE_LOC("Lit4", "Ug has eaten the egg raw. I can't say I'm surprised.")) };
-
-	// One line each, so a player who isn't on the quest never sits through the lot.
-	const TMap<FName, TArray<FText>> Chatter = {
-		{ Reginald, {
-			CAVE_LOC("RegA", "Do mind the display, there's a good chap. It took us ages to get this grass to look this fake."),
-			CAVE_LOC("RegB", "Forty thousand years in the same pose. I've got a crick in my everything."),
-			CAVE_LOC("RegC", "Your friend's the one running our errands. You may stand there and look decorative."),
-			CAVE_LOC("RegD", "I invented the wheel, you know. Montague ate it.") } },
-		{ Montague, {
-			CAVE_LOC("MonA", "Have you heard the one about the mammoth? No? Marvellous. It starts with a mammoth."),
-			CAVE_LOC("MonB", "Between you and me, I don't think we're the real cave men."),
-			CAVE_LOC("MonC", "They call this the Stone Age. I'd call it the Quite Damp Age."),
-			CAVE_LOC("MonD", "The children press their faces on the glass. There is no glass. It's very upsetting.") } },
-		{ Ug, {
-			CAVE_LOC("UgA", "UG."),
-			CAVE_LOC("UgB", "Ooga?"),
-			CAVE_LOC("UgC", "Bunga bunga."),
-			CAVE_LOC("UgD", "Unga. Unga unga.") } } };
-	const TArray<FText> Gibberish = {
-		CAVE_LOC("GibA", "Ooga bunga. Bunga?"),
-		CAVE_LOC("GibB", "UNGA! Unga unga bunga."),
-		CAVE_LOC("GibC", "Bunga. Ooga ooga, bunga."),
-		CAVE_LOC("GibD", "Ug. Ug ug.") };
-
+	const TArray<FText> Gibberish = SceneLines(TEXT("Gib"));
 	for (AActor* Man : CaveMen)
 	{
 		const FName Name = NameOf(Man);
-		UDialogueDefinition* Dialogue = NewObject<UDialogueDefinition>(this);
-		Generated.Add(Dialogue);
-		Dialogue->DialogueType = EDialogueType::DialogueOnly;
-		Dialogue->bIncludeQuestChoices = false;
-		Dialogue->SpeakerName = Who(Unknown);
-
-		AddScene(Dialogue, TEXT("NoBook"), NoBook, HeardGibberish, NAME_None, Right());
-		AddScene(Dialogue, TEXT("Book"), WithBook, GotEggJob, NAME_None, OffIGo());
-		AddScene(Dialogue, TEXT("Deliver"), Deliver, NAME_None, TEXT("Digit1"), GoOn());
-		AddScene(Dialogue, TEXT("Fire"), AskFire, GotFireJob, NAME_None, OffIGo());
-		AddScene(Dialogue, TEXT("Lit"), Lit, NAME_None, TEXT("Digit2"), GoOn());
+		UDialogueDefinition* Dialogue = NewScript(Who(Unknown));
+		AddScene(Dialogue, TEXT("NoBook"), HeardGibberish);
+		AddScene(Dialogue, TEXT("Book"), GotEggJob);
+		AddScene(Dialogue, TEXT("Deliver"), NAME_None, TEXT("Digit1"));
+		AddScene(Dialogue, TEXT("Fire"), GotFireJob);
+		AddScene(Dialogue, TEXT("Lit"), NAME_None, TEXT("Digit2"));
 
 		// The numbers are filled in when the talking starts, because the vault rolls its code after this runs.
-		FDialogueNode Digit1 = Node(TEXT("Digit1"), Reginald, FText::GetEmpty());
-		Digit1.Choices.Add(Choice(GoOn(), TEXT("Fire1"), EggDelivered));
-		Dialogue->Nodes.Add(Digit1);
-		FDialogueNode Digit2 = Node(TEXT("Digit2"), Reginald, FText::GetEmpty());
-		Digit2.Choices.Add(Choice(CAVE_LOC("Thanks", "Pleasure doing business."), NAME_None, FireDone));
-		Dialogue->Nodes.Add(Digit2);
-
-		FDialogueNode EggWait = Node(TEXT("EggWait"), Reginald, CAVE_LOC("EggWait", "No egg, no omelette, dear fellow. She's in Fossil Storage. Do try not to be eaten."));
-		EggWait.Choices.Add(Choice(OffIGo(), NAME_None));
-		Dialogue->Nodes.Add(EggWait);
-		FDialogueNode LighterWait = Node(TEXT("LighterWait"), Reginald, CAVE_LOC("LighterWait", "Little metal fire. Staff lockers. Do keep up."));
-		LighterWait.Choices.Add(Choice(OffIGo(), NAME_None));
-		Dialogue->Nodes.Add(LighterWait);
-		FDialogueNode LightWait = Node(TEXT("LightWait"), Reginald, CAVE_LOC("LightWait", "Well, don't show it to us. Light the fire!"));
-		LightWait.Choices.Add(Choice(OffIGo(), NAME_None));
-		Dialogue->Nodes.Add(LightWait);
-
+		AddSingle(Dialogue, TEXT("Digit1"), Reginald, FText::GetEmpty(), TEXT("GoOn"), TEXT("Fire1"), EggDelivered);
+		AddSingle(Dialogue, TEXT("Digit2"), Reginald, FText::GetEmpty(), TEXT("Thanks"), NAME_None, FireDone);
+		for (const FName Wait : { FName(TEXT("EggWait")), FName(TEXT("LighterWait")), FName(TEXT("LightWait")) })
+		{
+			AddSingle(Dialogue, Wait, Reginald, Line(Wait), TEXT("OffIGo"));
+		}
 		for (int32 Index = 0; Index < Gibberish.Num(); ++Index)
 		{
-			FDialogueNode Line = Node(*FString::Printf(TEXT("Gib%d"), Index), Unknown, Gibberish[Index]);
-			Line.Choices.Add(Choice(Right(), NAME_None));
-			Dialogue->Nodes.Add(Line);
+			AddSingle(Dialogue, *FString::Printf(TEXT("Gib%d"), Index), Unknown, Gibberish[Index], TEXT("Right"));
 		}
-		const TArray<FText>& Lines = Chatter[Name];
-		for (int32 Index = 0; Index < Lines.Num(); ++Index)
+		// One line each, so a player who isn't on the quest never sits through the lot.
+		const TArray<FText> Chatter = SceneLines(*(TEXT("Chat") + Name.ToString()));
+		for (int32 Index = 0; Index < Chatter.Num(); ++Index)
 		{
-			FDialogueNode Line = Node(*FString::Printf(TEXT("Chat%d"), Index), Name, Lines[Index]);
-			Line.Choices.Add(Choice(CAVE_LOC("Bye", "I'll leave you to it."), NAME_None));
-			Dialogue->Nodes.Add(Line);
+			AddSingle(Dialogue, *FString::Printf(TEXT("Chat%d"), Index), Name, Chatter[Index]);
 		}
-		Dialogue->EntryNode = TEXT("Gib0");
-
-		UDialogueComponent* Talker = Man->FindComponentByClass<UDialogueComponent>();
-		Talker->Dialogue = Dialogue;
-		Talker->OfferedQuests.Reset();
 		// Nobody can have found the book this early, so it's cave speak and no names.
-		Talker->SmallTalkLines = Gibberish;
+		UDialogueComponent* Talker = GiveScript(Man, Dialogue, TEXT("Gib0"), Gibberish);
 		Talker->SmallTalkSpeaker = Who(Unknown);
 		Talker->EntryOverride.BindUObject(this, &ARobberCaveMenQuest::EntryFor, Man);
 	}
@@ -659,30 +689,15 @@ void ARobberCaveMenQuest::BuildDialogues()
 
 int32 ARobberCaveMenQuest::DigitValue(int32 Which) const
 {
-	if (!DigitIndexes.IsValidIndex(Which))
-	{
-		return INDEX_NONE;
-	}
-	for (TActorIterator<ARobberVaultDoor> It(GetWorld()); It; ++It)
-	{
-		if (It->GetLevel() == GetLevel() && It->GetCode().IsValidIndex(DigitIndexes[Which]))
-		{
-			return It->GetCode()[DigitIndexes[Which]];
-		}
-	}
-	return INDEX_NONE;
+	return DigitIndexes.IsValidIndex(Which) ? VaultDigit(DigitIndexes[Which]) : INDEX_NONE;
 }
 
 void ARobberCaveMenQuest::UpdateDigitLines()
 {
 	const int32 First = DigitValue(0);
 	const int32 Second = DigitValue(1);
-	const FText FirstLine = First == INDEX_NONE
-		? CAVE_LOC("NoDigit1", "Sadly there's no vault tonight, so you'll have to take our thanks instead.")
-		: FText::Format(CAVE_LOC("Digit1", "A deal is a deal. We've watched the guards punch in that vault code for years, and one does notice the buttons. The first number you want is a {0}."), First);
-	const FText SecondLine = Second == INDEX_NONE
-		? CAVE_LOC("NoDigit2", "You've been a credit to the species, whichever one you are.")
-		: FText::Format(CAVE_LOC("Digit2", "You've been a credit to the species, whichever one you are. The next number is a {0}."), Second);
+	const FText FirstLine = First == INDEX_NONE ? Line(TEXT("NoDigit1")) : FText::Format(Line(TEXT("Digit1")), First);
+	const FText SecondLine = Second == INDEX_NONE ? Line(TEXT("NoDigit2")) : FText::Format(Line(TEXT("Digit2")), Second);
 	for (AActor* Man : CaveMen)
 	{
 		const UDialogueComponent* Talker = Man->FindComponentByClass<UDialogueComponent>();
@@ -730,21 +745,21 @@ FName ARobberCaveMenQuest::EntryFor(UPlayerQuestComponent* Player, AActor* Talke
 	{
 		++Count;
 	}
-	int32 Line = FMath::RandHelper(Count);
+	int32 Pick = FMath::RandHelper(Count);
 	// Never the same line twice running from the same man.
-	if (const int32* Last = LastRandomLine.Find(Talker); Last && Count > 1 && *Last == Line)
+	if (const int32* Last = LastRandomLine.Find(Talker); Last && Count > 1 && *Last == Pick)
 	{
-		Line = (Line + 1) % Count;
+		Pick = (Pick + 1) % Count;
 	}
-	LastRandomLine.Add(Talker, Line);
+	LastRandomLine.Add(Talker, Pick);
 	if (!bUnderstood)
 	{
 		if (ARobberController* Robber = Cast<ARobberController>(Player->GetOwner()))
 		{
-			Robber->ClientHeistMessage(CAVE_LOC("CantUnderstand", "CAVE SPEAK · You can't understand a word of this."));
+			Robber->ClientHeistMessage(Line(TEXT("CantUnderstand")));
 		}
 	}
-	return *FString::Printf(TEXT("%s%d"), Prefix, Line);
+	return *FString::Printf(TEXT("%s%d"), Prefix, Pick);
 }
 
 void ARobberCaveMenQuest::SetStage(ECaveMenStage NewStage)
@@ -763,7 +778,7 @@ void ARobberCaveMenQuest::OnQuestStarted()
 		ForceNetUpdate();
 	}
 	RefreshNote();
-	Stamp(false, CAVE_LOC("Name", "Stone Age Small Talk"), CAVE_LOC("NewSub", "Three cave men have been discovering fire for a very long time."));
+	Stamp(false, Line(TEXT("Name")), Line(TEXT("NewSub")));
 }
 
 void ARobberCaveMenQuest::OnDialogueEvent(AActor* Talker, UPlayerQuestComponent* Player, FName Event)
@@ -776,7 +791,7 @@ void ARobberCaveMenQuest::OnDialogueEvent(AActor* Talker, UPlayerQuestComponent*
 	if (Event == HeardGibberish && Stage == ECaveMenStage::TalkNoBook)
 	{
 		SetStage(ECaveMenStage::FindBook);
-		Toast(CAVE_LOC("NeedTranslate", "CAVE SPEAK · You can't understand a word of this. Find a way to translate it."));
+		Toast(Line(TEXT("NeedTranslate")));
 	}
 	else if (Event == GotEggJob && Stage == ECaveMenStage::TalkWithBook)
 	{
@@ -795,7 +810,7 @@ void ARobberCaveMenQuest::OnDialogueEvent(AActor* Talker, UPlayerQuestComponent*
 	{
 		PayDigit(1, Talker);
 		SetStage(ECaveMenStage::Done);
-		Stamp(true, CAVE_LOC("Name", "Stone Age Small Talk"), CAVE_LOC("DoneSub", "Both code digits are in your journal."));
+		Stamp(true, Line(TEXT("Name")), Line(TEXT("DoneSub")));
 		ClearNoteAfterStamp();
 	}
 }
@@ -808,13 +823,8 @@ void ARobberCaveMenQuest::PayDigit(int32 Which, AActor* Talker)
 		return;
 	}
 	DigitsPaid = Which + 1;
-	const AController* Controller = OwnerController();
-	if (URobberJournalComponent* Journal = Controller ? Controller->FindComponentByClass<URobberJournalComponent>() : nullptr)
-	{
-		const UDialogueComponent* Dialogue = Talker->FindComponentByClass<UDialogueComponent>();
-		Journal->LearnVaultDigit(Talker, Dialogue->Dialogue->SpeakerName, DigitIndexes[Which], Value, ARobberVaultDoor::CodeLength);
-	}
-	Toast(FText::Format(CAVE_LOC("DigitToast", "CODE DIGIT · {0} jotted in your journal (J)"), Value));
+	TellOwnerDigit(Talker, Talker->FindComponentByClass<UDialogueComponent>()->Dialogue->SpeakerName, DigitIndexes[Which], Value);
+	Toast(FText::Format(Line(TEXT("DigitToast")), Value));
 	RefreshNote();
 }
 
@@ -847,27 +857,14 @@ FText ARobberCaveMenQuest::GetPropPrompt(FName PropId, const APlayerState* Viewe
 	{
 		return FText::GetEmpty();
 	}
-	if (PropId == GiftShop && Stage == ECaveMenStage::FindBook && !bGiftShopChecked)
-	{
-		return CAVE_LOC("PromptGift", "Look for a phrase book");
-	}
-	if (PropId == Book && Stage == ECaveMenStage::FindBook && bReachedArchive)
-	{
-		return CAVE_LOC("PromptBook", "Take Cave Speak for Dummies");
-	}
-	if (PropId == Egg && Stage == ECaveMenStage::StealEgg)
-	{
-		return CAVE_LOC("PromptEgg", "Steal an egg");
-	}
-	if (PropId == Campfire && Stage == ECaveMenStage::LightFire)
-	{
-		return CAVE_LOC("PromptFire", "Light the campfire");
-	}
-	if ((PropId == Locker1 || PropId == Locker2 || PropId == Locker3) && Stage == ECaveMenStage::FindLighter && bReachedStaffArea && !OpenedLockers.Contains(PropId))
-	{
-		return CAVE_LOC("PromptLocker", "Break into the locker");
-	}
-	return FText::GetEmpty();
+	const bool bLocker = PropId == Locker1 || PropId == Locker2 || PropId == Locker3;
+	const FName Prompt = PropId == GiftShop && Stage == ECaveMenStage::FindBook && !bGiftShopChecked ? FName(TEXT("PromptGift"))
+		: PropId == Book && Stage == ECaveMenStage::FindBook && bReachedArchive ? FName(TEXT("PromptBook"))
+		: PropId == Egg && Stage == ECaveMenStage::StealEgg ? FName(TEXT("PromptEgg"))
+		: PropId == Campfire && Stage == ECaveMenStage::LightFire ? FName(TEXT("PromptFire"))
+		: bLocker && Stage == ECaveMenStage::FindLighter && bReachedStaffArea && !OpenedLockers.Contains(PropId) ? FName(TEXT("PromptLocker"))
+		: NAME_None;
+	return Prompt.IsNone() ? FText::GetEmpty() : Line(Prompt);
 }
 
 void ARobberCaveMenQuest::OnPropUsed(FName PropId, ARobberStoryProp* Prop, APawn* Pawn, APlayerState* Player)
@@ -878,7 +875,7 @@ void ARobberCaveMenQuest::OnPropUsed(FName PropId, ARobberStoryProp* Prop, APawn
 		bGiftShopChecked = true;
 		ForceNetUpdate();
 		RefreshNote();
-		Toast(CAVE_LOC("SoldOut", "SOLD OUT · Last copy sent down to Archive Storage"));
+		Toast(Line(TEXT("SoldOut")));
 	}
 	else if (PropId == Book)
 	{
@@ -886,13 +883,13 @@ void ARobberCaveMenQuest::OnPropUsed(FName PropId, ARobberStoryProp* Prop, APawn
 		UpdateTalkPrompts();
 		Prop->SetShown(false);
 		SetStage(ECaveMenStage::TalkWithBook);
-		Toast(CAVE_LOC("GotBook", "CAVE SPEAK FOR DUMMIES · Now you can understand them"));
+		Toast(Line(TEXT("GotBook")));
 	}
 	else if (PropId == Egg)
 	{
 		Prop->SetShown(false);
 		SetStage(ECaveMenStage::BringEgg);
-		Toast(CAVE_LOC("GotEgg", "EGG · Still warm. Get out of there!"));
+		Toast(Line(TEXT("GotEgg")));
 	}
 	else if (PropId == Campfire)
 	{
@@ -910,14 +907,12 @@ void ARobberCaveMenQuest::OnPropUsed(FName PropId, ARobberStoryProp* Prop, APawn
 		if (PropId == LighterLocker)
 		{
 			SetStage(ECaveMenStage::LightFire);
-			Toast(CAVE_LOC("GotLighter", "LIGHTER · Little metal fire, as promised"));
+			Toast(Line(TEXT("GotLighter")));
 		}
 		else
 		{
 			RefreshNote();
-			Toast(OpenedLockers.Num() == 1
-				? CAVE_LOC("LockerSock", "LOCKER · One sock and a sandwich from March. No lighter.")
-				: CAVE_LOC("LockerMug", "LOCKER · A mug that says WORLD'S OKAYEST GUARD. No lighter."));
+			Toast(Line(OpenedLockers.Num() == 1 ? TEXT("LockerSock") : TEXT("LockerMug")));
 		}
 	}
 }
@@ -936,14 +931,11 @@ void ARobberCaveMenQuest::OnPlayerCaught(APawn* Pawn, APlayerState* Player, FNam
 			EggProp->SetShown(true);
 		}
 		SetStage(ECaveMenStage::StealEgg);
-		Toast(CAVE_LOC("LostEgg", "CAUGHT · Tina took her egg back."));
+		Toast(Line(TEXT("LostEgg")));
 	}
-	else if (Player && Player->GetOwningController())
+	else
 	{
-		if (ARobberController* Robber = Cast<ARobberController>(Player->GetOwningController()))
-		{
-			Robber->ClientHeistMessage(CAVE_LOC("Caught", "CAUGHT · Tina is awfully mad."));
-		}
+		ARobberController::Tell(Player, Line(TEXT("Caught")));
 	}
 }
 
@@ -952,18 +944,19 @@ FRobberStoryNote ARobberCaveMenQuest::BuildNote() const
 	using namespace CaveMen;
 	FRobberStoryNote Note;
 	Note.bShown = true;
-	Note.Title = CAVE_LOC("Name", "Stone Age Small Talk");
+	Note.Title = Line(TEXT("Name"));
 	if (DigitValue(0) != INDEX_NONE)
 	{
-		Note.Footer = FText::Format(CAVE_LOC("Foot", "Code digits: {0} of {1}"), DigitsPaid, DigitIndexes.Num());
+		Note.Footer = FText::Format(Line(TEXT("Foot")), DigitsPaid, DigitIndexes.Num());
 	}
-	const FText TalkTo = CAVE_LOC("LTalk", "Talk to the cave men");
-	const FText Translate = CAVE_LOC("LTrans", "Find a way to translate cave speak");
-	const FText StealText = CAVE_LOC("LSteal", "Steal an egg from under Tina");
-	const FText TakeEgg = CAVE_LOC("LTake", "Take the egg to the cave men");
-	const FText FindFire = CAVE_LOC("LFind", "Find something that makes fire");
-	const FText LightText = CAVE_LOC("LLight", "Light the cave men's campfire");
-	const auto Mark = [](const FText& Text, bool bIsDone) { return bIsDone ? Done(Text) : Open(Text); };
+	const auto Open = [this](const TCHAR* Key, bool bDone = false) { return NoteLine(Line(Key), bDone); };
+	const auto Done = [&Open](const TCHAR* Key) { return Open(Key, true); };
+	const TCHAR* TalkTo = TEXT("LTalk");
+	const TCHAR* Translate = TEXT("LTrans");
+	const TCHAR* StealText = TEXT("LSteal");
+	const TCHAR* TakeEgg = TEXT("LTake");
+	const TCHAR* FindFire = TEXT("LFind");
+	const TCHAR* LightText = TEXT("LLight");
 	switch (Stage)
 	{
 	case ECaveMenStage::TalkNoBook:
@@ -971,17 +964,14 @@ FRobberStoryNote ARobberCaveMenQuest::BuildNote() const
 		break;
 	case ECaveMenStage::FindBook:
 		Note.Lines = { Done(TalkTo), Open(Translate) };
-		Note.ErrandTitle = CAVE_LOC("Reading", "Required Reading");
-		Note.ErrandLines = {
-			Mark(CAVE_LOC("LGift", "Check the Gift Shop"), bGiftShopChecked),
-			Mark(CAVE_LOC("LArchive", "Get to Archive Storage"), bReachedArchive),
-			Open(CAVE_LOC("LBook", "Find Cave Speak for Dummies")) };
+		Note.ErrandTitle = Line(TEXT("Reading"));
+		Note.ErrandLines = { Open(TEXT("LGift"), bGiftShopChecked), Open(TEXT("LArchive"), bReachedArchive), Open(TEXT("LBook")) };
 		break;
 	case ECaveMenStage::TalkWithBook:
 		Note.Lines = { Done(Translate), Open(TalkTo) };
 		break;
 	case ECaveMenStage::StealEgg:
-		Note.Lines = { Done(TalkTo), Open(StealText), Warn(CAVE_LOC("LCaught", "Don't get caught!")) };
+		Note.Lines = { Done(TalkTo), Open(StealText), NoteLine(Line(TEXT("LCaught")), false, true) };
 		break;
 	case ECaveMenStage::BringEgg:
 		Note.Lines = { Done(StealText), Open(TakeEgg) };
@@ -991,11 +981,8 @@ FRobberStoryNote ARobberCaveMenQuest::BuildNote() const
 		break;
 	case ECaveMenStage::FindLighter:
 		Note.Lines = { Open(FindFire), Open(LightText) };
-		Note.ErrandTitle = CAVE_LOC("Hot", "Hot Property");
-		Note.ErrandLines = {
-			Mark(CAVE_LOC("LStaff", "Get into the staff area"), bReachedStaffArea),
-			Mark(CAVE_LOC("LLocker", "Break into a locker"), bBrokeInLocker),
-			Open(CAVE_LOC("LLighter", "Find the lighter")) };
+		Note.ErrandTitle = Line(TEXT("Hot"));
+		Note.ErrandLines = { Open(TEXT("LStaff"), bReachedStaffArea), Open(TEXT("LLocker"), bBrokeInLocker), Open(TEXT("LLighter")) };
 		break;
 	case ECaveMenStage::LightFire:
 		Note.Lines = { Done(FindFire), Open(LightText) };

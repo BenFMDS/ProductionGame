@@ -11,7 +11,6 @@
 #include "Components/HorizontalBoxSlot.h"
 #include "Components/TextBlock.h"
 #include "Components/VerticalBox.h"
-#include "EngineUtils.h"
 #include "GameFramework/PlayerState.h"
 #include "Heist/RobberBreakInProps.h"
 #include "Heist/RobberEntryPoint.h"

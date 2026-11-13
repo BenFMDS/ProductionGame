@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Engine/DataTable.h"
 #include "GameFramework/Actor.h"
 #include "Heist/RobberInteractables.h"
 #include "Quest/PlayerQuestComponent.h"
@@ -15,6 +16,19 @@ class USceneComponent;
 class USpotLightComponent;
 class UStaticMeshComponent;
 
+/** One line of a story quest's script (DT_<Quest>Script). A scene is its rows in table order. */
+USTRUCT(BlueprintType)
+struct FRobberScriptRow : public FTableRowBase
+{
+	GENERATED_BODY()
+
+	/** The scene the line belongs to, or None for a line used on its own: a toast, a prompt, a line of the note. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Script") FName Scene;
+	/** Who says it. "You" is the player: in a scene, that line is the answer picked on the line before it. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Script") FName Speaker;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Script", meta = (MultiLine = true)) FText Text;
+};
+
 /**
  * A hand-written, multi-step quest. One player owns it: they started it from a tip, and only they get its note and can do its
  * steps. Lives in the level as a single actor, and tells the night director about its tip and any vault digits it pays.
@@ -27,6 +41,14 @@ class PRODUCTIONGAME_API ARobberStoryQuest : public AActor
 public:
 	ARobberStoryQuest();
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+	virtual void BeginPlay() override;
+
+	/** Every word this quest says. Tip, TipTaken and TipJournal rows fill the tip lines below. */
+	UPROPERTY(EditDefaultsOnly, Category = "Story") TObjectPtr<UDataTable> ScriptTable;
+	/** The row's text, or the key itself (and an error) when the row is missing. */
+	FText Line(FName Key) const;
+	/** A scene's lines in table order. */
+	TArray<FText> SceneLines(FName Scene) const;
 
 	/** On talkers the story quest runs itself, so the night director leaves them out of the deal. */
 	static const FName NpcTag;
@@ -86,8 +108,30 @@ protected:
 
 	ARobberStoryProp* FindProp(FName PropId) const;
 	bool IsOwnerInRoom(const FString& RoomName) const;
+	/** The vault's digit at this place in the code, or INDEX_NONE when there's no vault tonight. */
+	int32 VaultDigit(int32 Index) const;
+	/** Gives the owner's journal a vault digit, heard from Talker. */
+	void TellOwnerDigit(AActor* Talker, const FText& Speaker, int32 Index, int32 Value) const;
+
+	// --- Scripts, built from ScriptTable. ---
+	/** Points ScriptTable at /Game/OurStuff/Core/Dialogue/StoryScripts/<Name>. Constructors only. */
+	void UseScript(const TCHAR* Name);
+	/** The row "Speaker<Name>" if there is one, else the name itself. */
+	FText SpeakerName(FName Speaker) const;
+	UDialogueDefinition* NewScript(const FText& Speaker);
+	/**
+	 * Nodes <Scene>1, <Scene>2... for the scene's spoken lines, joined by the "GoOn" row unless the player answers.
+	 * The last answer is the row <Scene>End; it fires LastEvent and goes on to Then.
+	 */
+	void AddScene(UDialogueDefinition* Script, FName Scene, FName LastEvent, FName Then = NAME_None) const;
+	/** One line with one answer, the row Answer, which fires Event and goes on to Next. */
+	void AddSingle(UDialogueDefinition* Script, FName Id, FName Speaker, const FText& Text, FName Answer = TEXT("Leave"), FName Next = NAME_None, FName Event = NAME_None) const;
+	/** A talker gets the script, these small-talk lines and no quests of its own. */
+	UDialogueComponent* GiveScript(AActor* Talker, UDialogueDefinition* Script, FName Entry, const TArray<FText>& SmallTalk) const;
+	static FRobberStoryLine NoteLine(const FText& Text, bool bDone = false, bool bWarning = false);
 
 	UPROPERTY(Replicated) TObjectPtr<APlayerState> QuestOwner;
+	UPROPERTY(Transient) TArray<TObjectPtr<UObject>> Generated;
 
 private:
 	FTimerHandle ClearNoteTimer;
@@ -225,7 +269,6 @@ protected:
 
 private:
 	void BuildDialogues();
-	void AddScene(UDialogueDefinition* Dialogue, const FString& Prefix, const TArray<TPair<FText, FText>>& Lines, FName LastEvent, FName Then, const FText& LastChoice) const;
 	void UpdateDigitLines();
 	FName EntryFor(UPlayerQuestComponent* Player, AActor* Talker);
 	void OnDialogueEvent(AActor* Talker, UPlayerQuestComponent* Player, FName Event);
@@ -242,7 +285,6 @@ private:
 	UPROPERTY(Replicated) TArray<FName> OpenedLockers;
 
 	UPROPERTY(Transient) TArray<TObjectPtr<AActor>> CaveMen;
-	UPROPERTY(Transient) TArray<TObjectPtr<UObject>> Generated;
 	TArray<int32> DigitIndexes;
 	int32 DigitsPaid = 0;
 	UPROPERTY(ReplicatedUsing = OnRep_BookFound) bool bBookFound = false;

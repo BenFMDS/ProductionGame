@@ -191,6 +191,9 @@ private:
 	float SavedViewPitchMax = 0.f;
 	float SavedViewYawMin = 0.f;
 	float SavedViewYawMax = 0.f;
+	/** Camera offset from its head socket before a low hiding spot moved it down. */
+	FVector SavedCameraOffset = FVector::ZeroVector;
+	bool bCameraLowered = false;
 
 	/** Walk speed from the Blueprint, captured at BeginPlay; sprint multiplies it. */
 	float BaseWalkSpeed = 0.f;

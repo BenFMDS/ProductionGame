@@ -77,23 +77,26 @@ bool UDialogueComponent::TryStart(UPlayerQuestComponent* Player)
 	bIsInConversation = true;
 	const auto* RobberState = GetWorld()->GetGameState<ARobberGameState>();
 	bSmallTalk = RobberState && RobberState->IsExhibitSmallTalk();
-	if (bSmallTalk)
-	{
-		// Returns before OnConversationStarted on purpose: that's what hands out tips and journal notes.
-		SmallTalkLine = PickSmallTalkLine();
-		LastActivity = GetWorld()->GetTimeSeconds();
-		GetOwner()->ForceNetUpdate();
-		GetWorld()->GetTimerManager().SetTimer(SessionTimer, this, &UDialogueComponent::ValidateSession, 0.25f, true);
-		PublishNode();
-		return true;
-	}
-	CurrentNode = Dialogue ? Dialogue->EntryNode : NAME_None;
+	if (bSmallTalk) SmallTalkLine = PickSmallTalkLine();
+	else CurrentNode = PickEntryNode(Player);
+	LastActivity = GetWorld()->GetTimeSeconds();
+	GetOwner()->ForceNetUpdate();
+	GetWorld()->GetTimerManager().SetTimer(SessionTimer, this, &UDialogueComponent::ValidateSession, 0.25f, true);
+	PublishNode();
+	// Not for small talk: this is what hands out tips and journal notes.
+	if (!bSmallTalk) OnConversationStarted.Broadcast(GetOwner(), PC->PlayerState);
+	return true;
+}
+
+FName UDialogueComponent::PickEntryNode(UPlayerQuestComponent* Player) const
+{
+	FName Entry = Dialogue ? Dialogue->EntryNode : NAME_None;
 	if (Dialogue && !Dialogue->RandomEntryNodes.IsEmpty())
 	{
 		TArray<FName> ValidRandomEntries;
 		for (const FName NodeID : Dialogue->RandomEntryNodes)
 			if (Dialogue->FindNode(NodeID)) ValidRandomEntries.Add(NodeID);
-		if (!ValidRandomEntries.IsEmpty()) CurrentNode = ValidRandomEntries[FMath::RandHelper(ValidRandomEntries.Num())];
+		if (!ValidRandomEntries.IsEmpty()) Entry = ValidRandomEntries[FMath::RandHelper(ValidRandomEntries.Num())];
 	}
 	if (Dialogue && Dialogue->UsesQuests() && IsValid(Dialogue->ContextQuest))
 	{
@@ -103,33 +106,21 @@ bool UDialogueComponent::TryStart(UPlayerQuestComponent* Player)
 			FName StateEntry = Dialogue->ActiveEntryNode;
 			if (Quest.State == EPlayerQuestState::Completed) StateEntry = Dialogue->CompletedEntryNode;
 			else if (Player->CanTurnIn(Dialogue->ContextQuest, GetOwner())) StateEntry = Dialogue->ReadyEntryNode;
-			if (Dialogue->FindNode(StateEntry)) CurrentNode = StateEntry;
+			if (Dialogue->FindNode(StateEntry)) Entry = StateEntry;
 		}
 	}
 	if (EntryOverride.IsBound())
 	{
 		const FName Override = EntryOverride.Execute(Player);
-		if (Dialogue && Dialogue->FindNode(Override)) CurrentNode = Override;
+		if (Dialogue && Dialogue->FindNode(Override)) Entry = Override;
 	}
-	LastActivity = GetWorld()->GetTimeSeconds();
-	GetOwner()->ForceNetUpdate();
-	GetWorld()->GetTimerManager().SetTimer(SessionTimer, this, &UDialogueComponent::ValidateSession, 0.25f, true);
-	PublishNode();
-	OnConversationStarted.Broadcast(GetOwner(), PC->PlayerState);
-	return true;
+	return Entry;
 }
 
 FText UDialogueComponent::PickSmallTalkLine()
 {
-	TArray<FText> Lines = SmallTalkLines;
-	if (Lines.IsEmpty() && Dialogue)
-	{
-		// Nights the director hasn't dealt: these talkers still have only their own asset's lines.
-		for (const FDialogueNode& Node : Dialogue->Nodes)
-		{
-			if (!Node.Text.IsEmpty() && (Dialogue->RandomEntryNodes.Contains(Node.ID) || Dialogue->EntryNode == Node.ID)) Lines.Add(Node.Text);
-		}
-	}
+	// Nights the director hasn't dealt: these talkers still have only their own asset's lines.
+	const TArray<FText> Lines = !SmallTalkLines.IsEmpty() || !Dialogue ? SmallTalkLines : Dialogue->GetGreetingLines();
 	if (Lines.IsEmpty()) return NSLOCTEXT("Dialogue", "NothingToSay", "...");
 	int32 Pick = FMath::RandHelper(Lines.Num());
 	if (Lines.Num() > 1 && Pick == LastSmallTalkLine) Pick = (Pick + 1) % Lines.Num();

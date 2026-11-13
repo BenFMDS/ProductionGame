@@ -145,7 +145,8 @@ void RobberAchievements::OnConversationStarted(AActor* Talker, APlayerState* Pla
 	{
 		AwardPlayer(Player, TEXT("WhoIsWinton"));
 	}
-	static const TSet<FString> Presidents = { TEXT("BarackObama"), TEXT("BillClinton"), TEXT("GeorgeHWBush"), TEXT("GeorgeWBush"), TEXT("RichardNixon"), TEXT("RonaldReagan") };
+	static const TSet<FString> Presidents = { TEXT("BarackObama"), TEXT("BillClinton"), TEXT("GeorgeHWBush"), TEXT("GeorgeWBush"), TEXT("RichardNixon"), TEXT("RonaldReagan"),
+		TEXT("WilliamHowardTaft"), TEXT("WilliamHenryHarrison"), TEXT("CalvinCoolidge"), TEXT("GroverCleveland") };
 	if (Presidents.Contains(Exhibit))
 	{
 		AwardPlayer(Player, TEXT("PresidentialPardon"), ERobberAchievementStep::Distinct, *Exhibit);

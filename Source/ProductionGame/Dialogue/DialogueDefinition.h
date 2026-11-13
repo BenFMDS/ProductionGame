@@ -79,4 +79,14 @@ public:
 	{
 		return Nodes.FindByPredicate([ID](const FDialogueNode& Node) { return Node.ID == ID; });
 	}
+	/** What the talker can open with: the entry node's line and the random entries'. */
+	TArray<FText> GetGreetingLines() const
+	{
+		TArray<FText> Lines;
+		for (const FDialogueNode& Node : Nodes)
+		{
+			if (!Node.Text.IsEmpty() && (RandomEntryNodes.Contains(Node.ID) || EntryNode == Node.ID)) Lines.Add(Node.Text);
+		}
+		return Lines;
+	}
 };

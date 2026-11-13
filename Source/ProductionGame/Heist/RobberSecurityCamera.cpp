@@ -30,6 +30,19 @@ namespace RobberCamera
 		return Mesh;
 	}
 
+	/** Players don't block the view: the floor under them and the building do. */
+	FCollisionQueryParams& IgnorePlayers(FCollisionQueryParams& Params, UWorld* World)
+	{
+		for (TActorIterator<APawn> It(World); It; ++It)
+		{
+			if (It->IsPlayerControlled())
+			{
+				Params.AddIgnoredActor(*It);
+			}
+		}
+		return Params;
+	}
+
 	/** The basic cylinder is 100 across and 100 tall, pivot in the middle. */
 	constexpr double DiscThickness = 0.01;
 
@@ -128,18 +141,10 @@ bool ARobberSecurityCamera::IsWatching(const ARobberGameState* GameState) const
 bool ARobberSecurityCamera::GetFloorCircle(FVector& OutCentre) const
 {
 	const FVector Eye = Cone->GetComponentLocation();
-	// Players and the circle itself don't count: the view goes to the floor under them.
 	FCollisionQueryParams Params(SCENE_QUERY_STAT(RobberCameraFloor), false, this);
-	for (TActorIterator<APawn> It(GetWorld()); It; ++It)
-	{
-		if (It->IsPlayerControlled())
-		{
-			Params.AddIgnoredActor(*It);
-		}
-	}
 	FHitResult Hit;
 	// A wall or a tall exhibit in the way gives no circle rather than one stuck to its side.
-	if (!GetWorld()->LineTraceSingleByChannel(Hit, Eye, Eye + Head->GetForwardVector() * Range, ECC_Visibility, Params) || Hit.ImpactNormal.Z < 0.7)
+	if (!GetWorld()->LineTraceSingleByChannel(Hit, Eye, Eye + Head->GetForwardVector() * Range, ECC_Visibility, RobberCamera::IgnorePlayers(Params, GetWorld())) || Hit.ImpactNormal.Z < 0.7)
 	{
 		return false;
 	}
@@ -161,17 +166,9 @@ bool ARobberSecurityCamera::CanSee(const APawn* Pawn) const
 	{
 		return false;
 	}
-	// Other players don't hide each other: only the building blocks the view.
 	FCollisionQueryParams Params(SCENE_QUERY_STAT(RobberCameraSight), false, this);
-	for (TActorIterator<APawn> It(GetWorld()); It; ++It)
-	{
-		if (It->IsPlayerControlled())
-		{
-			Params.AddIgnoredActor(*It);
-		}
-	}
 	FHitResult Hit;
-	return !GetWorld()->LineTraceSingleByChannel(Hit, Cone->GetComponentLocation(), At, ECC_Visibility, Params);
+	return !GetWorld()->LineTraceSingleByChannel(Hit, Cone->GetComponentLocation(), At, ECC_Visibility, RobberCamera::IgnorePlayers(Params, GetWorld()));
 }
 
 bool ARobberSecurityCamera::IsAwaitingGuardNear(const FVector& Location, float Radius) const

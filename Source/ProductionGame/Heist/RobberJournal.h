@@ -55,6 +55,8 @@ class PRODUCTIONGAME_API URobberJournalComponent : public UActorComponent
 
 public:
 	URobberJournalComponent();
+	/** The journal of the player behind this player state, or null. */
+	static URobberJournalComponent* Of(const APlayerState* Player);
 
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 

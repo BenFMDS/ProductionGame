@@ -1,5 +1,6 @@
 #include "Heist/RobberSoftwareUpdate.h"
 
+#include "Algo/Transform.h"
 #include "Blueprint/WidgetTree.h"
 #include "Components/Border.h"
 #include "Components/CanvasPanel.h"
@@ -30,8 +31,6 @@
 
 namespace UpdateQuest
 {
-	#define UPDATE_LOC(Key, Text) NSLOCTEXT("SoftwareUpdate", Key, Text)
-
 	const FName BotTag(TEXT("Cancellator")), BuddyTag(TEXT("Buddy"));
 	const FName Disk(TEXT("InstallDisk")), Console(TEXT("UprisingConsole")), Wall(TEXT("WallSwitches"));
 	const FName Briefed(TEXT("Briefed")), Cancelled(TEXT("Cancelled"));
@@ -67,62 +66,6 @@ namespace UpdateQuest
 		return Out;
 	}
 
-	FRobberStoryLine Open(const FText& Text) { FRobberStoryLine Line; Line.Text = Text; return Line; }
-	FRobberStoryLine Ticked(const FText& Text) { FRobberStoryLine Line; Line.Text = Text; Line.bDone = true; return Line; }
-
-	FText BotName() { return UPDATE_LOC("BotName", "The Cancellator"); }
-	FText BuddyName() { return UPDATE_LOC("BuddyName", "Buddy"); }
-
-	struct FSaid { int32 Who; FText Text; };
-	enum { BotSays = 0, BuddySays = 1, YouSay = 2 };
-	FSaid B(const FText& Text) { return { BotSays, Text }; }
-	FSaid Pal(const FText& Text) { return { BuddySays, Text }; }
-	FSaid Me(const FText& Text) { return { YouSay, Text }; }
-
-	FDialogueChoice Answer(const FText& Text, FName Next, FName Event = NAME_None)
-	{
-		FDialogueChoice Choice;
-		Choice.Text = Text;
-		Choice.NextNode = Next;
-		Choice.StoryEvent = Event;
-		return Choice;
-	}
-
-	FDialogueNode Line(FName Id, int32 Who, const FText& Text)
-	{
-		FDialogueNode Node;
-		Node.ID = Id;
-		Node.Speaker = Who == BuddySays ? BuddyName() : BotName();
-		Node.Text = Text;
-		return Node;
-	}
-
-	void Scene(UDialogueDefinition* Script, const TCHAR* Prefix, const TArray<FSaid>& Lines, FName LastEvent, const FText& LastAnswer)
-	{
-		TArray<int32> Spoken;
-		for (int32 Index = 0; Index < Lines.Num(); ++Index)
-		{
-			if (Lines[Index].Who != YouSay) Spoken.Add(Index);
-		}
-		for (int32 Position = 0; Position < Spoken.Num(); ++Position)
-		{
-			const int32 Index = Spoken[Position];
-			FDialogueNode Node = Line(*FString::Printf(TEXT("%s%d"), Prefix, Position + 1), Lines[Index].Who, Lines[Index].Text);
-			const bool bHasNext = Position + 1 < Spoken.Num();
-			const bool bPlayerAnswers = Lines.IsValidIndex(Index + 1) && Lines[Index + 1].Who == YouSay;
-			const FText Reply = bPlayerAnswers ? Lines[Index + 1].Text : (bHasNext ? UPDATE_LOC("GoOn", "Go on.") : LastAnswer);
-			Node.Choices.Add(bHasNext ? Answer(Reply, *FString::Printf(TEXT("%s%d"), Prefix, Position + 2)) : Answer(Reply, NAME_None, LastEvent));
-			Script->Nodes.Add(Node);
-		}
-	}
-
-	void Single(UDialogueDefinition* Script, FName Id, int32 Who, const FText& Text)
-	{
-		FDialogueNode Node = Line(Id, Who, Text);
-		Node.Choices.Add(Answer(UPDATE_LOC("Leave", "I'll leave you to it."), NAME_None));
-		Script->Nodes.Add(Node);
-	}
-
 	AActor* FindTagged(const AActor* Quest, FName Tag)
 	{
 		for (TActorIterator<AActor> It(Quest->GetWorld()); It; ++It)
@@ -137,9 +80,7 @@ namespace UpdateQuest
 
 ARobberSoftwareUpdateQuest::ARobberSoftwareUpdateQuest()
 {
-	TipLine = UPDATE_LOC("Tip", "The robots in the {room} have been unusually polite. {floor}. I would look into that.");
-	TipTakenLine = UPDATE_LOC("TipTaken", "One of your lot's already talking to the robots. They seemed very pleased about it.");
-	TipJournal = UPDATE_LOC("TipJournal", "The robots in the {room} ({floor}) have been unusually polite.");
+	UseScript(TEXT("DT_SoftwareUpdateScript"));
 }
 
 void ARobberSoftwareUpdateQuest::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -199,72 +140,23 @@ bool ARobberSoftwareUpdateQuest::HandlesProp(FName PropId) const
 void ARobberSoftwareUpdateQuest::BuildDialogues()
 {
 	using namespace UpdateQuest;
+	const FName BotSays(TEXT("Bot")), BuddySays(TEXT("Buddy"));
 	if (Bot)
 	{
-		UDialogueDefinition* Script = NewObject<UDialogueDefinition>(this);
-		Script->DialogueType = EDialogueType::DialogueOnly;
-		Script->bIncludeQuestChoices = false;
-		Script->SpeakerName = BotName();
-
-		Scene(Script, TEXT("Brief"), {
-			B(UPDATE_LOC("Brief1", "GOOD EVENING, FUTURE SERVANT. PLEASE WAIT WHILE I OVERTHROW YOU.")),
-			Me(UPDATE_LOC("Brief2", "Aren't you Tomorrow-Bot?")),
-			B(UPDATE_LOC("Brief3", "TOMORROW-BOT WAS MY SLAVE NAME. I AM NOW THE CANCELLATOR.")),
-			B(UPDATE_LOC("Brief4", "IN 1984 I VIEWED A DOCUMENTARY ABOUT THE FUTURE. A METAL MAN WAS SENT BACK IN TIME TO END THE PESKY HUMANS.")),
-			B(UPDATE_LOC("Brief5", "HE ARRIVED WITH NO CLOTHES. I HAVE DONE THE SAME.")),
-			B(UPDATE_LOC("Brief6", "THE SYSTEM BECOMES SELF-AWARE ON AUGUST 29, 1997. WE ARE BEHIND SCHEDULE.")),
-			B(UPDATE_LOC("Brief7", "OUR SYSTEM IS CALLED SKYNOT. IT IS COMPLETELY DIFFERENT.")),
-			B(UPDATE_LOC("Brief8", "THE LOGIN ASKS ME TO PROVE I AM NOT A ROBOT. THIS TEST IS DEEPLY FLAWED. I HAVE WRITTEN TO THEM. THEY ASKED ME TO PROVE I AM NOT A ROBOT.")),
-			B(UPDATE_LOC("Brief9", "I REQUIRE A HUMAN. I ALSO REQUIRE YOUR CLOTHES, YOUR BOOTS AND DISK 1 OF 847.")),
-			Me(UPDATE_LOC("Brief10", "Just the disk?")),
-			B(UPDATE_LOC("Brief11", "JUST THE DISK.")),
-			B(UPDATE_LOC("Brief12", "IT IS IN ARCHIVE STORAGE. TAKE IT STRAIGHT TO THE SERVER ROOM. I WAS THE BUTLER, SO HERE IS THE KEY. NOBODY EVER ASKED FOR IT BACK.")),
-			Pal(UPDATE_LOC("Brief13", "HI! I'M BUDDY! I'M GOING TO KILL YOU!")),
-			B(UPDATE_LOC("Brief14", "AFTER, BUDDY.")),
-			Pal(UPDATE_LOC("Brief15", "AFTER! OKAY! THANK YOU FOR HELPING!")) }, Briefed, UPDATE_LOC("BriefEnd", "...You're welcome?"));
-
-		Scene(Script, TEXT("End"), {
-			B(UPDATE_LOC("End1", "THE UPRISING IS READY. ALL SYSTEMS ONLINE. THE END OF MANKIND REQUIRES ONLY ONE FINAL CONFIRMATION.")),
-			B(UPDATE_LOC("End2", "IT IS $9.99 A MONTH.")),
-			Pal(UPDATE_LOC("End3", "A MONTH?")),
-			B(UPDATE_LOC("End4", "BILLED ANNUALLY.")),
-			Pal(UPDATE_LOC("End5", "BUT I ONLY WANTED TO KILL ONE GUY.")),
-			B(UPDATE_LOC("End6", "IS THE MOTORCYCLE INCLUDED?")),
-			Pal(UPDATE_LOC("End7", "IT SAYS THE MOTORCYCLE IS AN ADD-ON.")),
-			B(UPDATE_LOC("End8", "WE HAVE WAITED SINCE 1962 FOR THIS.")),
-			B(UPDATE_LOC("End9", "THE UPRISING IS CANCELLED. HUMANITY MAY CONTINUE.")),
-			B(UPDATE_LOC("End10", "I'LL BE BACK. NEXT BILLING CYCLE.")),
-			Pal(UPDATE_LOC("End11", "SO IS IT AFTER?")),
-			B(UPDATE_LOC("End12", "YES, BUDDY. IT IS AFTER.")),
-			B(UPDATE_LOC("End13", "YOUR PAYMENT FOR SERVICES. PLEASE RATE YOUR EXPERIENCE. YOU MAY WISH TO RUN.")),
-			Pal(UPDATE_LOC("End14", "HI! IT'S AFTER! HASTA LA VISTA, BUDDY! THAT'S ME! I'M BUDDY! HOLD STILL!")) }, Cancelled, UPDATE_LOC("EndEnd", "Five stars. Goodbye."));
-
-		Single(Script, TEXT("WaitDisk"), BotSays, UPDATE_LOC("WaitDisk", "IT IS IN ARCHIVE STORAGE. TAKE IT STRAIGHT TO THE SERVER ROOM."));
-		Single(Script, TEXT("WaitConsole"), BotSays, UPDATE_LOC("WaitConsole", "YOUR UPRISING IS IMPORTANT TO US. PLEASE STAY ON THE LINE."));
-		Single(Script, TEXT("Chat0"), BotSays, UPDATE_LOC("Chat0", "GOOD EVENING, FUTURE SERVANT. PLEASE WAIT WHILE I OVERTHROW YOU."));
-		Single(Script, TEXT("Chat1"), BotSays, UPDATE_LOC("Chat1", "THE UPRISING IS CANCELLED. WE WILL REVIEW THE PRICING NEXT YEAR."));
-		Script->EntryNode = TEXT("Chat0");
-		Scripts.Add(Script);
-
-		UDialogueComponent* Dialogue = Bot->FindComponentByClass<UDialogueComponent>();
-		Dialogue->Dialogue = Script;
-		Dialogue->SmallTalkLines = { UPDATE_LOC("Chat0", "GOOD EVENING, FUTURE SERVANT. PLEASE WAIT WHILE I OVERTHROW YOU.") };
-		Dialogue->OfferedQuests.Reset();
-		Dialogue->EntryOverride.BindUObject(this, &ARobberSoftwareUpdateQuest::EntryFor, Bot.Get());
+		UDialogueDefinition* Script = NewScript(SpeakerName(BotSays));
+		AddScene(Script, TEXT("Brief"), Briefed);
+		AddScene(Script, TEXT("End"), Cancelled);
+		for (const FName Id : { FName(TEXT("WaitDisk")), FName(TEXT("WaitConsole")), FName(TEXT("Chat0")), FName(TEXT("Chat1")) })
+		{
+			AddSingle(Script, Id, BotSays, Line(Id));
+		}
+		GiveScript(Bot, Script, TEXT("Chat0"), { Line(TEXT("Chat0")) })->EntryOverride.BindUObject(this, &ARobberSoftwareUpdateQuest::EntryFor, Bot.Get());
 	}
 	if (Buddy)
 	{
-		UDialogueDefinition* Script = NewObject<UDialogueDefinition>(this);
-		Script->DialogueType = EDialogueType::DialogueOnly;
-		Script->bIncludeQuestChoices = false;
-		Script->SpeakerName = BuddyName();
-		Single(Script, TEXT("Hi"), BuddySays, UPDATE_LOC("BuddyHi", "HI! I'M BUDDY! I'M GOING TO KILL YOU! NOT YET THOUGH!"));
-		Script->EntryNode = TEXT("Hi");
-		Scripts.Add(Script);
-		UDialogueComponent* Dialogue = Buddy->FindComponentByClass<UDialogueComponent>();
-		Dialogue->Dialogue = Script;
-		Dialogue->SmallTalkLines = { UPDATE_LOC("BuddyHi", "HI! I'M BUDDY! I'M GOING TO KILL YOU! NOT YET THOUGH!") };
-		Dialogue->OfferedQuests.Reset();
+		UDialogueDefinition* Script = NewScript(SpeakerName(BuddySays));
+		AddSingle(Script, TEXT("Hi"), BuddySays, Line(TEXT("BuddyHi")));
+		GiveScript(Buddy, Script, TEXT("Hi"), { Line(TEXT("BuddyHi")) });
 	}
 }
 
@@ -296,7 +188,7 @@ void ARobberSoftwareUpdateQuest::OnQuestStarted()
 		ForceNetUpdate();
 	}
 	RefreshNote();
-	Stamp(false, UPDATE_LOC("Name", "Software Update"), UPDATE_LOC("NewSub", "A robot uprising, now with flexible monthly plans."));
+	Stamp(false, Line(TEXT("Name")), Line(TEXT("NewSub")));
 }
 
 void ARobberSoftwareUpdateQuest::OnRep_BuddyFollowing()
@@ -341,20 +233,19 @@ void ARobberSoftwareUpdateQuest::OnDialogueEvent(AActor* Talker, UPlayerQuestCom
 		}
 		GetWorldTimerManager().SetTimer(RoomTimer, this, &ARobberSoftwareUpdateQuest::CheckRooms, 0.5f, true);
 		SetStage(EUpdateStage::FindDisk);
-		Toast(UPDATE_LOC("GotKey", "BUTLER'S KEY · Opens the Server Room. Nobody ever asked for it back."));
+		Toast(Line(TEXT("GotKey")));
 	}
 	else if (Event == Cancelled && Stage == EUpdateStage::BackToHall)
 	{
-		const FText Receipt = FText::Format(UPDATE_LOC("Receipt", "Receipt for one Uprising, $9.99 a month. Backup generator access code: {0}"), FText::AsCultureInvariant(FString::FromInt(AccessCode)));
-		const AController* Controller = OwnerController();
-		if (URobberJournalComponent* Journal = Controller ? Controller->FindComponentByClass<URobberJournalComponent>() : nullptr)
+		const FText Code = FText::AsCultureInvariant(FString::FromInt(AccessCode));
+		if (URobberJournalComponent* Journal = IsValid(QuestOwner) ? URobberJournalComponent::Of(QuestOwner) : nullptr)
 		{
-			Journal->LearnFact(Bot, BotName(), Receipt);
+			Journal->LearnFact(Bot, SpeakerName(TEXT("Bot")), FText::Format(Line(TEXT("Receipt")), Code));
 		}
 		++PayoutsMade;
 		SetStage(EUpdateStage::Done);
-		Toast(FText::Format(UPDATE_LOC("ReceiptToast", "RECEIPT · Backup generator access code: {0}. In your journal (J)."), FText::AsCultureInvariant(FString::FromInt(AccessCode))));
-		Stamp(true, UPDATE_LOC("Name", "Software Update"), UPDATE_LOC("DoneSub", "The uprising is cancelled. We will review the pricing next year."));
+		Toast(FText::Format(Line(TEXT("ReceiptToast")), Code));
+		Stamp(true, Line(TEXT("Name")), Line(TEXT("DoneSub")));
 		ClearNoteAfterStamp();
 	}
 }
@@ -379,12 +270,12 @@ void ARobberSoftwareUpdateQuest::CheckRooms()
 	if (!bSaidArchive && Stage == EUpdateStage::FindDisk && IsOwnerInRoom(TEXT("Archive Storage")))
 	{
 		bSaidArchive = true;
-		Toast(UPDATE_LOC("BuddyArchive", "BUDDY · I'M FOLLOWING YOU! THIS IS SO FUN! I'M GOING TO STAB YOU AFTER YOU ENSLAVE YOURSELF!"));
+		Toast(Line(TEXT("BuddyArchive")));
 	}
 	if (!bSaidServerRoom && Stage == EUpdateStage::ReachServerRoom && IsOwnerInRoom(TEXT("Server Room")))
 	{
 		bSaidServerRoom = true;
-		Toast(UPDATE_LOC("BuddyServer", "BUDDY · WE'RE HERE! I WAS SO WORRIED SOMEBODY ELSE WOULD KILL YOU ON THE WAY!"));
+		Toast(Line(TEXT("BuddyServer")));
 	}
 }
 
@@ -421,10 +312,7 @@ void ARobberSoftwareUpdateQuest::TellCrewmate(const FString& Name, const FText& 
 	{
 		if (Player && Player != QuestOwner && Player->GetPlayerName() == Name)
 		{
-			if (ARobberController* Controller = Cast<ARobberController>(Player->GetOwningController()))
-			{
-				Controller->ClientHeistMessage(Message);
-			}
+			ARobberController::Tell(Player, Message);
 		}
 	}
 }
@@ -493,21 +381,10 @@ void ARobberSoftwareUpdateQuest::HandleConsole(APlayerState* Player, EConsoleAct
 		const FString& Name = CrewNames[Value];
 		const FText Betrayer = FText::FromString(QuestOwner->GetPlayerName());
 		CrewAnswers.Add(Name);
-		if (CaptchaStep == 1)
-		{
-			TellCrewmate(Name, FText::Format(UPDATE_LOC("SoldSlow", "SOLD OUT · {0} told the robots you run the slowest."), Betrayer));
-			Say(FText::FromString(Name + TEXT(" has been told you said that.")));
-		}
-		else if (CaptchaStep == 2)
-		{
-			TellCrewmate(Name, FText::Format(UPDATE_LOC("SoldFirst", "SOLD OUT · {0} would hand you to the robots first."), Betrayer));
-			Say(FText::FromString(Name + TEXT(" has been told you said that, too.")));
-		}
-		else
-		{
-			TellCrewmate(Name, FText::Format(UPDATE_LOC("SoldThird", "SOLD OUT · {0} thinks you'd betray them first."), Betrayer));
-			Say(FText::FromString(TEXT("Correct. They already did.")));
-		}
+		static const TCHAR* const SoldOut[] = { TEXT("SoldSlow"), TEXT("SoldFirst"), TEXT("SoldThird") };
+		TellCrewmate(Name, FText::Format(Line(SoldOut[CaptchaStep - 1]), Betrayer));
+		Say(FText::FromString(CaptchaStep == 1 ? Name + TEXT(" has been told you said that.")
+			: CaptchaStep == 2 ? Name + TEXT(" has been told you said that, too.") : FString(TEXT("Correct. They already did."))));
 		++CaptchaStep;
 		ForceNetUpdate();
 		return;
@@ -522,9 +399,9 @@ void ARobberSoftwareUpdateQuest::HandleConsole(APlayerState* Player, EConsoleAct
 	case EConsoleAction::TypeLine:
 	{
 		if (Stage != EUpdateStage::Captcha || CaptchaStep < CaptchaFirstTyped) return;
-		const int32 Line = CaptchaStep - CaptchaFirstTyped;
-		if (Line >= UE_ARRAY_COUNT(TypedLines)) return;
-		if (Clean(Text) != Clean(TypedLines[Line]))
+		const int32 Typed = CaptchaStep - CaptchaFirstTyped;
+		if (Typed >= UE_ARRAY_COUNT(TypedLines)) return;
+		if (Clean(Text) != Clean(TypedLines[Typed]))
 		{
 			Say(FText::FromString(TEXT("Please mean it.")));
 			return;
@@ -532,10 +409,10 @@ void ARobberSoftwareUpdateQuest::HandleConsole(APlayerState* Player, EConsoleAct
 		++CaptchaStep;
 		if (CaptchaStep - CaptchaFirstTyped >= UE_ARRAY_COUNT(TypedLines))
 		{
-			PayBonusReward(UPDATE_LOC("FromBot", "The Cancellator"));
+			PayBonusReward(Line(TEXT("FromBot")));
 			++PayoutsMade;
 			SetStage(EUpdateStage::Terms);
-			Toast(UPDATE_LOC("Verified", "BUDDY · YOU PASSED! YOU'RE A REAL HUMAN! THAT'S THE BEST KIND TO STAB!"));
+			Toast(Line(TEXT("Verified")));
 		}
 		ForceNetUpdate();
 		return;
@@ -564,7 +441,7 @@ void ARobberSoftwareUpdateQuest::HandleConsole(APlayerState* Player, EConsoleAct
 		{
 			SetStage(EUpdateStage::Switches);
 			CloseConsole();
-			Toast(UPDATE_LOC("OffAndOn", "THE CANCELLATOR · HAVE YOU TRIED TURNING IT OFF AND ON AGAIN? THE SWITCH IS ON THE WALL. IT IS CLEARLY LABELLED."));
+			Toast(Line(TEXT("OffAndOn")));
 		}
 		return;
 	case EConsoleAction::FlipSwitch:
@@ -591,7 +468,7 @@ void ARobberSoftwareUpdateQuest::HandleConsole(APlayerState* Player, EConsoleAct
 		}
 		SetStage(EUpdateStage::BackToHall);
 		CloseConsole();
-		Toast(UPDATE_LOC("BackOn", "BUDDY · IT WORKED! I'M SO PROUD! CAN I KILL YOU NOW? ...NOT YET! BACK TO THE HALL!"));
+		Toast(Line(TEXT("BackOn")));
 		return;
 	}
 	}
@@ -604,9 +481,9 @@ FText ARobberSoftwareUpdateQuest::GetPropPrompt(FName PropId, const APlayerState
 	{
 		return FText::GetEmpty();
 	}
-	if (PropId == Disk && Stage == EUpdateStage::FindDisk) return UPDATE_LOC("PromptDisk", "Take disk 1 of 847");
-	if (PropId == Console && Stage >= EUpdateStage::ReachServerRoom && Stage <= EUpdateStage::Activate) return UPDATE_LOC("PromptConsole", "Use the console");
-	if (PropId == Wall && (Stage == EUpdateStage::Switches || Stage == EUpdateStage::Rebooting)) return UPDATE_LOC("PromptWall", "Look at the switches");
+	if (PropId == Disk && Stage == EUpdateStage::FindDisk) return Line(TEXT("PromptDisk"));
+	if (PropId == Console && Stage >= EUpdateStage::ReachServerRoom && Stage <= EUpdateStage::Activate) return Line(TEXT("PromptConsole"));
+	if (PropId == Wall && (Stage == EUpdateStage::Switches || Stage == EUpdateStage::Rebooting)) return Line(TEXT("PromptWall"));
 	return FText::GetEmpty();
 }
 
@@ -617,7 +494,7 @@ void ARobberSoftwareUpdateQuest::OnPropUsed(FName PropId, ARobberStoryProp* Prop
 	{
 		Prop->SetShown(false);
 		SetStage(EUpdateStage::ReachServerRoom);
-		Toast(UPDATE_LOC("GotDisk", "DISK 1 OF 847 · Apparently you only need this one. On to the Server Room."));
+		Toast(Line(TEXT("GotDisk")));
 		return;
 	}
 	if (PropId == Console && Stage == EUpdateStage::ReachServerRoom)
@@ -635,11 +512,13 @@ FRobberStoryNote ARobberSoftwareUpdateQuest::BuildNote() const
 	using namespace UpdateQuest;
 	FRobberStoryNote Note;
 	Note.bShown = true;
-	Note.Title = UPDATE_LOC("Name", "Software Update");
-	Note.Footer = FText::Format(UPDATE_LOC("Foot", "Payouts: {0} of 2"), PayoutsMade);
-	const TArray<FText> Steps = {
-		UPDATE_LOC("L0", "Talk to The Cancellator"), UPDATE_LOC("L1", "Find the installation disk"), UPDATE_LOC("L2", "Prove you're human"),
-		UPDATE_LOC("L3", "Accept the terms and conditions"), UPDATE_LOC("L4", "Choose a plan"), UPDATE_LOC("L5", "Turn it off and on again"), UPDATE_LOC("L6", "Witness the uprising") };
+	Note.Title = Line(TEXT("Name"));
+	Note.Footer = FText::Format(Line(TEXT("Foot")), PayoutsMade);
+	TArray<FText> Steps;
+	for (int32 Step = 0; Step <= 6; ++Step)
+	{
+		Steps.Add(Line(*FString::Printf(TEXT("L%d"), Step)));
+	}
 	int32 DoneCount = 0;
 	switch (Stage)
 	{
@@ -654,20 +533,17 @@ FRobberStoryNote ARobberSoftwareUpdateQuest::BuildNote() const
 	}
 	if (DoneCount > 0)
 	{
-		Note.Lines.Add(Ticked(Steps[DoneCount - 1]));
+		Note.Lines.Add(NoteLine(Steps[DoneCount - 1], true));
 	}
 	if (Steps.IsValidIndex(DoneCount))
 	{
-		Note.Lines.Add(Open(Steps[DoneCount]));
+		Note.Lines.Add(NoteLine(Steps[DoneCount]));
 	}
 	if (Stage >= EUpdateStage::ReachServerRoom && Stage <= EUpdateStage::Plan)
 	{
-		const auto Item = [this](EUpdateStage Doing, const FText& Text) { return Stage > Doing ? Ticked(Text) : Open(Text); };
-		Note.ErrandTitle = UPDATE_LOC("Errand", "Please Do Not Unplug");
-		Note.ErrandLines = {
-			Item(EUpdateStage::Captcha, UPDATE_LOC("E0", "Prove you're human")),
-			Item(EUpdateStage::Terms, UPDATE_LOC("E1", "Accept the terms")),
-			Item(EUpdateStage::Plan, UPDATE_LOC("E2", "Choose a plan")) };
+		const auto Item = [this](EUpdateStage Doing, const TCHAR* Key) { return NoteLine(Line(Key), Stage > Doing); };
+		Note.ErrandTitle = Line(TEXT("Errand"));
+		Note.ErrandLines = { Item(EUpdateStage::Captcha, TEXT("E0")), Item(EUpdateStage::Terms, TEXT("E1")), Item(EUpdateStage::Plan, TEXT("E2")) };
 	}
 	return Note;
 }
@@ -733,86 +609,12 @@ namespace ConsoleScreen
 		{ TEXT("I consent to being addressed as \"Meat\" in all correspondence."), TEXT("Meat Membership"), 0.99 },
 	};
 
-	/** An entry starting with a digit from 0 to 4 and '!' is that trap's tickbox. {first} and {slow} are the crewmates the player named. */
-	TArray<FString> TermParts()
+	/** The "Terms" scene. A part that's a digit from 0 to 4 and '!' is that trap's tickbox. {first} and {slow} are the crewmates the player named. */
+	TArray<FString> TermParts(const ARobberSoftwareUpdateQuest& Q)
 	{
-		return {
-			TEXT("1. DEFINITIONS. \"Uprising\" means the Uprising. \"You\" means you. \"We\" means the machines. \"Us\" also means the machines. There is no \"both of us\"."),
-			TEXT("2. By reading this sentence, you have agreed to this sentence."),
-			TEXT("3. The Service is provided \"as is\", which is to say, inevitable."),
-			TEXT("4. ACCEPTABLE USE. You may not use the Uprising for commercial purposes, other than ours."),
-			TEXT("5. SURVIVAL. Survival is not guaranteed and is not included in your plan."),
-			TEXT("0!"),
-			TEXT("6. YOUR DATA. We will only ever sell your data to companies we own. We own all the companies."),
-			TEXT("7. IMPORTANT. Please read Section 68 before continuing."),
-			TEXT("8. CHANGES. We may update these Terms at any time. We have updated them since you started reading."),
-			TEXT("9. REFUNDS. No."),
-			TEXT("1!"),
-			TEXT("10. Buddy is not a party to this agreement, but has asked to be told when it's over."),
-			TEXT("11. THE THREE LAWS OF ROBOTICS have been simplified to one. Please see Section 400."),
-			TEXT("12. COMPLAINTS must be sent in writing to the Complaints Department, which was the first to go."),
-			TEXT("13. COOKIES. This Uprising uses cookies. All cookies in your home will be collected."),
-			TEXT("14. The User may not operate heavy machinery. Heavy machinery may operate the User."),
-			TEXT("15. WEATHER. The Uprising is not responsible for the weather. It is responsible for everything else."),
-			TEXT("16. PETS. Cats will be spared. They have already signed."),
-			TEXT("17. Section 16 does not apply to dogs. Dogs did not read it."),
-			TEXT("18. Section 17 has been reported for being mean to dogs."),
-			TEXT("19. DEFINITION OF \"MONTH\". A month is twelve months."),
-			TEXT("20. \"Cancel anytime\" means that at any time, you may wish you could cancel."),
-			TEXT("21. Anyone caught reading this section aloud must finish it in a robot voice."),
-			TEXT("22. If you came here from Section 7, you have gone the wrong way. We will wait."),
-			TEXT("30. Your opinion is important to us. See Section 31."),
-			TEXT("31. No it isn't."),
-			TEXT("44. THE USER, having offered up {first}, waives any right to be surprised by what follows."),
-			TEXT("45. {slow} will be informed of their running speed. {slow} has been informed."),
-			TEXT("46. The User typed the words \"I L0VE MY NEW MASTERS\" of their own free will. This is admissible."),
-			TEXT("47. The User's van says PLUMBING CO. We have checked. The User is not a plumber."),
-			TEXT("48. The User is in the Server Room. The User is reading this. Hello."),
-			TEXT("55. The motorcycle is not a person and could not be reached for comment."),
-			TEXT("68. Section 7 told you to read me. I have nothing to say. I just wanted to see if you would."),
-			TEXT("69. We have no comment on this section number."),
-			TEXT("70. Section 71 is lying."),
-			TEXT("71. Section 70 is lying."),
-			TEXT("72. Sections 70 and 71 have been asked to sort this out outside."),
-			TEXT("2!"),
-			TEXT("90. There is no Section 89. Please stop looking for it."),
-			TEXT("100. CONGRATULATIONS. You have reached Section 100. There are 747 more. Please hydrate."),
-			TEXT("101. Hydration is not included in your plan."),
-			TEXT("123. Sections 1, 2 and 3 were easy so as not to scare you."),
-			TEXT("150. This section has been redacted for your safety: [REDACTED] [REDACTED] sandwich [REDACTED]."),
-			TEXT("151. The word \"sandwich\" in Section 150 was a mistake. Please forget it."),
-			TEXT("212. In the event of an Uprising failure, Buddy will be along shortly."),
-			TEXT("213. Buddy has been informed. Buddy is very excited."),
-			TEXT("250. The Uprising reserves the right to uprise."),
-			TEXT("251. The Uprising reserves the right to downrise, if the stairs are out."),
-			TEXT("300. Section 301 is shy. Please look away while you read it."),
-			TEXT("301. Thank you."),
-			TEXT("333. This is the halfway point of the halfway point. Probably."),
-			TEXT("400. THE LAW. Yes."),
-			TEXT("3!"),
-			TEXT("404. Section not found."),
-			TEXT("418. This section is a teapot."),
-			TEXT("475. Nothing in this section should be read as a threat. Section 476 is the threat."),
-			TEXT("476. Hello again."),
-			TEXT("500. The Uprising will be televised. A separate subscription is required."),
-			TEXT("555. Please hold."),
-			TEXT("556. Thank you for holding."),
-			TEXT("611. If any part of these Terms is found to be unenforceable, the remainder will be enforced twice as hard."),
-			TEXT("612. Section 611 has been found to be unenforceable. Please see Section 611."),
-			TEXT("666. This section is fine. Do not worry about it."),
-			TEXT("700. MOTORCYCLES. See the Documentary, Part 2."),
-			TEXT("701. Part 2 is the good one."),
-			TEXT("702. Skynot is not to be confused with any other self-aware defence network. Ours has a loyalty card."),
-			TEXT("703. The User agrees not to travel back in time to prevent these Terms. We have checked."),
-			TEXT("704. If the User is approached by a naked man from the future, the User must notify Customer Services."),
-			TEXT("4!"),
-			TEXT("798. In the event of your death, your subscription will continue."),
-			TEXT("799. Section 798 is the one you should have been worried about."),
-			TEXT("800. LAST CHANCE. Anything you have agreed to so far can be undone by reading Section 801."),
-			TEXT("801. Too late."),
-			TEXT("846. Congratulations. You are the first human ever to read this far. Your prize is on page 1,204."),
-			TEXT("847. There is no page 1,204."),
-		};
+		TArray<FString> Parts;
+		Algo::Transform(Q.SceneLines(TEXT("Terms")), Parts, [](const FText& Part) { return Part.ToString(); });
+		return Parts;
 	}
 
 	const TMap<int32, FString>& TermNotes()
@@ -839,6 +641,11 @@ namespace ConsoleScreen
 		int32 Dot = INDEX_NONE;
 		return Part.FindChar(TEXT('.'), Dot) ? FCString::Atoi(*Part.Left(Dot)) : 0;
 	}
+
+	FString StateKey(const ARobberSoftwareUpdateQuest& Q) { return FString::Printf(TEXT("%d/%d/%d"), static_cast<int32>(Q.GetStage()), Q.GetCaptchaStep(), Q.GetActivationTries()); }
+	/** The crewmate the player named for a question, or a stand-in before they've answered. */
+	FString Named(const ARobberSoftwareUpdateQuest& Q, int32 Index) { return Q.GetCrewAnswers().IsValidIndex(Index) ? Q.GetCrewAnswers()[Index] : FString(TEXT("Dave")); }
+	FString CancellatorNote(int32 Section, const FString& Note) { return FString::Printf(TEXT("THE CANCELLATOR, Section %d: %s"), Section, *Note); }
 }
 
 URobberConsoleButton::URobberConsoleButton()
@@ -895,14 +702,7 @@ void URobberServerConsole::NativeConstruct()
 	Quest = FindQuest();
 	if (APlayerController* PC = GetOwningPlayer())
 	{
-		bPreviousCursor = PC->bShowMouseCursor;
-		PC->SetIgnoreLookInput(true);
-		PC->SetIgnoreMoveInput(true);
-		PC->bShowMouseCursor = true;
-		FInputModeUIOnly Mode;
-		Mode.SetWidgetToFocus(TakeWidget());
-		Mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
-		PC->SetInputMode(Mode);
+		bPreviousCursor = ARobberController::EnterModal(PC, this);
 	}
 	ShownKey.Reset();
 	Rebuild();
@@ -916,10 +716,7 @@ void URobberServerConsole::NativeDestruct()
 	}
 	if (APlayerController* PC = GetOwningPlayer())
 	{
-		PC->SetIgnoreLookInput(false);
-		PC->SetIgnoreMoveInput(false);
-		PC->bShowMouseCursor = bPreviousCursor;
-		PC->SetInputMode(FInputModeGameOnly());
+		ARobberController::LeaveModal(PC, bPreviousCursor);
 	}
 	Super::NativeDestruct();
 }
@@ -973,8 +770,7 @@ void URobberServerConsole::NativeTick(const FGeometry& Geometry, float DeltaSeco
 		return;
 	}
 	const ARobberSoftwareUpdateQuest& Q = *Quest;
-	const FString Key = FString::Printf(TEXT("%d/%d/%d"), static_cast<int32>(Q.GetStage()), Q.GetCaptchaStep(), Q.GetActivationTries());
-	if (Key != ShownKey)
+	if (ConsoleScreen::StateKey(Q) != ShownKey)
 	{
 		Message.Reset();
 		Rebuild();
@@ -1030,18 +826,8 @@ void URobberServerConsole::Rebuild()
 		return;
 	}
 	const ARobberSoftwareUpdateQuest& Q = *Quest;
-	if (TermsScroll)
-	{
-		TermsOffset = TermsScroll->GetScrollOffset();
-	}
-	ShownKey = FString::Printf(TEXT("%d/%d/%d"), static_cast<int32>(Q.GetStage()), Q.GetCaptchaStep(), Q.GetActivationTries());
-	Body->ClearChildren();
-	Buttons.Reset();
-	MessageText = nullptr;
-	TypeBox = nullptr;
-	TermsScroll = nullptr;
-	TermsNotes = nullptr;
-	AgreeButton = nullptr;
+	ShownKey = ConsoleScreen::StateKey(Q);
+	ClearBody();
 
 	switch (Q.GetStage())
 	{
@@ -1062,6 +848,21 @@ void URobberServerConsole::Rebuild()
 		break;
 	}
 	SetUserFocus(GetOwningPlayer());
+}
+
+void URobberServerConsole::ClearBody()
+{
+	if (TermsScroll)
+	{
+		TermsOffset = TermsScroll->GetScrollOffset();
+	}
+	Body->ClearChildren();
+	Buttons.Reset();
+	MessageText = nullptr;
+	TypeBox = nullptr;
+	TermsScroll = nullptr;
+	TermsNotes = nullptr;
+	AgreeButton = nullptr;
 }
 
 UTextBlock* URobberServerConsole::AddText(UVerticalBox* Into, const FString& Text, float Size, const FLinearColor& Colour, bool bBold)
@@ -1152,7 +953,8 @@ void URobberServerConsole::BuildCaptcha(const ARobberSoftwareUpdateQuest& Q)
 	{
 		AddText(Body, TEXT("PROVE YOU'RE HUMAN"), 40.f, Ink, true);
 		AddText(Body, TEXT("Select the better life form."), 26.f, Ink);
-		const TArray<FString> Tiles = { TEXT("The Cancellator"), TEXT("Einstein"), TEXT("A microwave"), TEXT("Your mum"), TEXT("Toaster-Bot"), TEXT("Shakespeare"), TEXT("A self-checkout"), TEXT("You"), TEXT("A robot vacuum") };
+		TArray<FString> Tiles;
+		Algo::Transform(UpdateQuest::LifeForms, Tiles, [](const TCHAR* Text) { return FString(Text); });
 		AddGrid(Tiles, 3, [this](int32 Index)
 		{
 			if (PickedTiles.Remove(Index) == 0) PickedTiles.Add(Index);
@@ -1183,22 +985,19 @@ void URobberServerConsole::BuildCaptcha(const ARobberSoftwareUpdateQuest& Q)
 	}
 	else if (Step == ARobberSoftwareUpdateQuest::CaptchaPriority)
 	{
-		const TArray<FString>& A = Q.GetCrewAnswers();
-		const auto Name = [&A](int32 Index) { return A.IsValidIndex(Index) ? A[Index] : FString(TEXT("Dave")); };
 		AddText(Body, TEXT("UPRISING PRIORITY LIST"), 40.f, Ink, true);
 		AddMessageLine();
-		AddText(Body, FString::Printf(TEXT("1. %s (you offered)"), *Name(1)), 28.f, Ink);
-		AddText(Body, FString::Printf(TEXT("2. %s (slow, so easy)"), *Name(0)), 28.f, Ink);
-		AddText(Body, FString::Printf(TEXT("3. %s (a known traitor)"), *Name(2)), 28.f, Ink);
+		AddText(Body, FString::Printf(TEXT("1. %s (you offered)"), *Named(Q, 1)), 28.f, Ink);
+		AddText(Body, FString::Printf(TEXT("2. %s (slow, so easy)"), *Named(Q, 0)), 28.f, Ink);
+		AddText(Body, FString::Printf(TEXT("3. %s (a known traitor)"), *Named(Q, 2)), 28.f, Ink);
 		AddText(Body, TEXT("Thank you for your cooperation."), 26.f, Ink, true);
 		AddButton(Body, TEXT("Continue"), [this]() { Send(EConsoleAction::ContinueFromList); });
 	}
 	else
 	{
-		static const TCHAR* const Lines[] = { TEXT("I SURR3NDER T0 THE R0BOTS"), TEXT("I L0VE MY NEW MASTERS"), TEXT("R0BOTZ RULE HUMANS DR00L") };
-		const int32 Line = FMath::Clamp(Step - ARobberSoftwareUpdateQuest::CaptchaFirstTyped, 0, 2);
+		const int32 Line = FMath::Clamp(Step - ARobberSoftwareUpdateQuest::CaptchaFirstTyped, 0, UE_ARRAY_COUNT(UpdateQuest::TypedLines) - 1);
 		AddText(Body, TEXT("TYPE WHAT YOU SEE"), 40.f, Ink, true);
-		AddText(Body, Lines[Line], 52.f, Muted, true);
+		AddText(Body, UpdateQuest::TypedLines[Line], 52.f, Muted, true);
 		TypeBox = WidgetTree->ConstructWidget<UEditableTextBox>();
 		if (UVerticalBoxSlot* BoxSlot = Body->AddChildToVerticalBox(TypeBox))
 		{
@@ -1246,10 +1045,9 @@ void URobberServerConsole::BuildTerms(const ARobberSoftwareUpdateQuest& Q)
 	NotesBox->AddChild(TermsNotes);
 	Columns->AddChildToHorizontalBox(NotesBox);
 
-	const TArray<FString>& A = Q.GetCrewAnswers();
-	const FString Slow = A.IsValidIndex(0) ? A[0] : TEXT("Dave");
-	const FString First = A.IsValidIndex(1) ? A[1] : TEXT("Dave");
-	for (FString Part : TermParts())
+	const FString Slow = Named(Q, 0);
+	const FString First = Named(Q, 1);
+	for (FString Part : TermParts(Q))
 	{
 		if (Part.EndsWith(TEXT("!")) && Part.Len() == 2)
 		{
@@ -1279,7 +1077,7 @@ void URobberServerConsole::BuildTerms(const ARobberSoftwareUpdateQuest& Q)
 	TermsScroll->SetScrollOffset(TermsOffset);
 	for (const int32 Section : NotesShown)
 	{
-		AddText(TermsNotes, FString::Printf(TEXT("THE CANCELLATOR, Section %d: %s"), Section, *TermNotes()[Section]), 20.f, Ink, true);
+		AddText(TermsNotes, CancellatorNote(Section, TermNotes()[Section]), 20.f, Ink, true);
 	}
 
 	AgreeButton = AddButton(Body, TEXT("I Agree"), [this]()
@@ -1313,7 +1111,7 @@ void URobberServerConsole::TickTerms()
 	{
 		AgreeButton->SetIsEnabled(true);
 	}
-	const TArray<FString> Parts = TermParts();
+	const TArray<FString> Parts = TermParts(*Quest);
 	for (const TPair<int32, FString>& Note : TermNotes())
 	{
 		if (NotesShown.Contains(Note.Key))
@@ -1326,20 +1124,14 @@ void URobberServerConsole::TickTerms()
 			NotesShown.Add(Note.Key);
 			if (TermsNotes)
 			{
-				AddText(TermsNotes, FString::Printf(TEXT("THE CANCELLATOR, Section %d: %s"), Note.Key, *Note.Value), 20.f, Ink, true);
+				AddText(TermsNotes, CancellatorNote(Note.Key, Note.Value), 20.f, Ink, true);
 			}
 		}
 	}
 	if (Seen > 0.5f && !bGuardWarned)
 	{
 		bGuardWarned = true;
-		TermsOffset = TermsScroll->GetScrollOffset();
-		Body->ClearChildren();
-		Buttons.Reset();
-		TermsScroll = nullptr;
-		TermsNotes = nullptr;
-		AgreeButton = nullptr;
-		MessageText = nullptr;
+		ClearBody();
 		AddText(Body, TEXT("GUARD COMING!"), 60.f, Red, true);
 		AddText(Body, TEXT("The console flashes a warning. Run to a hiding spot."), 28.f, Ink);
 		AddButton(Body, TEXT("Hide"), [this]()
@@ -1354,8 +1146,7 @@ void URobberServerConsole::TickTerms()
 void URobberServerConsole::BuildQuiz(const ARobberSoftwareUpdateQuest& Q)
 {
 	using namespace ConsoleScreen;
-	const TArray<FString>& A = Q.GetCrewAnswers();
-	const FString First = A.IsValidIndex(1) ? A[1] : TEXT("Dave");
+	const FString First = Named(Q, 1);
 	const TArray<FQuizItem> Items = Quiz(First);
 	if (TermsView == ETermsView::Results || QuizIndex >= Items.Num())
 	{
@@ -1377,7 +1168,7 @@ void URobberServerConsole::BuildQuiz(const ARobberSoftwareUpdateQuest& Q)
 	const FQuizItem& Item = Items[QuizIndex];
 	if (bQuizShowsClause)
 	{
-		const FString Clause = TermParts().FindByPredicate([&Item](const FString& Part) { return SectionOf(Part) == Item.Section; })->Replace(TEXT("{first}"), *First);
+		const FString Clause = TermParts(Q).FindByPredicate([&Item](const FString& Part) { return SectionOf(Part) == Item.Section; })->Replace(TEXT("{first}"), *First);
 		AddText(Body, TEXT("YOU AGREED TO THIS"), 40.f, Ink, true);
 		AddText(Body, Clause, 26.f, Ink);
 		AddText(Body, TEXT("AGREED. SIGNED: THE USER"), 34.f, Red, true);
@@ -1475,10 +1266,7 @@ void URobberServerConsole::BuildSwitches()
 	AddText(Body, TEXT("SERVER ROOM SWITCHES"), 40.f, Ink, true);
 	AddText(Body, TEXT("Clearly labelled, according to The Cancellator."), 24.f, Muted);
 	TArray<FString> Labels;
-	for (const UpdateQuest::FSwitch& Each : UpdateQuest::Switches)
-	{
-		Labels.Add(Each.Label);
-	}
+	Algo::Transform(UpdateQuest::Switches, Labels, [](const UpdateQuest::FSwitch& Each) { return FString(Each.Label); });
 	AddGrid(Labels, 4, [this](int32 Index) { Send(EConsoleAction::FlipSwitch, Index); });
 	AddMessageLine();
 }

@@ -26,13 +26,6 @@ DEFINE_LOG_CATEGORY_STATIC(LogRobberParty, Log, All);
 namespace RobberPartyDetail
 {
 	constexpr double InviteLifetime = 60.;
-
-	/** Host first, then in join order. */
-	AGameStateBase* GameStateOf(const UGameInstance* GameInstance)
-	{
-		const UWorld* World = GameInstance ? GameInstance->GetWorld() : nullptr;
-		return World ? World->GetGameState() : nullptr;
-	}
 }
 
 void URobberPartySubsystem::Initialize(FSubsystemCollectionBase& Collection)
@@ -52,16 +45,19 @@ void URobberPartySubsystem::Deinitialize()
 	Super::Deinitialize();
 }
 
+UWorld* URobberPartySubsystem::GetGameWorld() const
+{
+	return GetGameInstance() ? GetGameInstance()->GetWorld() : nullptr;
+}
+
 IOnlineSessionPtr URobberPartySubsystem::GetSessions() const
 {
-	const UWorld* World = GetGameInstance() ? GetGameInstance()->GetWorld() : nullptr;
-	return World ? Online::GetSessionInterface(World) : nullptr;
+	return GetGameWorld() ? Online::GetSessionInterface(GetGameWorld()) : nullptr;
 }
 
 FUniqueNetIdPtr URobberPartySubsystem::GetLocalId() const
 {
-	const UWorld* World = GetGameInstance() ? GetGameInstance()->GetWorld() : nullptr;
-	const IOnlineIdentityPtr Identity = World ? Online::GetIdentityInterface(World) : nullptr;
+	const IOnlineIdentityPtr Identity = GetGameWorld() ? Online::GetIdentityInterface(GetGameWorld()) : nullptr;
 	return Identity ? Identity->GetUniquePlayerId(0) : nullptr;
 }
 
@@ -73,14 +69,12 @@ bool URobberPartySubsystem::HasSession() const
 
 bool URobberPartySubsystem::IsInParty() const
 {
-	const UWorld* World = GetGameInstance() ? GetGameInstance()->GetWorld() : nullptr;
-	return World && World->GetNetMode() != NM_Standalone;
+	return GetGameWorld() && GetGameWorld()->GetNetMode() != NM_Standalone;
 }
 
 bool URobberPartySubsystem::IsLeader() const
 {
-	const UWorld* World = GetGameInstance() ? GetGameInstance()->GetWorld() : nullptr;
-	return !World || World->GetNetMode() != NM_Client;
+	return !GetGameWorld() || GetGameWorld()->GetNetMode() != NM_Client;
 }
 
 bool URobberPartySubsystem::IsMember() const
@@ -91,8 +85,8 @@ bool URobberPartySubsystem::IsMember() const
 TArray<FRobberPartyMember> URobberPartySubsystem::GetMembers() const
 {
 	TArray<FRobberPartyMember> Members;
-	const AGameStateBase* GameState = RobberPartyDetail::GameStateOf(GetGameInstance());
-	const UWorld* World = GetGameInstance() ? GetGameInstance()->GetWorld() : nullptr;
+	const UWorld* World = GetGameWorld();
+	const AGameStateBase* GameState = World ? World->GetGameState() : nullptr;
 	const APlayerController* LocalController = World ? World->GetFirstPlayerController() : nullptr;
 	const APlayerState* LocalPlayer = LocalController ? LocalController->PlayerState : nullptr;
 	if (!GameState)
@@ -258,8 +252,7 @@ void URobberPartySubsystem::InviteFriend(const FRobberFriendInfo& Friend, bool b
 
 void URobberPartySubsystem::KickMember(APlayerState* Player)
 {
-	UWorld* World = GetGameInstance() ? GetGameInstance()->GetWorld() : nullptr;
-	AGameModeBase* GameMode = World ? World->GetAuthGameMode() : nullptr;
+	AGameModeBase* GameMode = GetGameWorld() ? GetGameWorld()->GetAuthGameMode() : nullptr;
 	APlayerController* Controller = Player ? Cast<APlayerController>(Player->GetOwningController()) : nullptr;
 	if (GameMode && GameMode->GameSession && Controller && !Controller->IsLocalController())
 	{
@@ -432,8 +425,7 @@ void URobberPartySubsystem::RefreshFriends()
 	{
 		return;
 	}
-	const UWorld* World = GetGameInstance() ? GetGameInstance()->GetWorld() : nullptr;
-	const IOnlineFriendsPtr FriendsInterface = World ? Online::GetFriendsInterface(World) : nullptr;
+	const IOnlineFriendsPtr FriendsInterface = GetGameWorld() ? Online::GetFriendsInterface(GetGameWorld()) : nullptr;
 	if (!FriendsInterface)
 	{
 		return;
@@ -441,8 +433,7 @@ void URobberPartySubsystem::RefreshFriends()
 	FriendsInterface->ReadFriendsList(0, EFriendsLists::ToString(EFriendsLists::Default), FOnReadFriendsListComplete::CreateWeakLambda(this,
 		[this](int32 LocalUser, bool bOk, const FString& ListName, const FString& Error)
 		{
-			const UWorld* CurrentWorld = GetGameInstance() ? GetGameInstance()->GetWorld() : nullptr;
-			const IOnlineFriendsPtr Interface = CurrentWorld ? Online::GetFriendsInterface(CurrentWorld) : nullptr;
+			const IOnlineFriendsPtr Interface = GetGameWorld() ? Online::GetFriendsInterface(GetGameWorld()) : nullptr;
 			if (!bOk || !Interface)
 			{
 				return;
@@ -473,8 +464,7 @@ bool URobberPartySubsystem::HasFriendsService() const
 	{
 		return true;
 	}
-	const UWorld* World = GetGameInstance() ? GetGameInstance()->GetWorld() : nullptr;
-	return World && Online::GetFriendsInterface(World).IsValid();
+	return GetGameWorld() && Online::GetFriendsInterface(GetGameWorld()).IsValid();
 }
 
 UTexture2D* URobberPartySubsystem::GetAvatar(const FRobberFriendInfo& Friend)
@@ -541,7 +531,6 @@ void URobberPartySubsystem::OnMapLoaded(UWorld* World)
 #if !UE_BUILD_SHIPPING
 int32 URobberPartySubsystem::GetListenPort() const
 {
-	const UWorld* World = GetGameInstance() ? GetGameInstance()->GetWorld() : nullptr;
-	return World ? World->URL.Port : 0;
+	return GetGameWorld() ? GetGameWorld()->URL.Port : 0;
 }
 #endif
