@@ -152,6 +152,8 @@ public:
 	/** Local only, from the table's hover trace. */
 	void SetHovered(bool bHovered);
 	bool IsHovered() const { return bHovered; }
+	/** The table's own hover trace lights it. */
+	virtual bool OutlinesItself() const override { return true; }
 	bool IsOnMap() const { return bOnMap; }
 	int32 GetPinCount() const;
 

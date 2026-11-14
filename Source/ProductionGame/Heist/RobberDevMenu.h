@@ -19,6 +19,7 @@ enum class ERobberDevAction : uint8
 	ToggleImmunity,
 	ShowQuests,
 	FindExhibit,		// Value: row of the quest list
+	ToggleTriggers,		// Local only: never sent to the server
 };
 
 /** One button's action. UButton's click event carries no arguments, so each button gets its own listener. */
@@ -55,6 +56,10 @@ protected:
 private:
 	void Bind(const FString& ButtonName, ERobberDevAction Action, int32 Value = 0);
 	void RebuildQuestRows(const ARobberController* Robber);
+	/** A Triggers on/off button beside Immunity, made in code so WBP_DevMenu doesn't change. */
+	void AddTriggersButton();
+
+	UPROPERTY(Transient) TObjectPtr<class UTextBlock> TriggersLabel;
 
 	UPROPERTY(Transient) TObjectPtr<class UVerticalBox> QuestRows;
 	UPROPERTY(Transient) TObjectPtr<class UTextBlock> QuestTextStyle;

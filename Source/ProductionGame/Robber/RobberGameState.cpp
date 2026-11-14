@@ -225,6 +225,13 @@ void ARobberGameState::TickPhase()
 			ActiveEntry->OnBreakInTimerExpired(this);
 		}
 	}
+	if (ReplicatedGameStage == RobberStage::Escape && PhaseEndServerTime > 0. && GetServerWorldTimeSeconds() >= PhaseEndServerTime)
+	{
+		PhaseEndServerTime = 0.;
+		TellCrew(NSLOCTEXT("RobberHeist", "EscapeTimeUp", "Too slow! The museum locked down with you inside."));
+		FinishNight(false);
+		return;
+	}
 	// BP_PowerGenerator only flips the Blueprint PowerOn? flag, so watch it rather than wiring every generator.
 	if (ReplicatedGameStage == RobberStage::Heist && !IsPowerOn())
 	{
@@ -924,6 +931,7 @@ void ARobberGameState::HandleGameStageChanged()
 	{
 		ActivateAlarms();
 		CompleteJob(GemJob);
+		SetPhaseTimer(EscapeSeconds);
 	}
 	OnGameStageChanged.Broadcast(ReplicatedGameStage);
 }

@@ -328,6 +328,10 @@ private:
 	UPROPERTY(EditDefaultsOnly, Category = "Robber|Heat")
 	float GuardsArriveSeconds = 60.f;
 
+	/** Time to get out once the gem's taken. Runs on the phase timer; the night's lost when it hits zero. */
+	UPROPERTY(EditDefaultsOnly, Category = "Robber|Heist")
+	float EscapeSeconds = 30.f;
+
 	UPROPERTY(EditDefaultsOnly, Category = "Robber|Heat")
 	float HeatCoolDelay = 5.f;
 

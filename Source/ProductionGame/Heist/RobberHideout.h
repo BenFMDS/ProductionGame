@@ -7,6 +7,7 @@
 #include "RobberHideout.generated.h"
 
 class UStaticMeshComponent;
+class URobberMenuMarkerComponent;
 
 /** What a hideout object in the lobby opens for the player who used it. */
 UENUM(BlueprintType)
@@ -38,15 +39,21 @@ public:
 
 	bool IsHovered() const { return bHovered; }
 
+	/** Lit from anywhere in HighlightRange, not only when aimed at. */
+	virtual bool OutlinesItself() const override { return true; }
+
 	/** How close (cm) a player has to be for a menu object to light up, with a clear view of it. */
 	static constexpr double HighlightRange = 500.;
 
-	/** True when Target is within HighlightRange of Viewer with nothing in the way. */
-	static bool IsInHighlightRange(const AActor* Target, const APlayerController* Viewer);
+	/** True when Target is within Range of Viewer's camera with nothing in the way. */
+	static bool IsInHighlightRange(const AActor* Target, const APlayerController* Viewer, double Range = HighlightRange);
+
+	/** What this object opens, e.g. "Settings": the prompt and the name over its "!". */
+	FText GetMenuName() const;
 
 protected:
 	virtual void OnServerInteract(APawn* Pawn, APlayerState* Player, ARobberGameState* GameState) override;
-	virtual FText GetPrompt(const ARobberGameState* GameState, const APlayerState* Viewer) const override;
+	virtual FText GetPrompt(const ARobberGameState* GameState, const APlayerState* Viewer) const override { return GetMenuName(); }
 	/** The name and what it does are on the prompt now; nothing floats over the object. */
 	virtual FText GetLabel(const ARobberGameState* GameState) const override { return FText::GetEmpty(); }
 
@@ -57,6 +64,7 @@ private:
 /**
  * Does for the main menu's Blueprint BP_MenuObjects what ARobberLobbyObject does for itself: no floating text, lit up
  * in range, a prompt saying what it does. No world objects or Blueprints to change, so it can't be lost in a merge.
+ * Also puts a "!" (URobberMenuMarkerComponent) over every menu object in both rooms, named when you're in range.
  */
 UCLASS()
 class PRODUCTIONGAME_API URobberMenuObjectSubsystem : public UTickableWorldSubsystem
@@ -72,8 +80,14 @@ public:
 	/** The objects it has taken over, for tests. */
 	const TArray<TWeakObjectPtr<AActor>>& GetObjects() const { return Objects; }
 
+	/** The "!" it put over every menu object, BP_MenuObject and ARobberLobbyObject alike. */
+	const TArray<TWeakObjectPtr<URobberMenuMarkerComponent>>& GetMarkers() const { return Markers; }
+
 private:
+	void AddMarker(AActor* Object, const FText& Name);
+
 	TArray<TWeakObjectPtr<AActor>> Objects;
+	TArray<TWeakObjectPtr<URobberMenuMarkerComponent>> Markers;
 };
 
 /**

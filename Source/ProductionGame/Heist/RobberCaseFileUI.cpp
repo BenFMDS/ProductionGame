@@ -240,6 +240,7 @@ void URobberCaseFileHUD::NativeOnInitialized()
 	{
 		BuildStoryWidgets(Root);
 		BuildMarkerWidgets(Root);
+		BuildEscapeWidgets(Root);
 	}
 	if (Find(TEXT("SprintBar")) || !Root || !WidgetTree)
 	{
@@ -560,6 +561,78 @@ void URobberCaseFileHUD::BuildStoryWidgets(UCanvasPanel* Root)
 	StampRoot = StampSized;
 }
 
+void URobberCaseFileHUD::BuildEscapeWidgets(UCanvasPanel* Root)
+{
+	// Same stamp as the quest one (double red ring round a paper card), smaller and up top so it doesn't hide the way out.
+	UVerticalBox* Text = WidgetTree->ConstructWidget<UVerticalBox>();
+	UTextBlock* Kick = StoryLabel(WidgetTree, StoryFont(TEXT("F_Bangers"), 72.f), StoryRed);
+	Kick->SetJustification(ETextJustify::Center);
+	Kick->SetText(NSLOCTEXT("RobberCaseFile", "GetOut", "GET OUT, NOW"));
+	EscapeClock = StoryLabel(WidgetTree, StoryFont(TEXT("F_Fredoka"), 56.f, TEXT("Bold")), StoryInk);
+	EscapeClock->SetJustification(ETextJustify::Center);
+	UTextBlock* Sub = StoryLabel(WidgetTree, StoryFont(TEXT("F_Fredoka"), 22.f), StoryInk);
+	Sub->SetJustification(ETextJustify::Center);
+	Sub->SetText(NSLOCTEXT("RobberCaseFile", "GetOutSub", "Get out the way you came in"));
+	Text->AddChildToVerticalBox(Kick)->SetHorizontalAlignment(HAlign_Center);
+	Text->AddChildToVerticalBox(EscapeClock)->SetHorizontalAlignment(HAlign_Center);
+	Text->AddChildToVerticalBox(Sub)->SetHorizontalAlignment(HAlign_Center);
+
+	UBorder* Card = StoryBox(WidgetTree, StoryPaper, FMargin(26.f, 10.f, 26.f, 12.f), Text);
+	UBorder* Inner = StoryBox(WidgetTree, StoryRed, FMargin(3.f), Card);
+	UBorder* Gap = StoryBox(WidgetTree, StoryPaper, FMargin(4.f), Inner);
+	UBorder* Edge = StoryBox(WidgetTree, StoryRed, FMargin(3.f), Gap);
+
+	UOverlay* Stack = WidgetTree->ConstructWidget<UOverlay>();
+	UImage* Shadow = StorySolid(WidgetTree, StoryInk);
+	Shadow->SetRenderTranslation(FVector2D(8., 8.));
+	StoryFill(Stack, Shadow);
+	StoryFill(Stack, Edge);
+	USizeBox* Sized = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass(), TEXT("EscapeStamp"));
+	Sized->SetWidthOverride(460.f);
+	Sized->SetContent(Stack);
+	Sized->SetVisibility(ESlateVisibility::Collapsed);
+	Sized->SetRenderTransformPivot(FVector2D(0.5f, 0.5f));
+	Sized->SetRenderTransformAngle(-2.f);
+	UCanvasPanelSlot* StampSlot = Root->AddChildToCanvas(Sized);
+	StampSlot->SetAnchors(FAnchors(0.5f, 0.f));
+	StampSlot->SetAlignment(FVector2D(0.5f, 0.f));
+	StampSlot->SetAutoSize(true);
+	StampSlot->SetPosition(FVector2D(0.f, 24.f));
+	StampSlot->SetZOrder(19);
+	EscapeRoot = Sized;
+}
+
+void URobberCaseFileHUD::UpdateEscape(const ARobberGameState* State, float DeltaTime)
+{
+	const float TimeLeft = State->GetGameStage() == RobberStage::Escape ? State->GetPhaseTimeRemaining() : -1.f;
+	const bool bShow = TimeLeft >= 0.f;
+	if (!EscapeRoot || !EscapeClock)
+	{
+		return;
+	}
+	if (!bShow)
+	{
+		EscapeShownFor = -1.f;
+		EscapeRoot->SetVisibility(ESlateVisibility::Collapsed);
+		return;
+	}
+	EscapeShownFor = EscapeShownFor < 0.f ? 0.f : EscapeShownFor + DeltaTime;
+	EscapeRoot->SetVisibility(ESlateVisibility::HitTestInvisible);
+	SetText(EscapeClock, Clock(TimeLeft));
+
+	// Slams in, then from ten seconds out it thumps on every second and the clock goes red.
+	const bool bHurry = TimeLeft <= 10.f;
+	EscapeClock->SetColorAndOpacity(FSlateColor(bHurry ? StoryRed : StoryInk));
+	const float Slam = FMath::Clamp(EscapeShownFor / 0.25f, 0.f, 1.f);
+	float Scale = FMath::Lerp(1.6f, 1.f, 1.f - FMath::Square(1.f - Slam));
+	if (bHurry)
+	{
+		const float IntoSecond = 1.f - FMath::Frac(TimeLeft);
+		Scale *= 1.f + 0.08f * FMath::Max(0.f, 1.f - IntoSecond / 0.3f);
+	}
+	EscapeRoot->SetRenderScale(FVector2D(Scale));
+}
+
 void URobberCaseFileHUD::OnStoryStamp(bool bComplete, const FText& Title, const FText& Subtitle)
 {
 	if (!StampRoot)
@@ -738,7 +811,10 @@ namespace
 	const FLinearColor MarkerInk = FLinearColor::FromSRGBColor(FColor(35, 32, 26));
 	constexpr int32 MaxPins = 4;
 	constexpr int32 MaxBubbles = 8;
+	constexpr int32 MaxSpotBubbles = 6;
 	constexpr double BubbleRange = 800.;
+	/** One glance-and-blink cycle of the peeking eyes, in seconds. */
+	constexpr float EyeCycle = 4.f;
 	constexpr double PinFadeNear = 400.;
 	constexpr double PinFadeFar = 600.;
 	constexpr double FloorHeight = 500.;
@@ -827,6 +903,46 @@ void URobberCaseFileHUD::BuildMarkerWidgets(UCanvasPanel* Root)
 		BubbleSlot->SetAlignment(FVector2D(0.5f, 1.f));
 		BubbleSlot->SetZOrder(-6);
 		Bubbles.Add(Column);
+	}
+
+	for (int32 Index = 0; Index < MaxSpotBubbles; ++Index)
+	{
+		UHorizontalBox* Pair = WidgetTree->ConstructWidget<UHorizontalBox>();
+		for (int32 Side = 0; Side < 2; ++Side)
+		{
+			UBorder* Ball = WidgetTree->ConstructWidget<UBorder>();
+			Ball->SetBrush(FSlateRoundedBoxBrush(MarkerInk, 7.f));
+			UBorder* Pupil = WidgetTree->ConstructWidget<UBorder>();
+			Pupil->SetBrush(FSlateRoundedBoxBrush(FLinearColor::White, 2.5f));
+			USizeBox* PupilSize = StorySized(WidgetTree, Pupil, 5.f, 5.f);
+
+			UOverlay* Eye = WidgetTree->ConstructWidget<UOverlay>();
+			Eye->AddChildToOverlay(StorySized(WidgetTree, Ball, 14.f, 16.f));
+			UOverlaySlot* PupilSlot = Eye->AddChildToOverlay(PupilSize);
+			PupilSlot->SetHorizontalAlignment(HAlign_Left);
+			PupilSlot->SetVerticalAlignment(VAlign_Top);
+			PupilSlot->SetPadding(FMargin(3.f, 4.f, 0.f, 0.f));
+			UHorizontalBoxSlot* EyeSlot = Pair->AddChildToHorizontalBox(Eye);
+			EyeSlot->SetPadding(FMargin(Side ? 5.f : 0.f, 0.f, 0.f, 0.f));
+			SpotEyes.Add(Eye);
+			SpotPupils.Add(PupilSize);
+		}
+		UBorder* Bubble = MarkerBox(WidgetTree, FLinearColor::White, 10.f, FMargin(12.f, 7.f, 12.f, 9.f), Pair);
+
+		USizeBox* TailSize = StorySized(WidgetTree, StorySolid(WidgetTree, FLinearColor::White), 9.f, 9.f);
+		TailSize->SetRenderTransformAngle(45.f);
+		UVerticalBox* Column = WidgetTree->ConstructWidget<UVerticalBox>();
+		Column->AddChildToVerticalBox(Bubble);
+		UVerticalBoxSlot* TailSlot = Column->AddChildToVerticalBox(TailSize);
+		TailSlot->SetHorizontalAlignment(HAlign_Center);
+		TailSlot->SetPadding(FMargin(0.f, -5.f, 0.f, 0.f));
+		Column->SetVisibility(ESlateVisibility::Collapsed);
+
+		UCanvasPanelSlot* BubbleSlot = Root->AddChildToCanvas(Column);
+		BubbleSlot->SetAutoSize(true);
+		BubbleSlot->SetAlignment(FVector2D(0.5f, 1.f));
+		BubbleSlot->SetZOrder(-6);
+		SpotBubbles.Add(Column);
 	}
 
 	// Looking out through the gaps in whatever you're inside. Fractions of the screen, top to bottom.
@@ -1004,6 +1120,97 @@ void URobberCaseFileHUD::UpdateExhibitBubbles(const FGeometry& MyGeometry, float
 	}
 }
 
+namespace
+{
+	FVector SpotBubblePoint(const AActor* Spot)
+	{
+		FVector Centre;
+		FVector Extent;
+		Spot->GetActorBounds(true, Centre, Extent);
+		return FVector(Centre.X, Centre.Y, Centre.Z + Extent.Z + 25.);
+	}
+}
+
+void URobberCaseFileHUD::UpdateSpotBubbles(float DeltaTime)
+{
+	APlayerController* PC = GetOwningPlayer();
+	const APlayerCameraManager* Camera = PC ? PC->PlayerCameraManager.Get() : nullptr;
+	const ARobberGameState* State = GetRobberState();
+	if (!Camera || !State)
+	{
+		return;
+	}
+	SinceSpotScan += DeltaTime;
+	if (SinceSpotScan >= 0.25f)
+	{
+		SinceSpotScan = 0.f;
+		BubbleSpots.Reset();
+		const AProductionGameCharacter* Robber = Cast<AProductionGameCharacter>(PC->GetPawn());
+		if (!RobberStage::IsInLobby(State->GetGameStage()) && !(Robber && Robber->IsHiding()))
+		{
+			const FVector Eye = Camera->GetCameraLocation();
+			TArray<TPair<double, AActor*>> Near;
+			for (TActorIterator<ARobberHidingSpot> It(GetWorld()); It; ++It)
+			{
+				if (It->GetOccupant() || !It->IsActive(State))
+				{
+					continue;
+				}
+				// To the point above the spot, not its middle: the spot's look is made of separate actors that would block the trace.
+				const FVector Point = SpotBubblePoint(*It);
+				const double Distance = FVector::Dist(Eye, Point);
+				if (Distance > BubbleRange)
+				{
+					continue;
+				}
+				FCollisionQueryParams Params(SCENE_QUERY_STAT(SpotBubble), false, PC->GetPawn());
+				Params.AddIgnoredActor(*It);
+				if (!GetWorld()->LineTraceTestByChannel(Eye, Point, ECC_Visibility, Params))
+				{
+					Near.Add({ Distance, *It });
+				}
+			}
+			Near.Sort([](const TPair<double, AActor*>& A, const TPair<double, AActor*>& B) { return A.Key < B.Key; });
+			for (int32 Index = 0; Index < FMath::Min(Near.Num(), MaxSpotBubbles); ++Index)
+			{
+				BubbleSpots.Add(Near[Index].Value);
+			}
+		}
+	}
+
+	EyeClock += DeltaTime;
+	for (int32 Index = 0; Index < SpotBubbles.Num(); ++Index)
+	{
+		const AActor* Spot = BubbleSpots.IsValidIndex(Index) ? BubbleSpots[Index].Get() : nullptr;
+		FVector2D Position;
+		bool bShow = false;
+		if (Spot)
+		{
+			const FVector Top = SpotBubblePoint(Spot);
+			bShow = UWidgetLayoutLibrary::ProjectWorldLocationToWidgetPosition(PC, Top, Position, true)
+				&& FVector::DotProduct(Top - Camera->GetCameraLocation(), Camera->GetCameraRotation().Vector()) > 0.;
+		}
+		SpotBubbles[Index]->SetVisibility(bShow ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+		if (!bShow)
+		{
+			continue;
+		}
+		PlaceOnCanvas(SpotBubbles[Index], Position);
+
+		// Each bubble runs off its own clock so a room full of spots doesn't blink in step. Look left, glance right, look
+		// back, blink near the end of the cycle.
+		const float T = FMath::Fmod(EyeClock + Index * 0.7f, EyeCycle) / EyeCycle;
+		const float Right = T < 0.2f ? 0.f : T < 0.35f ? (T - 0.2f) / 0.15f : T < 0.55f ? 1.f : T < 0.7f ? 1.f - (T - 0.55f) / 0.15f : 0.f;
+		const float Squash = T < 0.88f ? 1.f : T < 0.92f ? FMath::Lerp(1.f, 0.1f, (T - 0.88f) / 0.04f) : FMath::Lerp(0.1f, 1.f, (T - 0.92f) / 0.08f);
+		for (int32 Side = 0; Side < 2; ++Side)
+		{
+			const int32 EyeIndex = Index * 2 + Side;
+			SpotEyes[EyeIndex]->SetRenderScale(FVector2D(1.f, Squash));
+			SpotPupils[EyeIndex]->SetRenderTranslation(FVector2D(FMath::SmoothStep(0.f, 1.f, Right) * 4.f, 0.f));
+		}
+	}
+}
+
 void URobberCaseFileHUD::UpdateHidingView()
 {
 	const AProductionGameCharacter* Robber = Cast<AProductionGameCharacter>(GetOwningPlayer() ? GetOwningPlayer()->GetPawn() : nullptr);
@@ -1049,7 +1256,9 @@ void URobberCaseFileHUD::NativeTick(const FGeometry& MyGeometry, float InDeltaTi
 	}
 	UpdateMarkers(MyGeometry, InDeltaTime);
 	UpdateExhibitBubbles(MyGeometry, InDeltaTime);
+	UpdateSpotBubbles(InDeltaTime);
 	UpdateHidingView();
+	UpdateEscape(State, InDeltaTime);
 	UpdateNote(State);
 	UpdatePaper(State);
 	FillCrew(State, TEXT("CrewCard"));
@@ -1122,7 +1331,8 @@ void URobberCaseFileHUD::UpdateNote(const ARobberGameState* State)
 		}
 	}
 
-	const float TimeLeft = State->GetPhaseTimeRemaining();
+	// The escape clock has its own stamp up top.
+	const float TimeLeft = State->GetGameStage() == RobberStage::Escape ? -1.f : State->GetPhaseTimeRemaining();
 	Show(Find(TEXT("TimerText")), TimeLeft >= 0.f);
 	SetText(Find<UTextBlock>(TEXT("TimerText")), FText::Format(NSLOCTEXT("RobberCaseFile", "Closing", "CLOSING IN {0}"), Clock(TimeLeft)));
 

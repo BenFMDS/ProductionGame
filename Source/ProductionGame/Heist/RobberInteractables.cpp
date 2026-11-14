@@ -9,6 +9,7 @@
 #include "ProductionGameCharacter.h"
 #include "Components/StaticMeshComponent.h"
 #include "Components/TextRenderComponent.h"
+#include "Components/WidgetComponent.h"
 #include "Engine/StaticMesh.h"
 #include "GameFramework/Controller.h"
 #include "GameFramework/Pawn.h"
@@ -452,4 +453,72 @@ FText ARobberKeyPickup::GetLabel(const ARobberGameState* GameState) const
 void ARobberKeyPickup::OnRep_Taken()
 {
 	ShowPart(Mesh, !bTaken);
+}
+
+bool URobberLookOutlineSubsystem::ShouldCreateSubsystem(UObject* Outer) const
+{
+	const UWorld* World = Cast<UWorld>(Outer);
+	return World && World->IsGameWorld() && Super::ShouldCreateSubsystem(Outer);
+}
+
+ARobberInteractable* URobberLookOutlineSubsystem::FindTarget() const
+{
+	const APlayerController* LocalPlayer = GetWorld()->GetFirstPlayerController();
+	const APlayerCameraManager* Camera = LocalPlayer && LocalPlayer->IsLocalController() ? LocalPlayer->PlayerCameraManager.Get() : nullptr;
+	if (!Camera)
+	{
+		return nullptr;
+	}
+	const FVector Eye = Camera->GetCameraLocation();
+	FHitResult Hit;
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(RobberLookOutline), false, LocalPlayer->GetPawn());
+	if (!GetWorld()->LineTraceSingleByChannel(Hit, Eye, Eye + Camera->GetCameraRotation().Vector() * Reach, ECC_Visibility, Params))
+	{
+		return nullptr;
+	}
+	ARobberInteractable* Prop = Cast<ARobberInteractable>(Hit.GetActor());
+	// An empty prompt means pressing it would do nothing now (wrong stage, key taken), so it shouldn't light up.
+	return Prop && !Prop->OutlinesItself() && !Prop->GetInteractPrompt().IsEmpty() ? Prop : nullptr;
+}
+
+void URobberLookOutlineSubsystem::SetOutline(bool bOn)
+{
+	TArray<TWeakObjectPtr<UPrimitiveComponent>> Now;
+	if (bOn && Outlined.IsValid())
+	{
+		// Every visible part, not just Mesh: doors, valves and cases are several pieces. Text and widgets would draw a box.
+		for (UActorComponent* Component : Outlined->GetComponents())
+		{
+			UPrimitiveComponent* Part = Cast<UPrimitiveComponent>(Component);
+			if (Part && Part->IsRegistered() && Part->IsVisible() && !Part->bHiddenInGame
+				&& !Part->IsA<UTextRenderComponent>() && !Part->IsA<UWidgetComponent>())
+			{
+				Now.Add(Part);
+			}
+		}
+	}
+	for (const TWeakObjectPtr<UPrimitiveComponent>& Part : Parts)
+	{
+		if (Part.IsValid() && !Now.Contains(Part))
+		{
+			Part->SetRenderCustomDepth(false);
+		}
+	}
+	// Set every frame, not just on change: BPC_Interaction's trace clears Mesh on any non-BP_InteractMaster it hits.
+	for (const TWeakObjectPtr<UPrimitiveComponent>& Part : Now)
+	{
+		Part->SetRenderCustomDepth(true);
+	}
+	Parts = MoveTemp(Now);
+}
+
+void URobberLookOutlineSubsystem::Tick(float DeltaTime)
+{
+	ARobberInteractable* Target = FindTarget();
+	if (Target != Outlined.Get())
+	{
+		SetOutline(false);
+		Outlined = Target;
+	}
+	SetOutline(Target != nullptr);
 }

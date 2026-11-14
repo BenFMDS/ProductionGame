@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "Subsystems/WorldSubsystem.h"
 #include "RobberInteractables.generated.h"
 
 class APlayerState;
@@ -53,6 +54,9 @@ public:
 	bool IsActive(const ARobberGameState* GameState) const;
 	/** Shows or removes a part: hidden with its children, and nothing to bump into while it's gone. */
 	static void ShowPart(UPrimitiveComponent* Part, bool bShown);
+
+	/** True for props that light themselves up some other way, so URobberLookOutlineSubsystem leaves them alone. */
+	virtual bool OutlinesItself() const { return false; }
 
 protected:
 	virtual void OnServerInteract(APawn* Pawn, APlayerState* Player, ARobberGameState* GameState) {}
@@ -250,4 +254,33 @@ private:
 
 	UFUNCTION()
 	void OnRep_Taken();
+};
+
+/**
+ * The red outline for the C++ props. BPC_Interaction only outlines BP_InteractMaster children, and these can't be
+ * one (a C++ class can't have a Blueprint parent), so this does the same for them: the prop this machine's player
+ * is looking at, within the interact trace (Visibility, 300 from the camera) and usable right now, gets custom
+ * depth on every visible part, which M_HoverOutline on the camera draws red. Local only.
+ */
+UCLASS()
+class PRODUCTIONGAME_API URobberLookOutlineSubsystem : public UTickableWorldSubsystem
+{
+	GENERATED_BODY()
+
+public:
+	/** BPC_Interaction's trace length. */
+	static constexpr double Reach = 300.;
+
+	virtual bool ShouldCreateSubsystem(UObject* Outer) const override;
+	virtual void Tick(float DeltaTime) override;
+	virtual TStatId GetStatId() const override { RETURN_QUICK_DECLARE_CYCLE_STAT(URobberLookOutlineSubsystem, STATGROUP_Tickables); }
+
+	ARobberInteractable* GetOutlined() const { return Outlined.Get(); }
+
+private:
+	ARobberInteractable* FindTarget() const;
+	void SetOutline(bool bOn);
+
+	TWeakObjectPtr<ARobberInteractable> Outlined;
+	TArray<TWeakObjectPtr<UPrimitiveComponent>> Parts;
 };

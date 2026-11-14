@@ -43,6 +43,13 @@ public:
 	UPROPERTY(EditDefaultsOnly, Category="Exhibit Look") FVector2D PaintingSize = FVector2D(140., 180.);
 	UPROPERTY(EditDefaultsOnly, Category="Exhibit Look") TObjectPtr<USkeletalMesh> StatueMesh;
 	UPROPERTY(EditDefaultsOnly, Category="Exhibit Look") TArray<TObjectPtr<UMaterialInterface>> StatueMaterials;
+	/** A statue with its own art (the Moai): shown instead of the stone mannequin, with the mesh's own materials. */
+	UPROPERTY(EditDefaultsOnly, Category="Exhibit Look") TObjectPtr<UStaticMesh> StatueModel;
+	/** How tall StatueModel stands, in cm; it's scaled evenly to this. */
+	UPROPERTY(EditDefaultsOnly, Category="Exhibit Look") float StatueModelHeight = 240.f;
+	/** Turns StatueModel so its face looks the way the exhibit faces; imported meshes face all sorts of ways. */
+	UPROPERTY(EditDefaultsOnly, Category="Exhibit Look") float StatueModelYaw = 0.f;
+	UPROPERTY(VisibleAnywhere, Category="Exhibit Look") TObjectPtr<UStaticMeshComponent> StatueModelMesh;
 	UPROPERTY(VisibleAnywhere, Category="Exhibit Look") TArray<TObjectPtr<UStaticMeshComponent>> FrameBars;
 	/** How far a painting's actor stands off its wall, so the capsule clears it. The picture sits back against the wall. */
 	static constexpr double PaintingWallGap = 45.;

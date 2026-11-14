@@ -17,6 +17,23 @@ namespace { constexpr int32 ErrandChoiceBase = 200000; }
 
 UDialogueComponent::UDialogueComponent() { SetIsReplicatedByDefault(true); }
 
+void UDialogueComponent::BeginPlay()
+{
+	Super::BeginPlay();
+	// BP_TalkingMaster's prompt defaults to "Talk to Gabe", and only talkers a commandlet or quest touched say otherwise.
+	// Runs on every machine: the prompt is a Blueprint variable each one reads for itself.
+	if (!Dialogue || Dialogue->SpeakerName.IsEmpty()) return;
+	for (TFieldIterator<FStrProperty> It(GetOwner()->GetClass()); It; ++It)
+	{
+		if (!It->GetName().Replace(TEXT(" "), TEXT("")).StartsWith(TEXT("InteractText"))) continue;
+		const UObject* Defaults = It->GetOwnerClass()->GetDefaultObject();
+		if (It->GetPropertyValue_InContainer(GetOwner()) == It->GetPropertyValue_InContainer(Defaults))
+		{
+			It->SetPropertyValue_InContainer(GetOwner(), FText::Format(NSLOCTEXT("ExhibitTalk", "TalkTo", "Talk to {0}"), Dialogue->SpeakerName).ToString());
+		}
+	}
+}
+
 void UDialogueComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);

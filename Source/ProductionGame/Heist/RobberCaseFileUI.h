@@ -171,7 +171,15 @@ private:
 	void BuildMarkerWidgets(UCanvasPanel* Root);
 	void UpdateMarkers(const FGeometry& MyGeometry, float DeltaTime);
 	void UpdateExhibitBubbles(const FGeometry& MyGeometry, float DeltaTime);
+	void UpdateSpotBubbles(float DeltaTime);
 	void UpdateHidingView();
+	void BuildEscapeWidgets(UCanvasPanel* Root);
+	void UpdateEscape(const ARobberGameState* State, float DeltaTime);
+
+	/** The "GET OUT, NOW" stamp and its clock, top centre while the escape timer runs. */
+	UPROPERTY(Transient) TObjectPtr<UWidget> EscapeRoot;
+	UPROPERTY(Transient) TObjectPtr<UTextBlock> EscapeClock;
+	float EscapeShownFor = -1.f;
 
 	UPROPERTY(Transient) TArray<FRobberPinUI> Pins;
 	UPROPERTY(Transient) TArray<TObjectPtr<UWidget>> Bubbles;
@@ -181,6 +189,14 @@ private:
 	TArray<TWeakObjectPtr<AActor>> BubbleExhibits;
 	float SinceMarkerScan = 1.f;
 	float SinceBubbleScan = 1.f;
+
+	/** Peeking-eyes bubbles over free hiding spots: two eyes each (blink by squashing), one pupil per eye (glances). */
+	UPROPERTY(Transient) TArray<TObjectPtr<UWidget>> SpotBubbles;
+	UPROPERTY(Transient) TArray<TObjectPtr<UWidget>> SpotEyes;
+	UPROPERTY(Transient) TArray<TObjectPtr<UWidget>> SpotPupils;
+	TArray<TWeakObjectPtr<AActor>> BubbleSpots;
+	float SinceSpotScan = 1.f;
+	float EyeClock = 0.f;
 
 	UPROPERTY(Transient) FRobberStoryNoteUI StoryNoteUi;
 	UPROPERTY(Transient) FRobberStoryNoteUI StoryErrandUi;

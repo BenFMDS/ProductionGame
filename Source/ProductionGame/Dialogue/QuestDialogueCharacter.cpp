@@ -23,6 +23,13 @@ AQuestDialogueCharacter::AQuestDialogueCharacter()
 		Bar->SetVisibility(false);
 		FrameBars.Add(Bar);
 	}
+	// Looks only: talking still aims at ModelMesh, so this needs no collision of its own.
+	StatueModelMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("StatueModelMesh"));
+	StatueModelMesh->SetupAttachment(GetCapsuleComponent());
+	StatueModelMesh->SetMobility(EComponentMobility::Movable);
+	StatueModelMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	StatueModelMesh->SetGenerateOverlapEvents(false);
+	StatueModelMesh->SetVisibility(false);
 }
 
 void AQuestDialogueCharacter::ApplyExhibitLook()
@@ -83,8 +90,23 @@ void AQuestDialogueCharacter::ApplyExhibitLook()
 		Model->SetVisibility(false);
 		Model->SetRelativeScale3D(FVector(0.7, 0.7, 1.8));
 		USkeletalMeshComponent* Body = GetMesh();
+		const double Floor = -GetCapsuleComponent()->GetUnscaledCapsuleHalfHeight();
+		if (StatueModel)
+		{
+			Body->SetVisibility(false);
+			const FBox Bounds = StatueModel->GetBoundingBox();
+			const double Scale = Bounds.GetSize().Z > 1. ? StatueModelHeight / Bounds.GetSize().Z : 1.;
+			StatueModelMesh->SetStaticMesh(StatueModel);
+			StatueModelMesh->SetRelativeScale3D(FVector(Scale));
+			// Stood on the floor, centred over the capsule whatever the mesh's own pivot.
+			const FRotator Turn(0., StatueModelYaw, 0.);
+			const FVector Centre = Turn.RotateVector(FVector(Bounds.GetCenter().X, Bounds.GetCenter().Y, 0.) * Scale);
+			StatueModelMesh->SetRelativeLocationAndRotation(FVector(-Centre.X, -Centre.Y, Floor - Bounds.Min.Z * Scale), Turn);
+			StatueModelMesh->SetVisibility(true);
+			return;
+		}
 		Body->SetSkeletalMeshAsset(StatueMesh);
-		Body->SetRelativeLocationAndRotation(FVector(0., 0., -GetCapsuleComponent()->GetUnscaledCapsuleHalfHeight()), FRotator(0., -90., 0.));
+		Body->SetRelativeLocationAndRotation(FVector(0., 0., Floor), FRotator(0., -90., 0.));
 		for (int32 Slot = 0; Slot < StatueMaterials.Num(); ++Slot)
 		{
 			Body->SetMaterial(Slot, StatueMaterials[Slot]);
