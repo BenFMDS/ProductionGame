@@ -123,16 +123,8 @@ bool URobberHighlightSubsystem::ShouldCreateSubsystem(UObject* Outer) const
 
 bool URobberHighlightSubsystem::IsUsable(const AActor* Actor)
 {
-	if (const ARobberInteractable* Prop = Cast<ARobberInteractable>(Actor))
-	{
-		return !Prop->GetInteractPrompt().IsEmpty();
-	}
-	if (Actor && Actor->IsA<AQuestDialogueCharacter>())
-	{
-		const ARobberGameState* GameState = Actor->GetWorld()->GetGameState<ARobberGameState>();
-		return !GameState || GameState->CanTalkToExhibits();
-	}
-	return true;
+	const URobberInteractComponent* Interact = URobberInteractComponent::Of(Actor);
+	return !Interact || !Interact->GetPrompt().IsEmpty();
 }
 
 AActor* URobberHighlightSubsystem::FindLookTarget(const APlayerController* LocalPlayer) const

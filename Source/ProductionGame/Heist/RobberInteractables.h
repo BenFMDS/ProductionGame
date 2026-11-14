@@ -2,12 +2,14 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "Heist/RobberInteract.h"
 #include "RobberInteractables.generated.h"
 
 class APlayerState;
 class ARobberEntryPoint;
 class ARobberGameState;
 class URobberHighlightComponent;
+class URobberInteractComponent;
 class URobberMarkerComponent;
 class UStaticMeshComponent;
 class UTextRenderComponent;
@@ -15,21 +17,17 @@ class UTextRenderComponent;
 /**
  * Base for heist props the player presses Interact on. BPI_Interaction is a Blueprint interface, so each
  * of these has a thin Blueprint child that implements it: Interact calls HandleInteract and
- * GetInteractData returns GetInteractPrompt.
+ * GetInteractData returns GetInteractPrompt. Both pass straight to the Interact component.
  */
 UCLASS(Abstract)
-class PRODUCTIONGAME_API ARobberInteractable : public AActor
+class PRODUCTIONGAME_API ARobberInteractable : public AActor, public IRobberInteractOwner
 {
 	GENERATED_BODY()
 
 public:
 	ARobberInteractable();
 
-	/**
-	 * BPC_Interaction calls Interact locally and again on the server (twice on a listen-server host), so
-	 * only the server acts, and a second press from the same player straight after the first is dropped
-	 * (toggles like the skylight would otherwise undo themselves).
-	 */
+	/** Server only, one press per player per 0.2 s: see URobberInteractComponent::bServerOnly. */
 	UFUNCTION(BlueprintCallable, Category = "Robber|Interact")
 	void HandleInteract(AActor* InteractingPlayer);
 
@@ -44,19 +42,18 @@ public:
 	static void ClearStaleOutline(AActor* Previous, AActor* Now);
 
 	virtual void Tick(float DeltaSeconds) override;
+	virtual void PostLoad() override;
 
-	/**
-	 * The way in this prop belongs to. When set, it only works (and only shows its label) while that entry is
-	 * the one the crew voted for, so a night with several ways in only runs one of them.
-	 */
-	UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Robber|Interact")
-	TObjectPtr<ARobberEntryPoint> OwningEntry;
-
+	/** The Interact component's OwningEntry gate. */
 	bool IsActive(const ARobberGameState* GameState) const;
 	/** Shows or removes a part: hidden with its children, and nothing to bump into while it's gone. */
 	static void ShowPart(UPrimitiveComponent* Part, bool bShown);
 
 	URobberHighlightComponent* GetHighlight() const { return Highlight; }
+	URobberInteractComponent* GetInteract() const { return InteractComponent; }
+
+	virtual FText GetInteractText(const ARobberGameState* GameState, const APlayerState* Viewer) const override;
+	virtual void OnInteract(APawn* Pawn, APlayerState* Player, ARobberGameState* GameState) override { OnServerInteract(Pawn, Player, GameState); }
 
 protected:
 	virtual void OnServerInteract(APawn* Pawn, APlayerState* Player, ARobberGameState* GameState) {}
@@ -73,6 +70,10 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Robber|Interact")
 	TObjectPtr<URobberHighlightComponent> Highlight;
 
+	/** Press handling, prompt and the OwningEntry gate. Not called "Interact": that's BPI_Interaction's function in the BP children. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Robber|Interact")
+	TObjectPtr<URobberInteractComponent> InteractComponent;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Robber|Interact")
 	FText Prompt;
 
@@ -80,8 +81,12 @@ protected:
 	FText Label;
 
 private:
-	/** Server only. World time of each player's last handled press. */
-	TMap<TWeakObjectPtr<APlayerState>, double> LastInteractTime;
+	/**
+	 * Load-only: maps saved before the Interact component kept the way in here, under this name. PostLoad moves it to
+	 * InteractComponent->OwningEntry and clears it, so a resave stops writing it. Use the component's.
+	 */
+	UPROPERTY()
+	TObjectPtr<ARobberEntryPoint> OwningEntry;
 };
 
 /** Lobby board. Interact to vote for this way in. */

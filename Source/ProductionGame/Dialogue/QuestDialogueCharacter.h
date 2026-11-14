@@ -1,6 +1,7 @@
 #pragma once
 #include "CoreMinimal.h"
 #include "GameFramework/Character.h"
+#include "Heist/RobberInteract.h"
 #include "QuestDialogueCharacter.generated.h"
 
 class UDialogueComponent;
@@ -23,7 +24,7 @@ enum class EExhibitLook : uint8
 
 /** Parent for talking-character Blueprints. The Dialogue Component's asset is the runtime source of truth. */
 UCLASS(Blueprintable)
-class PRODUCTIONGAME_API AQuestDialogueCharacter : public ACharacter
+class PRODUCTIONGAME_API AQuestDialogueCharacter : public ACharacter, public IRobberInteractOwner
 {
 	GENERATED_BODY()
 public:
@@ -54,6 +55,14 @@ public:
 	UPROPERTY(VisibleAnywhere, Category="Exhibit Look") TArray<TObjectPtr<UStaticMeshComponent>> FrameBars;
 	/** Red outline on whatever shows of the exhibit (painting and frame, statue, cube) while aimed at. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Interact") TObjectPtr<URobberHighlightComponent> Highlight;
+	/**
+	 * Prompt and press. BP_TalkingMaster's BPI_Interaction route still does the real talking until stage 5; this gives
+	 * C++ (the outline now, the focus trace later) the same answer. Presses aren't server-only: TalkToNPC sends ServerTalkTo.
+	 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Interact") TObjectPtr<URobberInteractComponent> InteractComponent;
+	/** BP_TalkingMaster's "Interact Text" ("Talk to <speaker>"); empty while talking to exhibits is off. */
+	virtual FText GetInteractText(const ARobberGameState* GameState, const APlayerState* Viewer) const override;
+	virtual void OnInteract(APawn* Pawn, APlayerState* Player, ARobberGameState* GameState) override;
 	/** How far a painting's actor stands off its wall, so the capsule clears it. The picture sits back against the wall. */
 	static constexpr double PaintingWallGap = 45.;
 	/** Picture centre above the actor's origin: eye level for a capsule standing on the floor. */

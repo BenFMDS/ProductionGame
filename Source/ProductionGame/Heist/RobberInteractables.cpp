@@ -45,33 +45,28 @@ ARobberInteractable::ARobberInteractable()
 	LabelText->SetAbsolute(false, false, true);
 
 	Highlight = CreateDefaultSubobject<URobberHighlightComponent>(TEXT("RobberHighlight"));
+	InteractComponent = CreateDefaultSubobject<URobberInteractComponent>(TEXT("RobberInteract"));
+}
+
+void ARobberInteractable::PostLoad()
+{
+	Super::PostLoad();
+	if (OwningEntry)
+	{
+		InteractComponent->OwningEntry = OwningEntry;
+		OwningEntry = nullptr;
+	}
 }
 
 void ARobberInteractable::HandleInteract(AActor* InteractingPlayer)
 {
-	if (!HasAuthority())
-	{
-		return;
-	}
-	APawn* Pawn = Cast<APawn>(InteractingPlayer);
-	if (AController* Controller = Cast<AController>(InteractingPlayer))
-	{
-		Pawn = Controller->GetPawn();
-	}
-	APlayerState* Player = Pawn ? Pawn->GetPlayerState() : nullptr;
-	ARobberGameState* GameState = GetWorld()->GetGameState<ARobberGameState>();
-	// Closing time plays with everyone tucked into a spot; climbing out mid-card would leave them unhidden for the night.
-	if (!Player || !GameState || !IsActive(GameState) || GameState->IsClosingTime())
-	{
-		return;
-	}
-	const double Now = GetWorld()->GetTimeSeconds();
-	if (const double* Last = LastInteractTime.Find(Player); Last && Now - *Last < 0.2)
-	{
-		return;
-	}
-	LastInteractTime.Add(Player, Now);
-	OnServerInteract(Pawn, Player, GameState);
+	InteractComponent->Press(InteractingPlayer);
+}
+
+FText ARobberInteractable::GetInteractText(const ARobberGameState* GameState, const APlayerState* Viewer) const
+{
+	// The subclasses' GetPrompt assumes a game state; without one (menus) the plain field is all there is.
+	return GameState ? GetPrompt(GameState, Viewer) : Prompt;
 }
 
 void ARobberInteractable::ClearStaleOutline(AActor* Previous, AActor* Now)
@@ -93,13 +88,7 @@ void ARobberInteractable::ClearStaleOutline(AActor* Previous, AActor* Now)
 
 FString ARobberInteractable::GetInteractPrompt() const
 {
-	const APlayerController* LocalPlayer = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr;
-	const ARobberGameState* GameState = GetWorld() ? GetWorld()->GetGameState<ARobberGameState>() : nullptr;
-	if (!GameState)
-	{
-		return Prompt.ToString();
-	}
-	return IsActive(GameState) ? GetPrompt(GameState, LocalPlayer ? LocalPlayer->PlayerState : nullptr).ToString() : FString();
+	return InteractComponent->GetPrompt();
 }
 
 void ARobberInteractable::ShowPart(UPrimitiveComponent* Part, bool bShown)
@@ -110,7 +99,7 @@ void ARobberInteractable::ShowPart(UPrimitiveComponent* Part, bool bShown)
 
 bool ARobberInteractable::IsActive(const ARobberGameState* GameState) const
 {
-	return !OwningEntry || (GameState && GameState->GetActiveEntry() == OwningEntry);
+	return InteractComponent->IsActive(GameState);
 }
 
 void ARobberInteractable::Tick(float DeltaSeconds)

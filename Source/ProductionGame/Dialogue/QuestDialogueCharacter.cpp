@@ -3,6 +3,8 @@
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Dialogue/DialogueComponent.h"
+#include "Dialogue/DialogueInteractionLibrary.h"
+#include "Robber/RobberGameState.h"
 #include "Engine/SkeletalMesh.h"
 #include "Engine/StaticMesh.h"
 #include "Heist/RobberHighlight.h"
@@ -33,6 +35,30 @@ AQuestDialogueCharacter::AQuestDialogueCharacter()
 	StatueModelMesh->SetVisibility(false);
 	// BPC_Interaction only outlines BP_InteractMaster children, so talkers had no outline of their own.
 	Highlight = CreateDefaultSubobject<URobberHighlightComponent>(TEXT("RobberHighlight"));
+	InteractComponent = CreateDefaultSubobject<URobberInteractComponent>(TEXT("RobberInteract"));
+	InteractComponent->bServerOnly = false;
+}
+
+FText AQuestDialogueCharacter::GetInteractText(const ARobberGameState* GameState, const APlayerState* Viewer) const
+{
+	if (GameState && !GameState->CanTalkToExhibits())
+	{
+		return FText::GetEmpty();
+	}
+	// A Blueprint variable, found the same way UDialogueComponent::BeginPlay finds it to fill in the speaker.
+	for (TFieldIterator<FStrProperty> It(GetClass()); It; ++It)
+	{
+		if (It->GetName().Replace(TEXT(" "), TEXT("")).StartsWith(TEXT("InteractText")))
+		{
+			return FText::FromString(It->GetPropertyValue_InContainer(this));
+		}
+	}
+	return FText::GetEmpty();
+}
+
+void AQuestDialogueCharacter::OnInteract(APawn* Pawn, APlayerState* Player, ARobberGameState* GameState)
+{
+	UDialogueInteractionLibrary::TalkToNPC(this, Pawn);
 }
 
 void AQuestDialogueCharacter::ApplyExhibitLook()
