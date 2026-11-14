@@ -31,18 +31,13 @@ ARobberGlassCase::ARobberGlassCase()
 	Mesh->SetupAttachment(Base);
 	LabelText->SetupAttachment(Base);
 
-	static ConstructorHelpers::FObjectFinder<UMaterialInterface> Glass(TEXT("/Game/OurStuff/Assets/Materials/M_Glass.M_Glass"));
-	static ConstructorHelpers::FObjectFinder<UMaterialInterface> Brass(TEXT("/Game/OurStuff/Maps/DevLevels/MuseumGreybox/MI_Greybox_Brass.MI_Greybox_Brass"));
-	static ConstructorHelpers::FObjectFinder<UStaticMesh> Cube(TEXT("/Engine/BasicShapes/Cube.Cube"));
-	Mesh->SetMaterial(0, Glass.Object);
+	// Shapes and the glass/brass materials are in BP_GlassCase.
 	Mesh->SetCollisionProfileName(UCollisionProfile::BlockAll_ProfileName);
 
 	for (int32 Index = 0; Index < RobberGlassCase::FrameParts; ++Index)
 	{
 		UStaticMeshComponent* Part = CreateDefaultSubobject<UStaticMeshComponent>(*FString::Printf(TEXT("Frame%d"), Index + 1));
 		Part->SetupAttachment(Base);
-		Part->SetStaticMesh(Cube.Object);
-		Part->SetMaterial(0, Brass.Object);
 		Part->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 		Frame.Add(Part);
 	}
@@ -50,8 +45,6 @@ ARobberGlassCase::ARobberGlassCase()
 	{
 		UStaticMeshComponent* Shard = CreateDefaultSubobject<UStaticMeshComponent>(*FString::Printf(TEXT("Shard%d"), Index + 1));
 		Shard->SetupAttachment(Base);
-		Shard->SetStaticMesh(Cube.Object);
-		Shard->SetMaterial(0, Glass.Object);
 		Shard->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 		Shard->SetHiddenInGame(true);
 		Shard->SetVisibility(false);

@@ -14,6 +14,18 @@ class URobberMarkerComponent;
 class UStaticMeshComponent;
 class UTextRenderComponent;
 
+/** How the BP's model parts (under ModelRoot) are fitted to Mesh's box (the unit cube Mesh is scaled to). */
+UENUM(BlueprintType)
+enum class ERobberModelFit : uint8
+{
+	/** Parts are placed by hand in Mesh's own space, where the box is -50..50 on every axis. */
+	None,
+	/** The parts' combined bounds are stretched to fill the box: for meshes that should match the gap exactly (doors). */
+	Stretch,
+	/** As big as fits inside the box without changing shape, centred (keys). */
+	KeepProportions,
+};
+
 /**
  * Base for heist props the player presses Interact on. BPI_Interaction is a Blueprint interface, so each
  * of these has a thin Blueprint child that implements it: Interact calls HandleInteract and
@@ -43,6 +55,11 @@ public:
 
 	virtual void Tick(float DeltaSeconds) override;
 	virtual void PostLoad() override;
+	virtual void OnConstruction(const FTransform& Transform) override;
+	virtual void PostInitializeComponents() override;
+
+	/** Any part under ModelRoot has a mesh. */
+	bool HasModel() const;
 
 	/** The Interact component's OwningEntry gate. */
 	bool IsActive(const ARobberGameState* GameState) const;
@@ -60,11 +77,40 @@ protected:
 	virtual FText GetPrompt(const ARobberGameState* GameState, const APlayerState* Viewer) const { return Prompt; }
 	virtual FText GetLabel(const ARobberGameState* GameState) const { return Label; }
 
+	/**
+	 * The prop's box: a unit cube scaled to its size, which is what the interact trace hits and what blocks. The shape is
+	 * set in the BP_ child. With a model (and bModelReplacesMesh) it stays as the invisible collision box.
+	 */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Robber|Interact")
 	TObjectPtr<UStaticMeshComponent> Mesh;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Robber|Interact")
 	TObjectPtr<UTextRenderComponent> LabelText;
+
+	/** Under Mesh. Its direct children are the model, fitted to Mesh's box by ModelFit. Placed by FitModel, not by hand. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Robber|Model")
+	TObjectPtr<USceneComponent> ModelRoot;
+
+	/** Model1..Model6: empty unless the BP_ child gives them meshes. No collision: Mesh does that. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Robber|Model")
+	TArray<TObjectPtr<UStaticMeshComponent>> ModelParts;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Robber|Model")
+	ERobberModelFit ModelFit = ERobberModelFit::None;
+
+	/**
+	 * Turns the whole model before it's fitted (Stretch/KeepProportions only). Turn the model here, not its parts: a part
+	 * turned inside an unevenly stretched box gets the wrong axes stretched (a door turned 90 came out 20 cm-box narrow).
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Robber|Model")
+	FRotator ModelRotation = FRotator::ZeroRotator;
+
+	/** Hide Mesh when there's a model. Off for models that dress the box rather than replace it (a frame round the skylight glass). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Robber|Model")
+	bool bModelReplacesMesh = true;
+
+	/** Model parts with no collision under ModelRoot, made in the constructor. */
+	UStaticMeshComponent* MakeModelPart(const TCHAR* Name);
 
 	/** Red outline while aimed at, by default. Subclasses that light up another way change its Mode. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Robber|Interact")
@@ -81,6 +127,8 @@ protected:
 	FText Label;
 
 private:
+	void FitModel();
+
 	/**
 	 * Load-only: maps saved before the Interact component kept the way in here, under this name. PostLoad moves it to
 	 * InteractComponent->OwningEntry and clears it, so a resave stops writing it. Use the component's.
@@ -207,10 +255,24 @@ public:
 	bool IsOpen() const { return bOpen; }
 	bool IsInside(const APawn* Pawn) const;
 
+	/** Seconds the leaves take to slide into the walls. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Robber|Door", meta = (ClampMin = "0"))
+	float SlideTime = 0.8f;
+
 protected:
 	virtual void OnServerInteract(APawn* Pawn, APlayerState* Player, ARobberGameState* GameState) override;
 	virtual FText GetPrompt(const ARobberGameState* GameState, const APlayerState* Viewer) const override;
 	virtual FText GetLabel(const ARobberGameState* GameState) const override;
+
+	/** Model parts (meshes set in BP_LockedDoor). The leaves slide apart, each a leaf's width away from the middle, into the walls. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Robber|Door")
+	TObjectPtr<UStaticMeshComponent> DoorFrame;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Robber|Door")
+	TObjectPtr<UStaticMeshComponent> LeftLeaf;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Robber|Door")
+	TObjectPtr<UStaticMeshComponent> RightLeaf;
 
 private:
 	UPROPERTY(ReplicatedUsing = OnRep_Open)
@@ -218,6 +280,15 @@ private:
 
 	UFUNCTION()
 	void OnRep_Open();
+
+	/** Where a leaf ends up open, in ModelRoot space: out along its own width, away from the middle. */
+	static FVector OpenOffset(const UStaticMeshComponent* Leaf);
+	void StepSlide();
+
+	FVector LeftClosed = FVector::ZeroVector;
+	FVector RightClosed = FVector::ZeroVector;
+	double SlideStart = 0.;
+	FTimerHandle SlideTimer;
 };
 
 /** A key lying somewhere in the museum. Whoever picks it up carries it (UPlayerQuestComponent::Keys) until the night ends. */

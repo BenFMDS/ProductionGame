@@ -410,9 +410,7 @@ ARobberPuzzleChest::ARobberPuzzleChest()
 
 	Lid = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Lid"));
 	Lid->SetupAttachment(Mesh);
-	static ConstructorHelpers::FObjectFinder<UStaticMesh> Cube(TEXT("/Engine/BasicShapes/Cube.Cube"));
-	Lid->SetStaticMesh(Cube.Object);
-	// In the body's scaled space: a thin slab on top.
+	// Shape is in BP_PuzzleChest. In the body's scaled space: a thin slab on top.
 	Lid->SetRelativeLocation(FVector(0., 0., 58.));
 	Lid->SetRelativeScale3D(FVector(1.04, 1.04, 0.16));
 }

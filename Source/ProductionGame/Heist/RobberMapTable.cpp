@@ -42,11 +42,6 @@ namespace RobberMap
 		FLinearColor(0.08f, 0.60f, 0.12f), FLinearColor(0.50f, 0.10f, 0.70f),
 	};
 
-	UStaticMesh* LoadShape(const TCHAR* Path)
-	{
-		return ConstructorHelpers::FObjectFinder<UStaticMesh>(Path).Object;
-	}
-
 	ARobberController* LocalRobber(const UWorld* World)
 	{
 		return World ? Cast<ARobberController>(World->GetFirstPlayerController()) : nullptr;
@@ -64,20 +59,16 @@ ARobberMapTable::ARobberMapTable()
 	RootComponent = TableRoot;
 	Mesh->SetupAttachment(TableRoot);
 
-	static ConstructorHelpers::FObjectFinder<UStaticMesh> Plane(TEXT("/Engine/BasicShapes/Plane.Plane"));
-	static ConstructorHelpers::FObjectFinder<UMaterialInterface> MapMaterialBase(TEXT("/Engine/EngineMaterials/Widget3DPassThrough_Opaque_OneSided.Widget3DPassThrough_Opaque_OneSided"));
+	// The top, legs and map plane (with its pass-through material) get their shapes in BP_MapTable.
 	MapSurface = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("MapSurface"));
 	MapSurface->SetupAttachment(TableRoot);
-	MapSurface->SetStaticMesh(Plane.Object);
 	MapSurface->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	MapSurface->SetCastShadow(false);
-	MapSurface->SetMaterial(0, MapMaterialBase.Object);
 
 	for (int32 Index = 0; Index < 4; ++Index)
 	{
 		UStaticMeshComponent* Leg = CreateDefaultSubobject<UStaticMeshComponent>(*FString::Printf(TEXT("Leg%d"), Index));
 		Leg->SetupAttachment(TableRoot);
-		Leg->SetStaticMesh(Mesh->GetStaticMesh());
 		Legs.Add(Leg);
 	}
 
@@ -319,15 +310,9 @@ ARobberMapObject::ARobberMapObject()
 	Base->SetupAttachment(PieceRoot);
 	Base->SetMobility(EComponentMobility::Movable);
 	Base->SetCastShadow(false);
-	Base->SetStaticMesh(LoadShape(TEXT("/Engine/BasicShapes/Cylinder.Cylinder")));
+	// Base's shape, ObjectMesh and the pin meshes/material are in BP_MapObject.
 	Base->SetRelativeLocation(FVector(0., 0., BaseHeight / 2.));
 	Base->SetRelativeScale3D(FVector(BaseRadius / 50., BaseRadius / 50., BaseHeight / 100.));
-
-	PinNeedleMesh = Base->GetStaticMesh();
-	PinBallMesh = LoadShape(TEXT("/Engine/BasicShapes/Sphere.Sphere"));
-	static ConstructorHelpers::FObjectFinder<UMaterialInterface> ShapeMaterial(TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
-	PinMaterial = ShapeMaterial.Object;
-	ObjectMesh = Mesh->GetStaticMesh();
 
 	// The table's hover (crosshair or, leaning in, the mouse cursor) lights the piece and its base, not the voters' pins.
 	Highlight->Mode = ERobberHighlightMode::Manual;

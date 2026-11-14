@@ -42,14 +42,11 @@ ARobberSkylight::ARobberSkylight()
 	LabelText->SetupAttachment(Root);
 	LabelText->SetRelativeRotation(FRotator(0, -90, 0));
 
-	static ConstructorHelpers::FObjectFinder<UStaticMesh> Cube(TEXT("/Engine/BasicShapes/Cube.Cube"));
-	static ConstructorHelpers::FObjectFinder<UStaticMesh> Cylinder(TEXT("/Engine/BasicShapes/Cylinder.Cylinder"));
+	// Shapes are in BP_Skylight.
 	RopeAnchor = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("RopeAnchor"));
 	RopeAnchor->SetupAttachment(Root);
 	Rope = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Rope"));
 	Rope->SetupAttachment(Root);
-	RopeAnchor->SetStaticMesh(Cube.Object);
-	Rope->SetStaticMesh(Cylinder.Object);
 	Rope->SetHiddenInGame(true);
 	Rope->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 }
@@ -315,8 +312,7 @@ ARobberSewerWater::ARobberSewerWater()
 	RootComponent = Root;
 	Mesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Mesh"));
 	Mesh->SetupAttachment(Root);
-	static ConstructorHelpers::FObjectFinder<UStaticMesh> Cube(TEXT("/Engine/BasicShapes/Cube.Cube"));
-	Mesh->SetStaticMesh(Cube.Object);
+	// Shape is in BP_SewerWater.
 
 	LabelText = CreateDefaultSubobject<UTextRenderComponent>(TEXT("Label"));
 	LabelText->SetupAttachment(Root);

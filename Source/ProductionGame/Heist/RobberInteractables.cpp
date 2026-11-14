@@ -30,10 +30,17 @@ ARobberInteractable::ARobberInteractable()
 	PrimaryActorTick.bCanEverTick = true;
 	PrimaryActorTick.TickInterval = 0.25f;
 
+	// No shape here: each BP_ child sets its own (object restructure stage 4).
 	Mesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Mesh"));
-	static ConstructorHelpers::FObjectFinder<UStaticMesh> Cube(TEXT("/Engine/BasicShapes/Cube.Cube"));
-	Mesh->SetStaticMesh(Cube.Object);
 	RootComponent = Mesh;
+
+	ModelRoot = CreateDefaultSubobject<USceneComponent>(TEXT("ModelRoot"));
+	ModelRoot->SetupAttachment(Mesh);
+	ModelRoot->SetMobility(EComponentMobility::Movable);
+	for (int32 Index = 1; Index <= 6; ++Index)
+	{
+		ModelParts.Add(MakeModelPart(*FString::Printf(TEXT("Model%d"), Index)));
+	}
 
 	LabelText = CreateDefaultSubobject<UTextRenderComponent>(TEXT("Label"));
 	LabelText->SetupAttachment(Mesh);
@@ -56,6 +63,89 @@ void ARobberInteractable::PostLoad()
 		InteractComponent->OwningEntry = OwningEntry;
 		OwningEntry = nullptr;
 	}
+}
+
+UStaticMeshComponent* ARobberInteractable::MakeModelPart(const TCHAR* Name)
+{
+	UStaticMeshComponent* Part = CreateDefaultSubobject<UStaticMeshComponent>(Name);
+	Part->SetupAttachment(ModelRoot);
+	// Movable sits under any parent, static or not (map pieces and dials are movable), and door leaves slide.
+	Part->SetMobility(EComponentMobility::Movable);
+	Part->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	Part->SetGenerateOverlapEvents(false);
+	Part->SetCanEverAffectNavigation(false);
+	return Part;
+}
+
+void ARobberInteractable::OnConstruction(const FTransform& Transform)
+{
+	Super::OnConstruction(Transform);
+	FitModel();
+}
+
+void ARobberInteractable::PostInitializeComponents()
+{
+	Super::PostInitializeComponents();
+	// Maps saved before the model existed (and cooked ones) don't rerun construction, so fit again here.
+	FitModel();
+}
+
+bool ARobberInteractable::HasModel() const
+{
+	for (const USceneComponent* Child : ModelRoot->GetAttachChildren())
+	{
+		const UStaticMeshComponent* Part = Cast<UStaticMeshComponent>(Child);
+		if (Part && Part->GetStaticMesh())
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+void ARobberInteractable::FitModel()
+{
+	FBox Bounds(ForceInit);
+	for (const USceneComponent* Child : ModelRoot->GetAttachChildren())
+	{
+		const UStaticMeshComponent* Part = Cast<UStaticMeshComponent>(Child);
+		if (Part && Part->GetStaticMesh())
+		{
+			Bounds += Part->GetStaticMesh()->GetBoundingBox().TransformBy(Part->GetRelativeTransform());
+		}
+	}
+	// bVisible, not hidden-in-game: ShowPart toggles that one (with children) and must not bring the box back.
+	Mesh->SetVisibility(!(Bounds.IsValid && bModelReplacesMesh), false);
+	if (!Bounds.IsValid || ModelFit == ERobberModelFit::None)
+	{
+		// Hand-placed parts live in Mesh's own (stretched) space.
+		ModelRoot->SetUsingAbsoluteScale(false);
+		ModelRoot->SetRelativeTransform(FTransform::Identity);
+		return;
+	}
+	// Scale is set in world terms (absolute), so the turned model isn't stretched along Mesh's axes by Mesh's own scale.
+	ModelRoot->SetUsingAbsoluteScale(true);
+	const FVector MeshScale = Mesh->GetComponentScale().GetAbs().ComponentMax(FVector(KINDA_SMALL_NUMBER));
+	const FVector BoxSize = MeshScale * 100.;
+	const FQuat Turn = ModelRotation.Quaternion();
+	FVector Room;
+	for (int32 Axis = 0; Axis < 3; ++Axis)
+	{
+		FVector Along(0.);
+		Along[Axis] = 1.;
+		// How much of the box lies along this model axis once turned.
+		Room[Axis] = FVector::DotProduct(Turn.RotateVector(Along).GetAbs(), BoxSize);
+	}
+	const FVector Size = Bounds.GetSize().ComponentMax(FVector(0.1));
+	FVector Scale = Room / Size;
+	if (ModelFit == ERobberModelFit::KeepProportions)
+	{
+		Scale = FVector(Scale.GetMin());
+	}
+	ModelRoot->SetRelativeRotation(ModelRotation);
+	ModelRoot->SetRelativeScale3D(Scale);
+	// The location is still in Mesh's scaled space, so undo that scale to centre the model on the box.
+	ModelRoot->SetRelativeLocation(-Turn.RotateVector(Bounds.GetCenter() * Scale) / MeshScale);
 }
 
 void ARobberInteractable::HandleInteract(AActor* InteractingPlayer)
@@ -172,11 +262,7 @@ ARobberHidingSpot::ARobberHidingSpot()
 
 	Opening = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Opening"));
 	Opening->SetupAttachment(Mesh);
-	static ConstructorHelpers::FObjectFinder<UStaticMesh> OpeningCube(TEXT("/Engine/BasicShapes/Cube.Cube"));
-	static ConstructorHelpers::FObjectFinder<UMaterialInterface> OpeningMaterial(TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
-	Opening->SetStaticMesh(OpeningCube.Object);
-	Opening->SetMaterial(0, OpeningMaterial.Object);
-	// The parent's scale applies, so this stays in proportion on any size of spot: it just needs to sit proud of the +X face.
+	// Shape and material are in BP_HidingSpot. The parent's scale applies, so this stays in proportion on any size of spot: it just needs to sit proud of the +X face.
 	Opening->SetRelativeLocation(FVector(50.5, 0., -8.));
 	Opening->SetRelativeScale3D(FVector(0.02, 0.6, 0.82));
 	Opening->SetCollisionEnabled(ECollisionEnabled::NoCollision);
@@ -301,6 +387,36 @@ ARobberLockedDoor::ARobberLockedDoor()
 	bReplicates = true;
 	Label = NSLOCTEXT("RobberDoor", "Label", "LOCKED");
 	KeyName = NSLOCTEXT("RobberDoor", "DefaultKey", "key");
+	DoorFrame = MakeModelPart(TEXT("DoorFrame"));
+	LeftLeaf = MakeModelPart(TEXT("LeftLeaf"));
+	RightLeaf = MakeModelPart(TEXT("RightLeaf"));
+}
+
+FVector ARobberLockedDoor::OpenOffset(const UStaticMeshComponent* Leaf)
+{
+	if (!Leaf->GetStaticMesh())
+	{
+		return FVector::ZeroVector;
+	}
+	// A leaf's width is along its own Y. It slides that far, away from the frame's middle.
+	const FBox Box = Leaf->GetStaticMesh()->GetBoundingBox();
+	const FTransform Relative = Leaf->GetRelativeTransform();
+	const FVector Across = Relative.TransformVectorNoScale(FVector::YAxisVector);
+	const FVector Centre = Relative.TransformPosition(Box.GetCenter());
+	const double Side = FVector::DotProduct(Centre, Across) < 0. ? -1. : 1.;
+	return Across * Side * Box.GetSize().Y * FMath::Abs(Relative.GetScale3D().Y);
+}
+
+void ARobberLockedDoor::StepSlide()
+{
+	const double Alpha = SlideTime > 0.f ? FMath::Clamp((GetWorld()->GetTimeSeconds() - SlideStart) / SlideTime, 0., 1.) : 1.;
+	const double Eased = FMath::InterpEaseInOut(0., 1., Alpha, 2.);
+	LeftLeaf->SetRelativeLocation(LeftClosed + OpenOffset(LeftLeaf) * Eased);
+	RightLeaf->SetRelativeLocation(RightClosed + OpenOffset(RightLeaf) * Eased);
+	if (Alpha >= 1.)
+	{
+		GetWorldTimerManager().ClearTimer(SlideTimer);
+	}
 }
 
 void ARobberLockedDoor::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -353,8 +469,26 @@ FText ARobberLockedDoor::GetLabel(const ARobberGameState* GameState) const
 
 void ARobberLockedDoor::OnRep_Open()
 {
-	// No door model yet: an open door just gets out of the way.
-	ShowPart(Mesh, !bOpen);
+	if (!LeftLeaf->GetStaticMesh() && !RightLeaf->GetStaticMesh())
+	{
+		// No leaves to slide: an open door just gets out of the way.
+		ShowPart(Mesh, !bOpen);
+		return;
+	}
+	// The frame stays; the box stops blocking and the leaves slide into the walls.
+	Mesh->SetCollisionEnabled(bOpen ? ECollisionEnabled::NoCollision : ECollisionEnabled::QueryAndPhysics);
+	LeftClosed = CastChecked<USceneComponent>(LeftLeaf->GetArchetype())->GetRelativeLocation();
+	RightClosed = CastChecked<USceneComponent>(RightLeaf->GetArchetype())->GetRelativeLocation();
+	if (!bOpen)
+	{
+		GetWorldTimerManager().ClearTimer(SlideTimer);
+		LeftLeaf->SetRelativeLocation(LeftClosed);
+		RightLeaf->SetRelativeLocation(RightClosed);
+		return;
+	}
+	SlideStart = GetWorld()->GetTimeSeconds();
+	GetWorldTimerManager().SetTimer(SlideTimer, this, &ARobberLockedDoor::StepSlide, 1.f / 60.f, true);
+	StepSlide();
 }
 
 bool ARobberLockedDoor::IsInside(const APawn* Pawn) const
