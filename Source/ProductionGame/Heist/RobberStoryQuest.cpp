@@ -150,6 +150,7 @@ UDialogueComponent* ARobberStoryQuest::GiveScript(AActor* Talker, UDialogueDefin
 	Script->EntryNode = Entry;
 	UDialogueComponent* Dialogue = Talker->FindComponentByClass<UDialogueComponent>();
 	Dialogue->Dialogue = Script;
+	Dialogue->SetPromptSpeaker(Script->SpeakerName);
 	Dialogue->SmallTalkLines = SmallTalk;
 	Dialogue->OfferedQuests.Reset();
 	return Dialogue;

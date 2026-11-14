@@ -60,6 +60,8 @@ public:
 	/** Replicated busy indicator; lock ownership itself is private server state. */
 	UPROPERTY(Replicated, BlueprintReadOnly, Category="Dialogue") bool bIsInConversation = false;
 	UPROPERTY(Replicated, BlueprintReadOnly, Category="Dialogue") TObjectPtr<APlayerState> TalkingPlayer;
+	/** Server: names the speaker of a script handed over at runtime (story quests), so every machine's prompt says "Talk to <name>". */
+	void SetPromptSpeaker(const FText& Speaker);
 	bool TryStart(UPlayerQuestComponent* Player);
 	bool HasValidDialogue() const;
 	TArray<UQuestDefinition*> GetOfferedQuests() const;
@@ -76,6 +78,13 @@ protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type Reason) override;
 private:
+	/** Generated scripts don't replicate, so clients only learn the speaker's name from this. */
+	UPROPERTY(ReplicatedUsing=OnRep_PromptSpeaker) FText PromptSpeaker;
+	UFUNCTION() void OnRep_PromptSpeaker();
+	/** Writes "Talk to <Speaker>" into the Blueprint prompt while nobody else has set it; returns what it wrote. */
+	FString FillDefaultPrompt(const FText& Speaker);
+	/** What BeginPlay filled in from the asset, so a runtime script's speaker can replace it. */
+	FString AutoPrompt;
 	TWeakObjectPtr<UPlayerQuestComponent> Participant;
 	TWeakObjectPtr<APawn> StartingPawn;
 	FName CurrentNode;

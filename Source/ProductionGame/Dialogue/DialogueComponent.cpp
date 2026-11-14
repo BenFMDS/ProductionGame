@@ -22,16 +22,40 @@ void UDialogueComponent::BeginPlay()
 	Super::BeginPlay();
 	// BP_TalkingMaster's prompt defaults to "Talk to Gabe", and only talkers a commandlet or quest touched say otherwise.
 	// Runs on every machine: the prompt is a Blueprint variable each one reads for itself.
-	if (!Dialogue || Dialogue->SpeakerName.IsEmpty()) return;
+	// A story quest's cast keeps BP_CaveMan's stand-in asset (Gabe's) until the quest names them via SetPromptSpeaker,
+	// which may land first on a client.
+	if (!Dialogue || Dialogue->SpeakerName.IsEmpty() || !PromptSpeaker.IsEmpty()) return;
+	AutoPrompt = FillDefaultPrompt(Dialogue->SpeakerName);
+}
+
+FString UDialogueComponent::FillDefaultPrompt(const FText& Speaker)
+{
+	if (Speaker.IsEmpty()) return FString();
 	for (TFieldIterator<FStrProperty> It(GetOwner()->GetClass()); It; ++It)
 	{
 		if (!It->GetName().Replace(TEXT(" "), TEXT("")).StartsWith(TEXT("InteractText"))) continue;
 		const UObject* Defaults = It->GetOwnerClass()->GetDefaultObject();
-		if (It->GetPropertyValue_InContainer(GetOwner()) == It->GetPropertyValue_InContainer(Defaults))
+		const FString Current = It->GetPropertyValue_InContainer(GetOwner());
+		// Also over BeginPlay's own fill from the stand-in asset, but never over a prompt a quest set itself (cave men's "Unknown").
+		if (Current == It->GetPropertyValue_InContainer(Defaults) || (!AutoPrompt.IsEmpty() && Current == AutoPrompt))
 		{
-			It->SetPropertyValue_InContainer(GetOwner(), FText::Format(NSLOCTEXT("ExhibitTalk", "TalkTo", "Talk to {0}"), Dialogue->SpeakerName).ToString());
+			const FString Prompt = FText::Format(NSLOCTEXT("ExhibitTalk", "TalkTo", "Talk to {0}"), Speaker).ToString();
+			It->SetPropertyValue_InContainer(GetOwner(), Prompt);
+			return Prompt;
 		}
 	}
+	return FString();
+}
+
+void UDialogueComponent::SetPromptSpeaker(const FText& Speaker)
+{
+	PromptSpeaker = Speaker;
+	FillDefaultPrompt(Speaker);
+}
+
+void UDialogueComponent::OnRep_PromptSpeaker()
+{
+	FillDefaultPrompt(PromptSpeaker);
 }
 
 void UDialogueComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -39,6 +63,7 @@ void UDialogueComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& O
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 	DOREPLIFETIME(UDialogueComponent, bIsInConversation);
 	DOREPLIFETIME(UDialogueComponent, TalkingPlayer);
+	DOREPLIFETIME(UDialogueComponent, PromptSpeaker);
 }
 
 bool UDialogueComponent::CanReach(const UPlayerQuestComponent* Player) const
