@@ -1,6 +1,7 @@
 #pragma once
 #include "CoreMinimal.h"
 #include "GameFramework/Character.h"
+#include "Heist/RobberInteract.h"
 #include "QuestDialogueCharacter.generated.h"
 
 class UDialogueComponent;
@@ -8,6 +9,7 @@ class UDialogueDefinition;
 class UMaterialInterface;
 class UQuestGiverComponent;
 class UQuestDefinition;
+class URobberHighlightComponent;
 class USkeletalMesh;
 class UStaticMesh;
 class UStaticMeshComponent;
@@ -22,7 +24,7 @@ enum class EExhibitLook : uint8
 
 /** Parent for talking-character Blueprints. The Dialogue Component's asset is the runtime source of truth. */
 UCLASS(Blueprintable)
-class PRODUCTIONGAME_API AQuestDialogueCharacter : public ACharacter
+class PRODUCTIONGAME_API AQuestDialogueCharacter : public ACharacter, public IRobberInteractOwner
 {
 	GENERATED_BODY()
 public:
@@ -43,7 +45,24 @@ public:
 	UPROPERTY(EditDefaultsOnly, Category="Exhibit Look") FVector2D PaintingSize = FVector2D(140., 180.);
 	UPROPERTY(EditDefaultsOnly, Category="Exhibit Look") TObjectPtr<USkeletalMesh> StatueMesh;
 	UPROPERTY(EditDefaultsOnly, Category="Exhibit Look") TArray<TObjectPtr<UMaterialInterface>> StatueMaterials;
+	/** A statue with its own art (the Moai): shown instead of the stone mannequin, with the mesh's own materials. */
+	UPROPERTY(EditDefaultsOnly, Category="Exhibit Look") TObjectPtr<UStaticMesh> StatueModel;
+	/** How tall StatueModel stands, in cm; it's scaled evenly to this. */
+	UPROPERTY(EditDefaultsOnly, Category="Exhibit Look") float StatueModelHeight = 240.f;
+	/** Turns StatueModel so its face looks the way the exhibit faces; imported meshes face all sorts of ways. */
+	UPROPERTY(EditDefaultsOnly, Category="Exhibit Look") float StatueModelYaw = 0.f;
+	UPROPERTY(VisibleAnywhere, Category="Exhibit Look") TObjectPtr<UStaticMeshComponent> StatueModelMesh;
 	UPROPERTY(VisibleAnywhere, Category="Exhibit Look") TArray<TObjectPtr<UStaticMeshComponent>> FrameBars;
+	/** Red outline on whatever shows of the exhibit (painting and frame, statue, cube) while aimed at. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Interact") TObjectPtr<URobberHighlightComponent> Highlight;
+	/**
+	 * Prompt and press: BPC_Interaction presses it on the player's own machine (URobberFocusComponent::PressLocal).
+	 * Presses aren't server-only: TalkToNPC sends ServerTalkTo.
+	 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Interact") TObjectPtr<URobberInteractComponent> InteractComponent;
+	/** BP_TalkingMaster's "Interact Text" ("Talk to <speaker>"); empty while exhibits won't even chat (Break In). */
+	virtual FText GetInteractText(const ARobberGameState* GameState, const APlayerState* Viewer) const override;
+	virtual void OnInteract(APawn* Pawn, APlayerState* Player, ARobberGameState* GameState) override;
 	/** How far a painting's actor stands off its wall, so the capsule clears it. The picture sits back against the wall. */
 	static constexpr double PaintingWallGap = 45.;
 	/** Picture centre above the actor's origin: eye level for a capsule standing on the floor. */

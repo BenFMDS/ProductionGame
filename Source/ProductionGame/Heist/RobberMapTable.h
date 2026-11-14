@@ -151,7 +151,7 @@ public:
 
 	/** Local only, from the table's hover trace. */
 	void SetHovered(bool bHovered);
-	bool IsHovered() const { return bHovered; }
+	bool IsHovered() const;
 	bool IsOnMap() const { return bOnMap; }
 	int32 GetPinCount() const;
 
@@ -199,6 +199,5 @@ private:
 
 	TArray<FPin> Pins;
 	bool bOnMap = true;
-	bool bHovered = false;
 	double PlacementCheckTime = -1.;
 };

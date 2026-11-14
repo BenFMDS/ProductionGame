@@ -73,6 +73,7 @@ public:
 	void Refresh();
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 protected:
+	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type Reason) override;
 private:
 	TWeakObjectPtr<UPlayerQuestComponent> Participant;

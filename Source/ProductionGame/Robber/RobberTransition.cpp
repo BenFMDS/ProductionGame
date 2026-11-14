@@ -1,4 +1,6 @@
 #include "Robber/RobberController.h"
+#include "Robber/RobberGameState.h"
+#include "ProductionGameCharacter.h"
 
 #include "Blueprint/UserWidget.h"
 #include "Components/Image.h"
@@ -60,6 +62,20 @@ void ARobberController::PlayerTick(float DeltaTime)
 	if (Now)
 	{
 		TransitionPawnLocation = Now->GetActorLocation();
+	}
+
+	// Ignore*Input counts up and down, so only flip it on a change.
+	const ARobberGameState* State = GetWorld()->GetGameState<ARobberGameState>();
+	const bool bClosing = State && State->IsClosingTime();
+	if (bClosing != bClosingInputOff)
+	{
+		bClosingInputOff = bClosing;
+		SetIgnoreMoveInput(bClosing);
+		SetIgnoreLookInput(bClosing);
+		if (AProductionGameCharacter* Robber = Cast<AProductionGameCharacter>(Now))
+		{
+			Robber->SetInteractPromptMuted(bClosing);
+		}
 	}
 
 	if (TransitionTime < 0.f || !TransitionMaterial)

@@ -307,6 +307,8 @@ private:
 	float TransitionHold = 0.f;
 	TWeakObjectPtr<APawn> TransitionPawn;
 	FVector TransitionPawnLocation = FVector::ZeroVector;
+	/** Move/look input is held off for the Tour's closing-time card. */
+	bool bClosingInputOff = false;
 
 	UPROPERTY(Transient)
 	TObjectPtr<URobberDevMenu> DevMenu;

@@ -17,7 +17,9 @@
 #include "Heist/RobberInteractables.h"
 #include "Heist/RobberJournal.h"
 #include "Heist/RobberStage.h"
+#include "Heist/RobberTriggerZones.h"
 #include "Heist/RobberVault.h"
+#include "Components/VerticalBoxSlot.h"
 #include "Quest/PlayerQuestComponent.h"
 #include "Robber/RobberController.h"
 #include "Robber/RobberGameState.h"
@@ -63,11 +65,54 @@ void URobberDevMenu::NativeOnInitialized()
 	Bind(TEXT("GuardsMore"), ERobberDevAction::AddGuardsTime, 60);
 	Bind(TEXT("Immunity"), ERobberDevAction::ToggleImmunity);
 	Bind(TEXT("ShowQuests"), ERobberDevAction::ShowQuests);
+	AddTriggersButton();
+}
+
+void URobberDevMenu::AddTriggersButton()
+{
+	UButton* Model = Find<UButton>(TEXT("Immunity"));
+	UPanelWidget* Panel = Model ? Model->GetParent() : nullptr;
+	if (!Panel)
+	{
+		return;
+	}
+	UButton* Button = WidgetTree->ConstructWidget<UButton>(UButton::StaticClass(), TEXT("ShowTriggers"));
+	Button->SetStyle(Model->GetStyle());
+	TriggersLabel = WidgetTree->ConstructWidget<UTextBlock>();
+	if (const UTextBlock* ModelLabel = Cast<UTextBlock>(Model->GetContent()))
+	{
+		TriggersLabel->SetFont(ModelLabel->GetFont());
+		TriggersLabel->SetColorAndOpacity(ModelLabel->GetColorAndOpacity());
+	}
+	Button->SetContent(TriggersLabel);
+	UPanelSlot* NewSlot = Panel->InsertChildAt(Panel->GetChildIndex(Model) + 1, Button);
+	// Same spacing as its neighbour, whichever kind of box the WBP put them in.
+	if (const UVerticalBoxSlot* ModelV = Cast<UVerticalBoxSlot>(Model->Slot))
+	{
+		UVerticalBoxSlot* V = CastChecked<UVerticalBoxSlot>(NewSlot);
+		V->SetPadding(ModelV->GetPadding());
+		V->SetSize(ModelV->GetSize());
+		V->SetHorizontalAlignment(ModelV->GetHorizontalAlignment());
+		V->SetVerticalAlignment(ModelV->GetVerticalAlignment());
+	}
+	else if (const UHorizontalBoxSlot* ModelH = Cast<UHorizontalBoxSlot>(Model->Slot))
+	{
+		UHorizontalBoxSlot* H = CastChecked<UHorizontalBoxSlot>(NewSlot);
+		H->SetPadding(ModelH->GetPadding());
+		H->SetSize(ModelH->GetSize());
+		H->SetHorizontalAlignment(ModelH->GetHorizontalAlignment());
+		H->SetVerticalAlignment(ModelH->GetVerticalAlignment());
+	}
+	URobberDevMenuClick* Click = NewObject<URobberDevMenuClick>(this);
+	Click->Action = ERobberDevAction::ToggleTriggers;
+	Button->OnClicked.AddUniqueDynamic(Click, &URobberDevMenuClick::OnClicked);
+	Clicks.Add(Click);
 }
 
 void URobberDevMenu::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 {
 	Super::NativeTick(MyGeometry, InDeltaTime);
+	SetText(TriggersLabel, ARobberTriggerZone::AreShapesShownInGame() ? INVTEXT("Triggers: ON") : INVTEXT("Triggers: OFF"));
 	if (const ARobberGameState* State = GetRobberState())
 	{
 		SetText(Find<UTextBlock>(TEXT("StatusText")), FText::Format(INVTEXT("{0} - {1} - heat {2}"), NightName(State),
@@ -87,6 +132,11 @@ void URobberDevMenu::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 
 void URobberDevMenu::Send(ERobberDevAction Action, int32 Value)
 {
+	if (Action == ERobberDevAction::ToggleTriggers)
+	{
+		ARobberTriggerZone::SetShapesShownInGame(!ARobberTriggerZone::AreShapesShownInGame());
+		return;
+	}
 	if (ARobberController* Robber = GetRobber())
 	{
 		// Pressing it again closes the list, which needs nothing from the server.

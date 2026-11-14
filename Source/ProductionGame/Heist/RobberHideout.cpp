@@ -8,6 +8,9 @@
 #include "EngineUtils.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
+#include "Heist/RobberGlassCase.h"
+#include "Heist/RobberHighlight.h"
+#include "Heist/RobberMarker.h"
 #include "Heist/RobberStage.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Robber/RobberController.h"
@@ -16,44 +19,19 @@
 
 ARobberLobbyObject::ARobberLobbyObject()
 {
-	// Every frame, so the highlight comes on the moment you step into range.
-	PrimaryActorTick.TickInterval = 0.f;
 	Prompt = NSLOCTEXT("RobberHideout", "Prompt", "Interact With Object");
+	Highlight->Mode = ERobberHighlightMode::InRange;
+	Highlight->Range = HighlightRange;
+	// Like its BP_MenuObject twin, whose outline is on Mesh alone.
+	Highlight->PartNames = { TEXT("Mesh") };
 }
 
-bool ARobberLobbyObject::IsInHighlightRange(const AActor* Target, const APlayerController* Viewer)
+bool ARobberLobbyObject::IsHovered() const
 {
-	const APlayerCameraManager* Camera = Viewer ? Viewer->PlayerCameraManager.Get() : nullptr;
-	if (!Target || !Camera)
-	{
-		return false;
-	}
-	const FVector Eye = Camera->GetCameraLocation();
-	FVector Centre;
-	FVector Extent;
-	Target->GetActorBounds(true, Centre, Extent);
-	if (FVector::Dist(Eye, Centre) > HighlightRange)
-	{
-		return false;
-	}
-	// Otherwise the outline would draw straight through whatever is in front of it.
-	FCollisionQueryParams Params(SCENE_QUERY_STAT(MenuObjectHighlight), false, Viewer->GetPawn());
-	Params.AddIgnoredActor(Target);
-	return !Target->GetWorld()->LineTraceTestByChannel(Eye, Centre, ECC_Visibility, Params);
+	return Highlight->IsHighlighted();
 }
 
-void ARobberLobbyObject::Tick(float DeltaSeconds)
-{
-	Super::Tick(DeltaSeconds);
-	const bool bInRange = IsInHighlightRange(this, GetWorld()->GetFirstPlayerController());
-	if (bInRange != bHovered)
-	{
-		bHovered = bInRange;
-		Mesh->SetRenderCustomDepth(bHovered);
-	}
-}
-
-FText ARobberLobbyObject::GetPrompt(const ARobberGameState* GameState, const APlayerState* Viewer) const
+FText ARobberLobbyObject::GetMenuName() const
 {
 	switch (Menu)
 	{
@@ -71,9 +49,28 @@ bool URobberMenuObjectSubsystem::ShouldCreateSubsystem(UObject* Outer) const
 	return World && World->IsGameWorld() && Super::ShouldCreateSubsystem(Outer);
 }
 
+void URobberMenuObjectSubsystem::AddMarker(AActor* Object, const FText& Name)
+{
+	// The "!" is only drawn for a local player; a dedicated server has none.
+	if (!Object || !Object->GetRootComponent() || Object->GetNetMode() == NM_DedicatedServer)
+	{
+		return;
+	}
+	URobberMarkerComponent* Marker = NewObject<URobberMarkerComponent>(Object, TEXT("MenuMarker"));
+	Marker->Label = Name;
+	Marker->NameRange = ARobberLobbyObject::HighlightRange;
+	Marker->SetupAttachment(Object->GetRootComponent());
+	Marker->RegisterComponent();
+	Markers.Add(Marker);
+}
+
 void URobberMenuObjectSubsystem::OnWorldBeginPlay(UWorld& World)
 {
 	Super::OnWorldBeginPlay(World);
+	for (TActorIterator<ARobberLobbyObject> It(&World); It; ++It)
+	{
+		AddMarker(*It, It->GetMenuName());
+	}
 	for (TActorIterator<AActor> It(&World); It; ++It)
 	{
 		if (!It->GetClass()->GetName().StartsWith(TEXT("BP_MenuObject")))
@@ -81,6 +78,7 @@ void URobberMenuObjectSubsystem::OnWorldBeginPlay(UWorld& World)
 			continue;
 		}
 		Objects.Add(*It);
+		AddHighlight(*It);
 		for (UActorComponent* Component : It->GetComponents())
 		{
 			if (UTextRenderComponent* Text = Cast<UTextRenderComponent>(Component))
@@ -103,28 +101,25 @@ void URobberMenuObjectSubsystem::OnWorldBeginPlay(UWorld& World)
 		else if (Name.Contains(TEXT("Dev"))) Prompt = NSLOCTEXT("RobberHideout", "MenuDev", "Dev levels").ToString();
 		else if (Name.Contains(TEXT("Quit"))) Prompt = NSLOCTEXT("RobberHideout", "MenuQuit", "Quit game").ToString();
 		InteractText->SetPropertyValue_InContainer(*It, Prompt);
+		AddMarker(*It, FText::FromString(Prompt));
 	}
 }
 
-void URobberMenuObjectSubsystem::Tick(float DeltaTime)
+void URobberMenuObjectSubsystem::AddHighlight(AActor* Object)
 {
-	const APlayerController* LocalPlayer = GetWorld()->GetFirstPlayerController();
-	for (const TWeakObjectPtr<AActor>& Object : Objects)
+	// Lit anywhere in range, not only while aimed at. BP_MenuObject gets a highlight from ARobberPropBase; make one if not.
+	URobberHighlightComponent* Highlight = Object->FindComponentByClass<URobberHighlightComponent>();
+	const bool bMade = !Highlight;
+	if (bMade)
 	{
-		if (!Object.IsValid())
-		{
-			continue;
-		}
-		const bool bInRange = ARobberLobbyObject::IsInHighlightRange(Object.Get(), LocalPlayer);
-		// Every frame: BPC_Interaction switches the outline off when your aim leaves the object, even if you're still in range.
-		for (UActorComponent* Component : Object->GetComponents())
-		{
-			UPrimitiveComponent* Primitive = Component->GetFName() == TEXT("Mesh") ? Cast<UPrimitiveComponent>(Component) : nullptr;
-			if (Primitive && Primitive->bRenderCustomDepth != bInRange)
-			{
-				Primitive->SetRenderCustomDepth(bInRange);
-			}
-		}
+		Highlight = NewObject<URobberHighlightComponent>(Object, TEXT("RobberHighlight"));
+	}
+	Highlight->Mode = ERobberHighlightMode::InRange;
+	Highlight->Range = ARobberLobbyObject::HighlightRange;
+	Highlight->PartNames = { TEXT("Mesh") };
+	if (bMade)
+	{
+		Highlight->RegisterComponent();
 	}
 }
 
@@ -134,15 +129,6 @@ void ARobberLobbyObject::OnServerInteract(APawn* Pawn, APlayerState* Player, ARo
 	{
 		Controller->ClientOpenLobbyMenu(Menu);
 	}
-}
-
-namespace RobberGems
-{
-	// One colour per night, Night 1 first.
-	const FLinearColor Colours[ARobberGemCase::GemCount] = {
-		FLinearColor(0.80f, 0.04f, 0.04f), FLinearColor(0.90f, 0.35f, 0.02f), FLinearColor(0.90f, 0.75f, 0.05f), FLinearColor(0.05f, 0.65f, 0.12f),
-		FLinearColor(0.04f, 0.65f, 0.75f), FLinearColor(0.05f, 0.18f, 0.85f), FLinearColor(0.50f, 0.08f, 0.75f),
-	};
 }
 
 ARobberGemCase::ARobberGemCase()
@@ -181,11 +167,12 @@ void ARobberGemCase::OnConstruction(const FTransform& Transform)
 void ARobberGemCase::BeginPlay()
 {
 	Super::BeginPlay();
+	// The same gem each night's glass case holds, so the trophies match what was stolen.
 	for (int32 Index = 0; Index < Gems.Num(); ++Index)
 	{
-		if (UMaterialInstanceDynamic* Material = Gems[Index]->CreateAndSetMaterialInstanceDynamic(0))
+		if (const FRobberNightGem* NightGem = ARobberGlassCase::GetNightGem(nullptr, Index + 1))
 		{
-			Material->SetVectorParameterValue(TEXT("Color"), RobberGems::Colours[Index]);
+			ARobberGlassCase::DressGem(Gems[Index], *NightGem, Gems[Index]->GetRelativeScale3D().X * 100.f);
 		}
 	}
 	ShowGems(GemsWon(GetWorld()->GetGameState<ARobberGameState>()));
