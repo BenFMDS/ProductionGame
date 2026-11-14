@@ -3,6 +3,7 @@
 #include "ProductionGameCharacter.h"
 #include "Animation/AnimInstance.h"
 #include "Camera/CameraComponent.h"
+#include "Components/Widget.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "EnhancedInputComponent.h"
@@ -380,6 +381,34 @@ void AProductionGameCharacter::ApplyLocalHidingView(bool bHiding)
 	if (UpdateWidget && UpdateWidget->ParmsSize == sizeof(Params))
 	{
 		Widget->ProcessEvent(UpdateWidget, &Params);
+	}
+}
+
+void AProductionGameCharacter::SetInteractPromptMuted(bool bMuted)
+{
+	// Visibility, not render opacity: the prompt's rounded-box outlines ignore opacity and stayed on screen. Only used while
+	// hiding, when BPC_Interaction doesn't tick, so its graph can't flip the visibility back mid-card.
+	for (UActorComponent* Component : GetComponents())
+	{
+		if (!Component || !Component->GetClass()->GetName().StartsWith(TEXT("BPC_Interaction")))
+		{
+			continue;
+		}
+		FObjectPropertyBase* WidgetRef = FindFProperty<FObjectPropertyBase>(Component->GetClass(), TEXT("Interaction Widget Ref"));
+		if (UWidget* Widget = WidgetRef ? Cast<UWidget>(WidgetRef->GetObjectPropertyValue_InContainer(Component)) : nullptr)
+		{
+			if (bMuted && !bPromptMuted)
+			{
+				PromptVisibilityBeforeMute = Widget->GetVisibility();
+				Widget->SetVisibility(ESlateVisibility::Collapsed);
+			}
+			else if (!bMuted && bPromptMuted)
+			{
+				Widget->SetVisibility(PromptVisibilityBeforeMute);
+			}
+			bPromptMuted = bMuted;
+		}
+		return;
 	}
 }
 

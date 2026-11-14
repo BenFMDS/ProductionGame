@@ -241,6 +241,7 @@ void URobberCaseFileHUD::NativeOnInitialized()
 		BuildStoryWidgets(Root);
 		BuildMarkerWidgets(Root);
 		BuildEscapeWidgets(Root);
+		BuildClosingWidgets(Root);
 	}
 	if (Find(TEXT("SprintBar")) || !Root || !WidgetTree)
 	{
@@ -631,6 +632,93 @@ void URobberCaseFileHUD::UpdateEscape(const ARobberGameState* State, float Delta
 		Scale *= 1.f + 0.08f * FMath::Max(0.f, 1.f - IntoSecond / 0.3f);
 	}
 	EscapeRoot->SetRenderScale(FVector2D(Scale));
+}
+
+void URobberCaseFileHUD::BuildClosingWidgets(UCanvasPanel* Root)
+{
+	UImage* Blackout = StorySolid(WidgetTree, FLinearColor(0.01f, 0.01f, 0.02f));
+	Blackout->SetVisibility(ESlateVisibility::Collapsed);
+	UCanvasPanelSlot* BlackSlot = Root->AddChildToCanvas(Blackout);
+	BlackSlot->SetAnchors(FAnchors(0.f, 0.f, 1.f, 1.f));
+	BlackSlot->SetOffsets(FMargin(0.f));
+	BlackSlot->SetZOrder(40);
+	ClosingBlackout = Blackout;
+
+	// The escape stamp's big sister: same double ring, ink instead of red, dead centre over the dark.
+	UVerticalBox* Text = WidgetTree->ConstructWidget<UVerticalBox>();
+	UTextBlock* Kick = StoryLabel(WidgetTree, StoryFont(TEXT("F_Bangers"), 84.f), StoryRed);
+	Kick->SetJustification(ETextJustify::Center);
+	Kick->SetText(NSLOCTEXT("RobberCaseFile", "MuseumClosed", "THE MUSEUM IS CLOSED"));
+	ClosingClock = StoryLabel(WidgetTree, StoryFont(TEXT("F_Fredoka"), 72.f, TEXT("Bold")), StoryInk);
+	ClosingClock->SetJustification(ETextJustify::Center);
+	UTextBlock* Sub = StoryLabel(WidgetTree, StoryFont(TEXT("F_Fredoka"), 24.f), StoryInk);
+	Sub->SetJustification(ETextJustify::Center);
+	Sub->SetText(NSLOCTEXT("RobberCaseFile", "MuseumClosedSub", "The visitors have gone home. The guards are on shift."));
+	Text->AddChildToVerticalBox(Kick)->SetHorizontalAlignment(HAlign_Center);
+	Text->AddChildToVerticalBox(ClosingClock)->SetHorizontalAlignment(HAlign_Center);
+	Text->AddChildToVerticalBox(Sub)->SetHorizontalAlignment(HAlign_Center);
+
+	UBorder* Card = StoryBox(WidgetTree, StoryPaper, FMargin(34.f, 14.f, 34.f, 18.f), Text);
+	UBorder* Inner = StoryBox(WidgetTree, StoryInk, FMargin(3.f), Card);
+	UBorder* Gap = StoryBox(WidgetTree, StoryPaper, FMargin(5.f), Inner);
+	UBorder* Edge = StoryBox(WidgetTree, StoryInk, FMargin(4.f), Gap);
+
+	UOverlay* Stack = WidgetTree->ConstructWidget<UOverlay>();
+	UImage* Shadow = StorySolid(WidgetTree, FLinearColor::Black);
+	Shadow->SetRenderTranslation(FVector2D(10., 10.));
+	StoryFill(Stack, Shadow);
+	StoryFill(Stack, Edge);
+	USizeBox* Sized = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass(), TEXT("ClosingCard"));
+	Sized->SetWidthOverride(820.f);
+	Sized->SetContent(Stack);
+	Sized->SetVisibility(ESlateVisibility::Collapsed);
+	Sized->SetRenderTransformPivot(FVector2D(0.5f, 0.5f));
+	Sized->SetRenderTransformAngle(-3.f);
+	UCanvasPanelSlot* CardSlot = Root->AddChildToCanvas(Sized);
+	CardSlot->SetAnchors(FAnchors(0.5f, 0.5f));
+	CardSlot->SetAlignment(FVector2D(0.5f, 0.5f));
+	CardSlot->SetAutoSize(true);
+	CardSlot->SetZOrder(41);
+	ClosingCard = Sized;
+}
+
+void URobberCaseFileHUD::UpdateClosing(const ARobberGameState* State)
+{
+	if (!ClosingBlackout || !ClosingCard || !ClosingClock)
+	{
+		return;
+	}
+	const float T = State->GetClosingTimeElapsed();
+	const float End = ARobberGameState::ClosingTimeSeconds;
+	if (T < 0.f || T >= End)
+	{
+		ClosingBlackout->SetVisibility(ESlateVisibility::Collapsed);
+		ClosingCard->SetVisibility(ESlateVisibility::Collapsed);
+		return;
+	}
+	// Dark by 0.8 s (the server swaps visitors for guards just after), light again over the last 0.9 s.
+	const float FadeOut = 0.9f;
+	const float Dark = FMath::Min(FMath::Clamp(T / 0.8f, 0.f, 1.f), FMath::Clamp((End - T) / FadeOut, 0.f, 1.f));
+	ClosingBlackout->SetVisibility(ESlateVisibility::HitTestInvisible);
+	ClosingBlackout->SetRenderOpacity(Dark);
+
+	const float CardIn = 0.6f;
+	const bool bCard = T >= CardIn;
+	ClosingCard->SetVisibility(bCard ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+	if (!bCard)
+	{
+		return;
+	}
+	const float Slam = FMath::Clamp((T - CardIn) / 0.25f, 0.f, 1.f);
+	ClosingCard->SetRenderScale(FVector2D(FMath::Lerp(1.6f, 1.f, 1.f - FMath::Square(1.f - Slam))));
+	ClosingCard->SetRenderOpacity(FMath::Clamp((End - T) / FadeOut, 0.f, 1.f));
+
+	// 17:00 to midnight, easing into the last minutes so 00:00 lands and holds.
+	const float Run = FMath::Clamp((T - 0.9f) / 2.8f, 0.f, 1.f);
+	const int32 Minutes = 17 * 60 + FMath::RoundToInt((7 * 60) * (1.f - FMath::Square(1.f - Run)));
+	const int32 Hour = (Minutes / 60) % 24;
+	SetText(ClosingClock, FText::FromString(FString::Printf(TEXT("%02d:%02d"), Hour, Minutes % 60)));
+	ClosingClock->SetColorAndOpacity(FSlateColor(Run >= 1.f ? StoryRed : StoryInk));
 }
 
 void URobberCaseFileHUD::OnStoryStamp(bool bComplete, const FText& Title, const FText& Subtitle)
@@ -1259,6 +1347,7 @@ void URobberCaseFileHUD::NativeTick(const FGeometry& MyGeometry, float InDeltaTi
 	UpdateSpotBubbles(InDeltaTime);
 	UpdateHidingView();
 	UpdateEscape(State, InDeltaTime);
+	UpdateClosing(State);
 	UpdateNote(State);
 	UpdatePaper(State);
 	FillCrew(State, TEXT("CrewCard"));

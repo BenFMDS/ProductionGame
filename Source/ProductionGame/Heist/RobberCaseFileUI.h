@@ -181,6 +181,14 @@ private:
 	UPROPERTY(Transient) TObjectPtr<UTextBlock> EscapeClock;
 	float EscapeShownFor = -1.f;
 
+	void BuildClosingWidgets(UCanvasPanel* Root);
+	void UpdateClosing(const ARobberGameState* State);
+
+	/** The Tour's closing-time card: the screen goes dark, a stamp with a clock running 17:00 to midnight. */
+	UPROPERTY(Transient) TObjectPtr<UWidget> ClosingBlackout;
+	UPROPERTY(Transient) TObjectPtr<UWidget> ClosingCard;
+	UPROPERTY(Transient) TObjectPtr<UTextBlock> ClosingClock;
+
 	UPROPERTY(Transient) TArray<FRobberPinUI> Pins;
 	UPROPERTY(Transient) TArray<TObjectPtr<UWidget>> Bubbles;
 	UPROPERTY(Transient) TObjectPtr<UWidget> HidingView;

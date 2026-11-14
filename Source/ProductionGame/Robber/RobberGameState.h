@@ -113,6 +113,16 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Robber|BreakIn")
 	float GetPhaseTimeRemaining() const;
 
+	/** How long the closing-time card plays (Tour). Input is off and interacting does nothing meanwhile. */
+	static constexpr float ClosingTimeSeconds = 5.5f;
+
+	/** Server only. Starts the closing-time card on every screen; the entry ends the break-in once it's played. */
+	void StartClosingTime();
+
+	/** Seconds since closing time started, or -1 when it isn't playing. Every machine. */
+	float GetClosingTimeElapsed() const;
+	bool IsClosingTime() const { return ClosingStartServerTime > 0.; }
+
 	UFUNCTION(BlueprintPure, Category = "Robber|BreakIn")
 	FRobberCrewStatus GetCrewStatus(const APlayerState* Player) const;
 
@@ -379,6 +389,10 @@ private:
 	/** Server world time the current phase timer ends at; 0 when none is running. */
 	UPROPERTY(Replicated)
 	double PhaseEndServerTime = 0.;
+
+	/** Server world time the closing-time card started; 0 when it isn't playing. */
+	UPROPERTY(Replicated)
+	double ClosingStartServerTime = 0.;
 
 	/** In play order. Each must be a streaming sublevel of the map (see HeistSliceSetup -GameLevel). */
 	UPROPERTY(EditDefaultsOnly, Category = "Robber|Night")

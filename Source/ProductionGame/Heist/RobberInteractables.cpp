@@ -56,7 +56,8 @@ void ARobberInteractable::HandleInteract(AActor* InteractingPlayer)
 	}
 	APlayerState* Player = Pawn ? Pawn->GetPlayerState() : nullptr;
 	ARobberGameState* GameState = GetWorld()->GetGameState<ARobberGameState>();
-	if (!Player || !GameState || !IsActive(GameState))
+	// Closing time plays with everyone tucked into a spot; climbing out mid-card would leave them unhidden for the night.
+	if (!Player || !GameState || !IsActive(GameState) || GameState->IsClosingTime())
 	{
 		return;
 	}

@@ -81,6 +81,10 @@ protected:
 /**
  * Closing-Time Tour: the crew walks in as visitors, buys tickets, and hides in an exhibit before closing.
  * Closing comes when the timer runs out, or as soon as everyone is hidden.
+ *
+ * With bDaytimeMuseum there's no timer: the museum is open (visitors, a ticket seller, no guards) until the whole
+ * crew is hidden. Then the closing-time card plays with input off, the visitors go, the guards come on shift, and
+ * the crew stays in their spots until they choose to climb out.
  */
 UCLASS(Blueprintable)
 class PRODUCTIONGAME_API ARobberTourEntryPoint : public ARobberEntryPoint
@@ -90,6 +94,16 @@ class PRODUCTIONGAME_API ARobberTourEntryPoint : public ARobberEntryPoint
 public:
 	ARobberTourEntryPoint();
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Robber|Entry")
+	bool bDaytimeMuseum = false;
+
+	/** Wandering visitors, not counting the ticket seller. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Robber|Entry", meta = (EditCondition = "bDaytimeMuseum", ClampMin = "0", ClampMax = "30"))
+	int32 VisitorCount = 10;
+
+	/** Into the closing-time card, once the screen is dark: the visitors go and the guards come on. */
+	static constexpr float NightSwapAt = 1.2f;
+
 	/** Server only. False (with the reason) when this player can't hide yet. */
 	bool TryHide(ARobberGameState* GameState, APlayerState* Player, ARobberHidingSpot* HidingSpot, FText& OutReason);
 
@@ -98,6 +112,15 @@ public:
 	virtual void EndBreakIn(ARobberGameState* GameState) override;
 	virtual FText GetBreakInStatus(const ARobberGameState* GameState, const APlayerState* Viewer) const override;
 	virtual void GetBreakInMarkers(const ARobberGameState* GameState, const APlayerState* Viewer, TArray<FRobberMarkerTarget>& Out) const override;
+
+private:
+	void OpenForTheDay(ARobberGameState* GameState);
+	/** The museum shuts: visitors removed, guards woken. Safe to call twice. */
+	void CloseForTheNight();
+
+	/** Guards put to sleep for the day, woken at closing. */
+	TArray<TWeakObjectPtr<APawn>> SleepingGuards;
+	bool bOpenForTheDay = false;
 };
 
 /**

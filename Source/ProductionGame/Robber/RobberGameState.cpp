@@ -20,6 +20,7 @@
 #include "Heist/RobberJournal.h"
 #include "Heist/RobberSecurityCamera.h"
 #include "Heist/RobberVault.h"
+#include "Heist/RobberVisitor.h"
 #include "Kismet/GameplayStatics.h"
 #include "Net/UnrealNetwork.h"
 #include "Quest/PlayerQuestComponent.h"
@@ -471,7 +472,22 @@ void ARobberGameState::FinishBreakIn()
 	{
 		ActiveEntry->EndBreakIn(this);
 	}
+	ClosingStartServerTime = 0.;
 	SetGameStage(RobberStage::Investigate);
+}
+
+void ARobberGameState::StartClosingTime()
+{
+	if (HasAuthority() && ClosingStartServerTime <= 0.)
+	{
+		ClosingStartServerTime = GetServerWorldTimeSeconds();
+		ForceNetUpdate();
+	}
+}
+
+float ARobberGameState::GetClosingTimeElapsed() const
+{
+	return ClosingStartServerTime > 0. ? FMath::Max(0., GetServerWorldTimeSeconds() - ClosingStartServerTime) : -1.f;
 }
 
 void ARobberGameState::SetPhaseTimer(float Seconds)
@@ -718,6 +734,12 @@ void ARobberGameState::ResetCrewToLobby()
 	Jobs.Reset();
 	OnRep_Jobs();
 	PhaseEndServerTime = 0.;
+	ClosingStartServerTime = 0.;
+	// Spawned into the persistent level, so a night unloading doesn't take a daytime crowd with it.
+	for (TActorIterator<ARobberVisitor> It(GetWorld()); It; ++It)
+	{
+		It->Destroy();
+	}
 	bPowerCut = false;
 	bAlarmRaised = false;
 	Heat = 0.f;
@@ -879,6 +901,7 @@ void ARobberGameState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& Out
 	DOREPLIFETIME(ARobberGameState, Crew);
 	DOREPLIFETIME(ARobberGameState, Jobs);
 	DOREPLIFETIME(ARobberGameState, PhaseEndServerTime);
+	DOREPLIFETIME(ARobberGameState, ClosingStartServerTime);
 	DOREPLIFETIME(ARobberGameState, CurrentNight);
 	DOREPLIFETIME(ARobberGameState, bTutorial);
 	DOREPLIFETIME(ARobberGameState, NightResultText);

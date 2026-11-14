@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Character.h"
+#include "Components/SlateWrapperTypes.h"
 #include "Logging/LogMacros.h"
 #include "Perception/AISightTargetInterface.h"
 #include "ProductionGameCharacter.generated.h"
@@ -143,6 +144,15 @@ public:
 
 	/** Server only. bClimbOut false leaves them where they are (caught and jailed, or the night's over). */
 	void ExitHiding(bool bClimbOut = true);
+
+	/** Local only. Hides the E prompt without touching what it targets (the Tour's closing-time card). */
+	void SetInteractPromptMuted(bool bMuted);
+
+private:
+	bool bPromptMuted = false;
+	ESlateVisibility PromptVisibilityBeforeMute = ESlateVisibility::Visible;
+
+public:
 
 	UFUNCTION(BlueprintPure, Category = "Hiding")
 	bool IsHiding() const { return HidingSpot != nullptr; }
