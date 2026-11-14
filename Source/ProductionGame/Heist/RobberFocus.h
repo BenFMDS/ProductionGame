@@ -10,8 +10,8 @@ class APlayerController;
  * What this machine's player is aiming at: one Visibility trace from the camera per frame, which the outline
  * (URobberHighlightSubsystem) and the map table's hover both read, so they can't disagree about what's focused.
  * Sits on the local PlayerController rather than the pawn: the menu and the game use different pawns, and the
- * controller survives hiding and respawns. Local only; the press itself still goes to the server through
- * BPC_Interaction, which keeps its own trace for the prompt until stage 5 (it can read GetTarget/GetPrompt then).
+ * controller survives hiding and respawns. Local only. BPC_Interaction (the player's Blueprint component that owns the
+ * prompt widget and the E press) reads it through DriveInteraction and sends the press on through BPI_Interaction.
  */
 UCLASS(ClassGroup = Robber, meta = (BlueprintSpawnableComponent))
 class PRODUCTIONGAME_API URobberFocusComponent : public UActorComponent
@@ -48,6 +48,21 @@ public:
 
 	/** Trace again now. The tick does this each frame; tests call it to skip a frame's wait. */
 	void Refresh();
+
+	/**
+	 * BPC_Interaction's per-frame update (its LineTrace function), from its owning pawn's focus: sets its InteractActor
+	 * and shows or hides its prompt widget. Anything with BPI_Interaction counts as a fallback (job board, Sir Steel),
+	 * so actors without the Interact component keep their prompt.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Robber|Focus")
+	static void DriveInteraction(UActorComponent* Interaction);
+
+	/**
+	 * From BPC_Interaction's E press, before it sends Interact to the server: presses the InteractActor's Interact
+	 * component here when that isn't server-only (talkers, which have no BPI_Interaction any more).
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Robber|Focus")
+	static void PressLocal(UActorComponent* Interaction);
 
 protected:
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;

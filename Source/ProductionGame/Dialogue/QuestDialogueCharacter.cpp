@@ -1,4 +1,5 @@
 #include "Dialogue/QuestDialogueCharacter.h"
+#include "AchievementBlueprintFunctionLibrary.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
@@ -41,7 +42,8 @@ AQuestDialogueCharacter::AQuestDialogueCharacter()
 
 FText AQuestDialogueCharacter::GetInteractText(const ARobberGameState* GameState, const APlayerState* Viewer) const
 {
-	if (GameState && !GameState->CanTalkToExhibits())
+	// Chat, not talk: during Investigate they still make small talk.
+	if (GameState && !GameState->CanChatWithExhibits())
 	{
 		return FText::GetEmpty();
 	}
@@ -59,6 +61,11 @@ FText AQuestDialogueCharacter::GetInteractText(const ARobberGameState* GameState
 void AQuestDialogueCharacter::OnInteract(APawn* Pawn, APlayerState* Player, ARobberGameState* GameState)
 {
 	UDialogueInteractionLibrary::TalkToNPC(this, Pawn);
+	// Achievement 1, first chat with an exhibit: was in BP_TalkingMaster's Interact event. Achievements are per machine.
+	if (Pawn && Pawn->IsLocallyControlled())
+	{
+		UAchievementBlueprintFunctionLibrary::UnlockAchievement(this, TEXT("1"));
+	}
 }
 
 void AQuestDialogueCharacter::ApplyExhibitLook()

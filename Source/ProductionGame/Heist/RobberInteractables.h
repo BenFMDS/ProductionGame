@@ -2,7 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
-#include "Heist/RobberInteract.h"
+#include "Heist/RobberPropBase.h"
 #include "RobberInteractables.generated.h"
 
 class APlayerState;
@@ -27,12 +27,12 @@ enum class ERobberModelFit : uint8
 };
 
 /**
- * Base for heist props the player presses Interact on. BPI_Interaction is a Blueprint interface, so each
+ * Base for heist props whose behaviour is in C++. BPI_Interaction is a Blueprint interface, so each
  * of these has a thin Blueprint child that implements it: Interact calls HandleInteract and
  * GetInteractData returns GetInteractPrompt. Both pass straight to the Interact component.
  */
 UCLASS(Abstract)
-class PRODUCTIONGAME_API ARobberInteractable : public AActor, public IRobberInteractOwner
+class PRODUCTIONGAME_API ARobberInteractable : public ARobberPropBase
 {
 	GENERATED_BODY()
 
@@ -46,13 +46,6 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Robber|Interact")
 	FString GetInteractPrompt() const;
 
-	/**
-	 * From BPC_Interaction's trace, before it overwrites Hit Actor: takes the outline off the old target. The trace's
-	 * own clear-up runs on the new Hit Actor, so aiming straight from a prop onto a wall or another prop left it lit.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "Robber|Interact")
-	static void ClearStaleOutline(AActor* Previous, AActor* Now);
-
 	virtual void Tick(float DeltaSeconds) override;
 	virtual void PostLoad() override;
 	virtual void OnConstruction(const FTransform& Transform) override;
@@ -65,9 +58,6 @@ public:
 	bool IsActive(const ARobberGameState* GameState) const;
 	/** Shows or removes a part: hidden with its children, and nothing to bump into while it's gone. */
 	static void ShowPart(UPrimitiveComponent* Part, bool bShown);
-
-	URobberHighlightComponent* GetHighlight() const { return Highlight; }
-	URobberInteractComponent* GetInteract() const { return InteractComponent; }
 
 	virtual FText GetInteractText(const ARobberGameState* GameState, const APlayerState* Viewer) const override;
 	virtual void OnInteract(APawn* Pawn, APlayerState* Player, ARobberGameState* GameState) override { OnServerInteract(Pawn, Player, GameState); }
@@ -111,14 +101,6 @@ protected:
 
 	/** Model parts with no collision under ModelRoot, made in the constructor. */
 	UStaticMeshComponent* MakeModelPart(const TCHAR* Name);
-
-	/** Red outline while aimed at, by default. Subclasses that light up another way change its Mode. */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Robber|Interact")
-	TObjectPtr<URobberHighlightComponent> Highlight;
-
-	/** Press handling, prompt and the OwningEntry gate. Not called "Interact": that's BPI_Interaction's function in the BP children. */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Robber|Interact")
-	TObjectPtr<URobberInteractComponent> InteractComponent;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Robber|Interact")
 	FText Prompt;

@@ -56,11 +56,11 @@ public:
 	/** Red outline on whatever shows of the exhibit (painting and frame, statue, cube) while aimed at. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Interact") TObjectPtr<URobberHighlightComponent> Highlight;
 	/**
-	 * Prompt and press. BP_TalkingMaster's BPI_Interaction route still does the real talking until stage 5; this gives
-	 * C++ (the outline now, the focus trace later) the same answer. Presses aren't server-only: TalkToNPC sends ServerTalkTo.
+	 * Prompt and press: BPC_Interaction presses it on the player's own machine (URobberFocusComponent::PressLocal).
+	 * Presses aren't server-only: TalkToNPC sends ServerTalkTo.
 	 */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Interact") TObjectPtr<URobberInteractComponent> InteractComponent;
-	/** BP_TalkingMaster's "Interact Text" ("Talk to <speaker>"); empty while talking to exhibits is off. */
+	/** BP_TalkingMaster's "Interact Text" ("Talk to <speaker>"); empty while exhibits won't even chat (Break In). */
 	virtual FText GetInteractText(const ARobberGameState* GameState, const APlayerState* Viewer) const override;
 	virtual void OnInteract(APawn* Pawn, APlayerState* Player, ARobberGameState* GameState) override;
 	/** How far a painting's actor stands off its wall, so the capsule clears it. The picture sits back against the wall. */

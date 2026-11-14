@@ -50,9 +50,6 @@ ARobberInteractable::ARobberInteractable()
 	LabelText->SetWorldSize(30.f);
 	LabelText->SetTextRenderColor(FColor::White);
 	LabelText->SetAbsolute(false, false, true);
-
-	Highlight = CreateDefaultSubobject<URobberHighlightComponent>(TEXT("RobberHighlight"));
-	InteractComponent = CreateDefaultSubobject<URobberInteractComponent>(TEXT("RobberInteract"));
 }
 
 void ARobberInteractable::PostLoad()
@@ -157,23 +154,6 @@ FText ARobberInteractable::GetInteractText(const ARobberGameState* GameState, co
 {
 	// The subclasses' GetPrompt assumes a game state; without one (menus) the plain field is all there is.
 	return GameState ? GetPrompt(GameState, Viewer) : Prompt;
-}
-
-void ARobberInteractable::ClearStaleOutline(AActor* Previous, AActor* Now)
-{
-	if (!IsValid(Previous) || Previous == Now)
-	{
-		return;
-	}
-	// Same component the trace outlines: BP_InteractMaster's Mesh.
-	for (UActorComponent* Component : Previous->GetComponents())
-	{
-		UPrimitiveComponent* Primitive = Component->GetFName() == TEXT("Mesh") ? Cast<UPrimitiveComponent>(Component) : nullptr;
-		if (Primitive)
-		{
-			Primitive->SetRenderCustomDepth(false);
-		}
-	}
 }
 
 FString ARobberInteractable::GetInteractPrompt() const

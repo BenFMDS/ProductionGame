@@ -107,12 +107,20 @@ void URobberMenuObjectSubsystem::OnWorldBeginPlay(UWorld& World)
 
 void URobberMenuObjectSubsystem::AddHighlight(AActor* Object)
 {
-	// BPC_Interaction lights BP_MenuObject's Mesh only while aimed at; this keeps it lit anywhere in range.
-	URobberHighlightComponent* Highlight = NewObject<URobberHighlightComponent>(Object, TEXT("RobberHighlight"));
+	// Lit anywhere in range, not only while aimed at. BP_MenuObject gets a highlight from ARobberPropBase; make one if not.
+	URobberHighlightComponent* Highlight = Object->FindComponentByClass<URobberHighlightComponent>();
+	const bool bMade = !Highlight;
+	if (bMade)
+	{
+		Highlight = NewObject<URobberHighlightComponent>(Object, TEXT("RobberHighlight"));
+	}
 	Highlight->Mode = ERobberHighlightMode::InRange;
 	Highlight->Range = ARobberLobbyObject::HighlightRange;
 	Highlight->PartNames = { TEXT("Mesh") };
-	Highlight->RegisterComponent();
+	if (bMade)
+	{
+		Highlight->RegisterComponent();
+	}
 }
 
 void ARobberLobbyObject::OnServerInteract(APawn* Pawn, APlayerState* Player, ARobberGameState* GameState)
