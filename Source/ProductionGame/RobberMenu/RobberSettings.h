@@ -19,6 +19,8 @@ public:
 	UPROPERTY() float SfxVolume = 1.f;
 	UPROPERTY() float VoiceVolume = 1.f;
 	UPROPERTY() float LookSensitivity = 1.f;
+	/** 1 = the UI as authored. Multiplies the project's ApplicationScale. */
+	UPROPERTY() float UiSize = 1.f;
 	UPROPERTY() bool bInvertLook = false;
 	UPROPERTY() bool bSmoothMouse = false;
 
@@ -68,6 +70,10 @@ public:
 	void Apply();
 	/** Drops unsaved changes and applies what's on disk. */
 	void Revert();
+	/** Rescales the whole UI. Separate from Apply so the slider can wait for the mouse to let go. */
+	void ApplyUiSize();
+	/** The configured ApplicationScale that UiSize multiplies. */
+	float GetBaseUiScale() const { return BaseUiScale; }
 
 	/** Fired after keys are applied, so controllers can rebind the ones they own. */
 	FOnRobberControlsChanged OnControlsChanged;
@@ -76,6 +82,7 @@ private:
 	void LoadSave();
 	void OnMapLoaded(UWorld* World);
 	void ApplyAudio(UWorld* World);
+	float BaseUiScale = 1.f;
 	void ApplyKeys();
 	void RestoreDefaultKeys();
 

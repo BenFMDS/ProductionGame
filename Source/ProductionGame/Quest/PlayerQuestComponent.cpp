@@ -4,15 +4,26 @@
 #include "Quest/QuestObjectiveComponent.h"
 #include "Quest/QuestSequenceStep.h"
 #include "Dialogue/DialogueComponent.h"
+#include "Camera/PlayerCameraManager.h"
+#include "GameFramework/Character.h"
 #include "GameFramework/PlayerController.h"
+#include "GameFramework/PlayerState.h"
 #include "GameFramework/Pawn.h"
 #include "Engine/World.h"
+#include "TimerManager.h"
 #include "Net/UnrealNetwork.h"
+#include "Robber/RobberController.h"
 #include "Robber/RobberGameState.h"
 
 UPlayerQuestComponent::UPlayerQuestComponent()
 {
 	SetIsReplicatedByDefault(true);
+}
+
+UPlayerQuestComponent* UPlayerQuestComponent::Of(const APlayerState* Player)
+{
+	const AController* Controller = Player ? Player->GetOwningController() : nullptr;
+	return Controller ? Controller->FindComponentByClass<UPlayerQuestComponent>() : nullptr;
 }
 
 void UPlayerQuestComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -21,16 +32,52 @@ void UPlayerQuestComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>
 	DOREPLIFETIME_CONDITION(UPlayerQuestComponent, Quests, COND_OwnerOnly);
 	DOREPLIFETIME_CONDITION(UPlayerQuestComponent, Conversation, COND_OwnerOnly);
 	DOREPLIFETIME_CONDITION(UPlayerQuestComponent, Keys, COND_OwnerOnly);
+	DOREPLIFETIME_CONDITION(UPlayerQuestComponent, StoryNote, COND_OwnerOnly);
+}
+
+void UPlayerQuestComponent::SetStoryNote(const FRobberStoryNote& Note)
+{
+	if (!GetOwner()->HasAuthority()) return;
+	StoryNote = Note;
+	GetOwner()->ForceNetUpdate();
+}
+
+void UPlayerQuestComponent::ClientStoryStamp_Implementation(bool bComplete, const FText& Title, const FText& Subtitle)
+{
+	OnStoryStamp.Broadcast(bComplete, Title, Subtitle);
+}
+
+void UPlayerQuestComponent::ClientStoryCaught_Implementation(float Seconds, FVector Launch)
+{
+	APlayerController* PC = Cast<APlayerController>(GetOwner());
+	if (!PC) return;
+	if (PC->PlayerCameraManager) PC->PlayerCameraManager->StartCameraFade(1.f, 1.f, Seconds, FLinearColor::Black, false, true);
+	PC->SetIgnoreMoveInput(true);
+	PC->SetIgnoreLookInput(true);
+	if (ACharacter* Character = PC->GetCharacter(); Character && !GetOwner()->HasAuthority()) Character->LaunchCharacter(Launch, true, true);
+	GetWorld()->GetTimerManager().SetTimer(CaughtTimer, FTimerDelegate::CreateWeakLambda(this, [this]()
+	{
+		APlayerController* Controller = Cast<APlayerController>(GetOwner());
+		if (!Controller) return;
+		Controller->SetIgnoreMoveInput(false);
+		Controller->SetIgnoreLookInput(false);
+		if (Controller->PlayerCameraManager) Controller->PlayerCameraManager->StartCameraFade(1.f, 0.f, 0.5f, FLinearColor::Black, false, false);
+	}), Seconds, false);
+}
+
+UDialogueComponent* UPlayerQuestComponent::CurrentTalker() const
+{
+	return IsValid(Conversation.NPC) ? Conversation.NPC->FindComponentByClass<UDialogueComponent>() : nullptr;
 }
 
 void UPlayerQuestComponent::ResetForNight()
 {
 	if (!GetOwner()->HasAuthority()) return;
-	if (IsValid(Conversation.NPC))
-		if (auto* Dialogue = Conversation.NPC->FindComponentByClass<UDialogueComponent>()) Dialogue->Release(this);
+	if (auto* Dialogue = CurrentTalker()) Dialogue->Release(this);
 	CloseConversation();
 	Quests.Reset();
 	Keys.Reset();
+	StoryNote = FRobberStoryNote();
 	GetOwner()->ForceNetUpdate();
 	OnRep_Quests();
 }
@@ -89,11 +136,7 @@ void UPlayerQuestComponent::RefreshDefaultUI()
 
 void UPlayerQuestComponent::EndPlay(const EEndPlayReason::Type Reason)
 {
-	if (GetOwner()->HasAuthority())
-	{
-		if (IsValid(Conversation.NPC))
-			if (auto* Dialogue = Conversation.NPC->FindComponentByClass<UDialogueComponent>()) Dialogue->Release(this);
-	}
+	if (auto* Dialogue = GetOwner()->HasAuthority() ? CurrentTalker() : nullptr) Dialogue->Release(this);
 	if (Widget) Widget->RemoveFromParent();
 	Super::EndPlay(Reason);
 }
@@ -107,9 +150,9 @@ void UPlayerQuestComponent::ServerTalkTo_Implementation(AActor* NPC)
 	if (auto* Dialogue = NPC->FindComponentByClass<UDialogueComponent>())
 	{
 		const auto* RobberState = GetWorld()->GetGameState<ARobberGameState>();
-		if (RobberState && !RobberState->CanTalkToExhibits())
+		if (RobberState && !RobberState->CanChatWithExhibits())
 		{
-			ClientRejectConversation(NSLOCTEXT("Dialogue", "NotYet", "The exhibits won't talk yet. Find the gem room first."));
+			ClientRejectConversation(NSLOCTEXT("Dialogue", "NotYet", "The exhibits won't talk yet."));
 			return;
 		}
 		if (!Dialogue->HasValidDialogue())
@@ -124,15 +167,12 @@ void UPlayerQuestComponent::ServerTalkTo_Implementation(AActor* NPC)
 
 void UPlayerQuestComponent::ServerChoose_Implementation(int32 ChoiceID, int32 Revision)
 {
-	if (IsValid(Conversation.NPC))
-		if (auto* Dialogue = Conversation.NPC->FindComponentByClass<UDialogueComponent>()) Dialogue->Choose(this, ChoiceID, Revision);
+	if (auto* Dialogue = CurrentTalker()) Dialogue->Choose(this, ChoiceID, Revision);
 }
 
 void UPlayerQuestComponent::ServerEndConversation_Implementation(int32 Revision)
 {
-	if (Revision != Conversation.Revision) return;
-	if (IsValid(Conversation.NPC))
-		if (auto* Dialogue = Conversation.NPC->FindComponentByClass<UDialogueComponent>()) Dialogue->Release(this);
+	if (auto* Dialogue = Revision == Conversation.Revision ? CurrentTalker() : nullptr) Dialogue->Release(this);
 }
 
 void UPlayerQuestComponent::ServerCollectQuestObject_Implementation(AActor* QuestObject)
@@ -163,20 +203,21 @@ bool UPlayerQuestComponent::CanAccept(UQuestDefinition* Definition, AActor* Give
 	return Talker && Talker->OffersQuest(Definition) && !GetQuest(Definition->QuestID, Existing);
 }
 
+bool UPlayerQuestComponent::HasQuestIn(const UQuestDefinition* Definition, const AActor* Giver, EPlayerQuestState State) const
+{
+	FPlayerQuest Quest;
+	return IsValid(Definition) && IsValid(Giver) && GetQuest(Definition->QuestID, Quest) && Quest.Definition == Definition
+		&& Quest.Giver == Giver && Quest.State == State;
+}
+
 bool UPlayerQuestComponent::CanTurnIn(UQuestDefinition* Definition, AActor* Giver) const
 {
-	if (!IsValid(Definition) || !IsValid(Giver)) return false;
-	FPlayerQuest Quest;
-	return GetQuest(Definition->QuestID, Quest) && Quest.Definition == Definition && Quest.Giver == Giver
-		&& Quest.State == EPlayerQuestState::ReadyToTurnIn;
+	return HasQuestIn(Definition, Giver, EPlayerQuestState::ReadyToTurnIn);
 }
 
 bool UPlayerQuestComponent::CanProgressQuest(UQuestDefinition* Definition, AActor* Giver) const
 {
-	if (!IsValid(Definition) || !IsValid(Giver)) return false;
-	FPlayerQuest Quest;
-	return GetQuest(Definition->QuestID, Quest) && Quest.Definition == Definition && Quest.Giver == Giver
-		&& Quest.State == EPlayerQuestState::Active;
+	return HasQuestIn(Definition, Giver, EPlayerQuestState::Active);
 }
 
 bool UPlayerQuestComponent::AcceptQuest(UQuestDefinition* Definition, AActor* Giver)
@@ -239,8 +280,7 @@ bool UPlayerQuestComponent::AddQuestProgress(FName QuestID, int32 Amount)
 		if (Quest.Amount >= Required) Quest.State = EPlayerQuestState::ReadyToTurnIn;
 		GetOwner()->ForceNetUpdate();
 		OnRep_Quests();
-		if (IsValid(Conversation.NPC))
-			if (auto* Dialogue = Conversation.NPC->FindComponentByClass<UDialogueComponent>()) Dialogue->Refresh();
+		if (auto* Dialogue = CurrentTalker()) Dialogue->Refresh();
 		return true;
 	}
 	return false;
@@ -268,7 +308,12 @@ void UPlayerQuestComponent::SetConversation(const FPlayerConversation& Snapshot)
 void UPlayerQuestComponent::CloseConversation() { SetConversation(FPlayerConversation()); }
 void UPlayerQuestComponent::OnRep_Quests() { OnQuestsChanged.Broadcast(); }
 void UPlayerQuestComponent::OnRep_Conversation() { OnConversationChanged.Broadcast(); }
-void UPlayerQuestComponent::ClientRejectConversation_Implementation(const FText& Reason) { OnConversationRejected.Broadcast(Reason); }
+void UPlayerQuestComponent::ClientRejectConversation_Implementation(const FText& Reason)
+{
+	OnConversationRejected.Broadcast(Reason);
+	// The Case File HUD doesn't show the old widget's feedback line, so a refusal looked like the key doing nothing.
+	if (auto* Robber = Cast<ARobberController>(GetOwner())) Robber->ClientHeistMessage(Reason);
+}
 
 void UPlayerQuestComponent::TalkToLookedAtNPC()
 {

@@ -13,6 +13,12 @@ URobberJournalComponent::URobberJournalComponent()
 	SetIsReplicatedByDefault(true);
 }
 
+URobberJournalComponent* URobberJournalComponent::Of(const APlayerState* Player)
+{
+	const AController* Controller = Player ? Player->GetOwningController() : nullptr;
+	return Controller ? Controller->FindComponentByClass<URobberJournalComponent>() : nullptr;
+}
+
 void URobberJournalComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);

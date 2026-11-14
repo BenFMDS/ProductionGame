@@ -1,12 +1,27 @@
 #include "Heist/RobberCaseFileUI.h"
 
+#include "Blueprint/WidgetLayoutLibrary.h"
 #include "Blueprint/WidgetTree.h"
+#include "Camera/PlayerCameraManager.h"
+#include "Dialogue/QuestDialogueCharacter.h"
+#include "GameFramework/PlayerController.h"
+#include "Heist/RobberInteractables.h"
+#include "Heist/RobberObjectiveMarkers.h"
+#include "Brushes/SlateColorBrush.h"
 #include "Brushes/SlateRoundedBoxBrush.h"
 #include "Components/Border.h"
 #include "Components/Button.h"
 #include "Components/CanvasPanel.h"
 #include "Components/CanvasPanelSlot.h"
+#include "Components/HorizontalBox.h"
+#include "Components/HorizontalBoxSlot.h"
+#include "Components/Image.h"
+#include "Components/Overlay.h"
+#include "Components/OverlaySlot.h"
 #include "Components/SizeBox.h"
+#include "Components/VerticalBox.h"
+#include "Components/VerticalBoxSlot.h"
+#include "Engine/Font.h"
 #include "ProductionGameCharacter.h"
 #include "Components/PanelWidget.h"
 #include "Components/ProgressBar.h"
@@ -23,6 +38,7 @@
 #include "Quest/PlayerQuestComponent.h"
 #include "Robber/RobberController.h"
 #include "Robber/RobberGameState.h"
+#include "Heist/RobberStoryQuest.h"
 
 // --- Shared ---
 
@@ -118,20 +134,7 @@ FText URobberCaseFileWidgetBase::Clock(float Seconds)
 
 TArray<APlayerState*> URobberCaseFileWidgetBase::SortedCrew(const ARobberGameState* State)
 {
-	// PlayerId order, so cards and colours match on every machine, like the map pins.
-	TArray<APlayerState*> Crew;
-	if (State)
-	{
-		for (APlayerState* Player : State->PlayerArray)
-		{
-			if (Player)
-			{
-				Crew.Add(Player);
-			}
-		}
-	}
-	Crew.Sort([](const APlayerState& A, const APlayerState& B) { return A.GetPlayerId() < B.GetPlayerId(); });
-	return Crew;
+	return State ? State->GetPlayersInIdOrder() : TArray<APlayerState*>();
 }
 
 FText URobberCaseFileWidgetBase::CrewStatus(const ARobberGameState* State, const APlayerState* Player)
@@ -146,7 +149,8 @@ FText URobberCaseFileWidgetBase::CrewStatus(const ARobberGameState* State, const
 		return NSLOCTEXT("RobberCaseFile", "InLobby", "In the safe house");
 	}
 	const FRobberCrewStatus Status = State->GetCrewStatus(Player);
-	if (Status.HidingSpot)
+	const AProductionGameCharacter* Robber = Cast<AProductionGameCharacter>(Player->GetPawn());
+	if (Robber && Robber->IsHiding())
 	{
 		return NSLOCTEXT("RobberCaseFile", "Hiding", "Hiding");
 	}
@@ -205,6 +209,14 @@ namespace
 
 FText URobberCaseFileHUD::GetHeadline() const
 {
+	for (TActorIterator<ARobberStoryQuest> It(GetWorld()); It; ++It)
+	{
+		const FText Override = It->GetHeadlineOverride();
+		if (!Override.IsEmpty())
+		{
+			return Override;
+		}
+	}
 	return Headline(HeatLevel(GetRobberState()));
 }
 
@@ -222,7 +234,13 @@ FText URobberCaseFileHUD::GetCodeLine() const
 void URobberCaseFileHUD::NativeOnInitialized()
 {
 	Super::NativeOnInitialized();
+	ApplySizes();
 	UCanvasPanel* Root = Cast<UCanvasPanel>(GetRootWidget());
+	if (Root && WidgetTree)
+	{
+		BuildStoryWidgets(Root);
+		BuildMarkerWidgets(Root);
+	}
 	if (Find(TEXT("SprintBar")) || !Root || !WidgetTree)
 	{
 		return;
@@ -257,6 +275,749 @@ void URobberCaseFileHUD::NativeOnInitialized()
 	PanelSlot->SetPosition(FVector2D(0.f, -110.f));
 }
 
+void URobberCaseFileHUD::ApplySizes()
+{
+	const auto Scale = [](UWidget* Widget, float Amount, const FVector2D& Pivot)
+	{
+		if (Widget)
+		{
+			Widget->SetRenderTransformPivot(Pivot);
+			Widget->SetRenderScale(FVector2D(Amount));
+		}
+	};
+	const auto Pin = [](UWidget* Widget, const FVector2D& Position)
+	{
+		if (UCanvasPanelSlot* PanelSlot = Widget ? Cast<UCanvasPanelSlot>(Widget->Slot) : nullptr)
+		{
+			PanelSlot->SetPosition(Position);
+		}
+	};
+	UWidget* Note = Find(TEXT("NoteSize"));
+	Scale(Note, NoteScale, FVector2D(0.f, 0.f));
+	Pin(Note, FVector2D(CornerMargin, CornerMargin));
+
+	// The whole column shrinks so the stamp and toast close up under the smaller paper; the toast is then scaled back.
+	UWidget* Column = Find(TEXT("PaperColumn"));
+	Scale(Column, PaperScale, FVector2D(1.f, 0.f));
+	Pin(Column, FVector2D(-CornerMargin, CornerMargin));
+	Scale(Find(TEXT("ToastPanel")), 1.f / FMath::Max(PaperScale, 0.01f), FVector2D(1.f, 0.f));
+
+	// Teammates are tagged in the world now (URobberCrewTagComponent); the journal's CREW tab still lists them.
+	Show(Find(TEXT("CrewCards")), false);
+}
+
+
+// --- Story quest note and stamp ---
+
+namespace
+{
+	const FLinearColor StoryInk(FColor(0x1b, 0x1b, 0x1b));
+	const FLinearColor StoryDone(FColor(0x86, 0x8e, 0x96));
+	const FLinearColor StoryRed(FColor(0xc0, 0x39, 0x2b));
+	const FLinearColor StoryGreen(FColor(0x2f, 0x9e, 0x44));
+	const FLinearColor StoryPaper(FColor(0xfd, 0xf6, 0xe3));
+
+	/** Sizes here are the mock-up's pixels at 1080p; a UMG font size is in points. */
+	FSlateFontInfo StoryFont(const TCHAR* Name, float Pixels, FName Typeface = TEXT("Regular"))
+	{
+		const FString Path = FString::Printf(TEXT("/Game/OurStuff/UI/CaseFile/Fonts/%s.%s"), Name, Name);
+		const UObject* Font = LoadObject<UFont>(nullptr, *Path);
+		if (!Font)
+		{
+			// The handwriting font is optional; the note still reads in the game's own.
+			Font = LoadObject<UFont>(nullptr, TEXT("/Game/OurStuff/UI/CaseFile/Fonts/F_Fredoka.F_Fredoka"));
+		}
+		return FSlateFontInfo(Font, Pixels * 0.75f, Typeface);
+	}
+
+	UImage* StorySolid(UWidgetTree* Tree, const FLinearColor& Colour)
+	{
+		UImage* Image = Tree->ConstructWidget<UImage>();
+		Image->SetColorAndOpacity(Colour);
+		return Image;
+	}
+
+	/** A thin line that stretches sideways. A fixed box, because an image's own desired size didn't hold in a slot. */
+	USizeBox* StoryRule(UWidgetTree* Tree, const FLinearColor& Colour, float Height)
+	{
+		USizeBox* Box = Tree->ConstructWidget<USizeBox>();
+		Box->SetHeightOverride(Height);
+		Box->SetContent(StorySolid(Tree, Colour));
+		return Box;
+	}
+
+	USizeBox* StorySized(UWidgetTree* Tree, UWidget* Content, float Width, float Height)
+	{
+		USizeBox* Box = Tree->ConstructWidget<USizeBox>();
+		Box->SetWidthOverride(Width);
+		Box->SetHeightOverride(Height);
+		Box->SetContent(Content);
+		return Box;
+	}
+
+	UTextBlock* StoryLabel(UWidgetTree* Tree, const FSlateFontInfo& Font, const FLinearColor& Colour)
+	{
+		UTextBlock* Text = Tree->ConstructWidget<UTextBlock>();
+		Text->SetFont(Font);
+		Text->SetColorAndOpacity(FSlateColor(Colour));
+		return Text;
+	}
+
+	UBorder* StoryBox(UWidgetTree* Tree, const FLinearColor& Colour, const FMargin& Padding, UWidget* Content)
+	{
+		UBorder* Box = Tree->ConstructWidget<UBorder>();
+		Box->SetBrush(FSlateColorBrush(Colour));
+		Box->SetPadding(Padding);
+		Box->SetContent(Content);
+		return Box;
+	}
+
+	UOverlaySlot* StoryFill(UOverlay* Stack, UWidget* Child)
+	{
+		UOverlaySlot* NewSlot = Stack->AddChildToOverlay(Child);
+		NewSlot->SetHorizontalAlignment(HAlign_Fill);
+		NewSlot->SetVerticalAlignment(VAlign_Fill);
+		return NewSlot;
+	}
+
+	/** Two ink strokes that wander a little, like the underline on a handwritten note. */
+	UWidget* StoryUnderline(UWidgetTree* Tree, float Height)
+	{
+		UVerticalBox* Lines = Tree->ConstructWidget<UVerticalBox>();
+		const float Angles[] = { -0.5f, 0.35f };
+		for (const float Angle : Angles)
+		{
+			USizeBox* Line = StoryRule(Tree, StoryInk, 2.f);
+			Line->SetRenderTransformAngle(Angle);
+			UVerticalBoxSlot* LineSlot = Lines->AddChildToVerticalBox(Line);
+			LineSlot->SetHorizontalAlignment(HAlign_Fill);
+			LineSlot->SetPadding(FMargin(0.f, Height * 0.15f));
+		}
+		return Lines;
+	}
+}
+
+FRobberStoryRowUI URobberCaseFileHUD::MakeStoryRow(const FSlateFontInfo& Font)
+{
+	FRobberStoryRowUI Ui;
+	UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>();
+	Ui.Row = Row;
+
+	UOverlay* Marker = WidgetTree->ConstructWidget<UOverlay>();
+	UTextBlock* Bullet = StoryLabel(WidgetTree, Font, StoryInk);
+	Bullet->SetText(FText::FromString(TEXT("•")));
+	UOverlaySlot* BulletSlot = Marker->AddChildToOverlay(Bullet);
+	BulletSlot->SetHorizontalAlignment(HAlign_Center);
+	Ui.Bullet = Bullet;
+
+	// Drawn, because the handwriting font has no tick in it.
+	UCanvasPanel* TickMark = WidgetTree->ConstructWidget<UCanvasPanel>();
+	const struct { FVector2D Where; FVector2D Size; float Angle; } Strokes[] = {
+		{ FVector2D(0., 11.), FVector2D(8., 3.), 45.f },
+		{ FVector2D(4., 8.), FVector2D(14., 3.), -55.f },
+	};
+	for (const auto& Stroke : Strokes)
+	{
+		UImage* Bar = StorySolid(WidgetTree, StoryGreen);
+		Bar->SetRenderTransformAngle(Stroke.Angle);
+		UCanvasPanelSlot* BarSlot = TickMark->AddChildToCanvas(Bar);
+		BarSlot->SetPosition(Stroke.Where);
+		BarSlot->SetSize(Stroke.Size);
+	}
+	StoryFill(Marker, TickMark);
+	Ui.Tick = TickMark;
+
+	Row->AddChildToHorizontalBox(StorySized(WidgetTree, Marker, 20.f, 22.f))->SetVerticalAlignment(VAlign_Top);
+
+	UOverlay* TextStack = WidgetTree->ConstructWidget<UOverlay>();
+	UTextBlock* Text = StoryLabel(WidgetTree, Font, StoryInk);
+	Text->SetAutoWrapText(true);
+	StoryFill(TextStack, Text);
+	Ui.Text = Text;
+	USizeBox* Strike = StoryRule(WidgetTree, StoryDone, 2.f);
+	UOverlaySlot* StrikeSlot = TextStack->AddChildToOverlay(Strike);
+	StrikeSlot->SetHorizontalAlignment(HAlign_Fill);
+	StrikeSlot->SetVerticalAlignment(VAlign_Center);
+	Ui.Strike = Strike;
+	Row->AddChildToHorizontalBox(TextStack)->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+	return Ui;
+}
+
+FRobberStoryNoteUI URobberCaseFileHUD::MakeStoryNote(const FLinearColor& Paper, int32 RowCount, float Width)
+{
+	FRobberStoryNoteUI Ui;
+	const FSlateFontInfo RowFont = StoryFont(TEXT("F_PatrickHand"), 21.f);
+
+	UVerticalBox* Column = WidgetTree->ConstructWidget<UVerticalBox>();
+	Ui.Title = StoryLabel(WidgetTree, StoryFont(TEXT("F_PatrickHand"), 30.f), StoryInk);
+	Ui.Title->SetAutoWrapText(true);
+	Column->AddChildToVerticalBox(Ui.Title);
+	UVerticalBoxSlot* LineSlot = Column->AddChildToVerticalBox(StoryUnderline(WidgetTree, 10.f));
+	LineSlot->SetHorizontalAlignment(HAlign_Fill);
+	LineSlot->SetPadding(FMargin(0.f, 2.f, 0.f, 6.f));
+	for (int32 Index = 0; Index < RowCount; ++Index)
+	{
+		FRobberStoryRowUI Row = MakeStoryRow(RowFont);
+		UVerticalBoxSlot* RowSlot = Column->AddChildToVerticalBox(Row.Row);
+		RowSlot->SetHorizontalAlignment(HAlign_Fill);
+		RowSlot->SetPadding(FMargin(0.f, 2.f));
+		Ui.Rows.Add(Row);
+	}
+	Ui.Footer = StoryLabel(WidgetTree, StoryFont(TEXT("F_PatrickHand"), 19.f), StoryInk);
+	UVerticalBox* FooterStack = WidgetTree->ConstructWidget<UVerticalBox>();
+	USizeBox* Rule = StoryRule(WidgetTree, FLinearColor(StoryInk.R, StoryInk.G, StoryInk.B, 0.5f), 2.f);
+	UVerticalBoxSlot* RuleSlot = FooterStack->AddChildToVerticalBox(Rule);
+	RuleSlot->SetHorizontalAlignment(HAlign_Fill);
+	RuleSlot->SetPadding(FMargin(0.f, 6.f, 0.f, 4.f));
+	FooterStack->AddChildToVerticalBox(Ui.Footer);
+	Column->AddChildToVerticalBox(FooterStack)->SetHorizontalAlignment(HAlign_Fill);
+	Ui.FooterPanel = FooterStack;
+
+	UBorder* Face = StoryBox(WidgetTree, Paper, FMargin(14.f, 18.f, 14.f, 12.f), Column);
+	UBorder* Ink = StoryBox(WidgetTree, StoryInk, FMargin(3.f), Face);
+
+	USizeBox* Sized = WidgetTree->ConstructWidget<USizeBox>();
+	Sized->SetWidthOverride(Width);
+	UOverlay* Stack = WidgetTree->ConstructWidget<UOverlay>();
+	UImage* Shadow = StorySolid(WidgetTree, StoryInk);
+	Shadow->SetRenderTranslation(FVector2D(4., 4.));
+	StoryFill(Stack, Shadow);
+	StoryFill(Stack, Ink);
+
+	UBorder* Pin = WidgetTree->ConstructWidget<UBorder>();
+	Pin->SetBrush(FSlateRoundedBoxBrush(FLinearColor(FColor(0xd6, 0x33, 0x2a)), 10.f, StoryInk, 2.f));
+	USizeBox* PinSize = StorySized(WidgetTree, Pin, 20.f, 20.f);
+	PinSize->SetRenderTranslation(FVector2D(0., -10.));
+	UOverlaySlot* PinSlot = Stack->AddChildToOverlay(PinSize);
+	PinSlot->SetHorizontalAlignment(HAlign_Center);
+	PinSlot->SetVerticalAlignment(VAlign_Top);
+
+	Sized->SetContent(Stack);
+	Sized->SetRenderTransformPivot(FVector2D(0.5f, 0.5f));
+	Ui.Root = Sized;
+	return Ui;
+}
+
+void URobberCaseFileHUD::BuildStoryWidgets(UCanvasPanel* Root)
+{
+	StoryNoteUi = MakeStoryNote(FLinearColor(FColor(0xff, 0xe9, 0x8a)), 3, 244.f);
+	StoryErrandUi = MakeStoryNote(FLinearColor(FColor(0xd8, 0xf0, 0xc8)), 3, 244.f);
+
+	UVerticalBox* Column = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("StoryColumn"));
+	Column->SetVisibility(ESlateVisibility::HitTestInvisible);
+	Column->AddChildToVerticalBox(StoryNoteUi.Root)->SetHorizontalAlignment(HAlign_Left);
+	UVerticalBoxSlot* ErrandSlot = Column->AddChildToVerticalBox(StoryErrandUi.Root);
+	ErrandSlot->SetHorizontalAlignment(HAlign_Left);
+	ErrandSlot->SetPadding(FMargin(6.f, 0.f, 0.f, 0.f));
+	Column->SetRenderTransformPivot(FVector2D(0.f, 0.f));
+	Column->SetRenderScale(FVector2D(StoryScale));
+	UCanvasPanelSlot* ColumnSlot = Root->AddChildToCanvas(Column);
+	ColumnSlot->SetAutoSize(true);
+	ColumnSlot->SetZOrder(5);
+	StoryColumn = Column;
+
+	StoryNoteUi.Root->SetRenderTransformAngle(1.6f);
+	StoryErrandUi.Root->SetRenderTransformAngle(-1.2f);
+	Show(StoryColumn, false);
+
+	// The stamp: a double ring of ink round a paper card.
+	UVerticalBox* StampText = WidgetTree->ConstructWidget<UVerticalBox>();
+	StampKick = StoryLabel(WidgetTree, StoryFont(TEXT("F_Bangers"), 92.f), StoryRed);
+	StampKick->SetJustification(ETextJustify::Center);
+	StampTitle = StoryLabel(WidgetTree, StoryFont(TEXT("F_Fredoka"), 40.f, TEXT("Bold")), StoryInk);
+	StampTitle->SetJustification(ETextJustify::Center);
+	StampSubtitle = StoryLabel(WidgetTree, StoryFont(TEXT("F_Fredoka"), 22.f), StoryInk);
+	StampSubtitle->SetJustification(ETextJustify::Center);
+	StampSubtitle->SetAutoWrapText(true);
+	StampText->AddChildToVerticalBox(StampKick)->SetHorizontalAlignment(HAlign_Center);
+	StampText->AddChildToVerticalBox(StampTitle)->SetHorizontalAlignment(HAlign_Center);
+	UVerticalBoxSlot* SubSlot = StampText->AddChildToVerticalBox(StampSubtitle);
+	SubSlot->SetHorizontalAlignment(HAlign_Fill);
+	SubSlot->SetPadding(FMargin(0.f, 6.f, 0.f, 0.f));
+
+	UBorder* Card = StoryBox(WidgetTree, StoryPaper, FMargin(30.f, 16.f), StampText);
+	StampInnerEdge = StoryBox(WidgetTree, StoryRed, FMargin(3.f), Card);
+	UBorder* Gap = StoryBox(WidgetTree, StoryPaper, FMargin(4.f), StampInnerEdge);
+	StampEdge = StoryBox(WidgetTree, StoryRed, FMargin(3.f), Gap);
+
+	UOverlay* StampStack = WidgetTree->ConstructWidget<UOverlay>();
+	UImage* StampShadow = StorySolid(WidgetTree, StoryInk);
+	StampShadow->SetRenderTranslation(FVector2D(8., 8.));
+	StoryFill(StampStack, StampShadow);
+	StoryFill(StampStack, StampEdge);
+	USizeBox* StampSized = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass(), TEXT("StoryStamp"));
+	StampSized->SetWidthOverride(720.f);
+	StampSized->SetContent(StampStack);
+	StampSized->SetVisibility(ESlateVisibility::Collapsed);
+	StampSized->SetRenderTransformPivot(FVector2D(0.5f, 0.5f));
+	StampSized->SetRenderTransformAngle(-4.f);
+	UCanvasPanelSlot* StampSlot = Root->AddChildToCanvas(StampSized);
+	StampSlot->SetAnchors(FAnchors(0.5f, 0.f));
+	StampSlot->SetAlignment(FVector2D(0.5f, 0.f));
+	StampSlot->SetAutoSize(true);
+	StampSlot->SetPosition(FVector2D(0.f, 170.f));
+	StampSlot->SetZOrder(20);
+	StampRoot = StampSized;
+}
+
+void URobberCaseFileHUD::OnStoryStamp(bool bComplete, const FText& Title, const FText& Subtitle)
+{
+	if (!StampRoot)
+	{
+		return;
+	}
+	bStampComplete = bComplete;
+	StampClock = 0.f;
+	const FLinearColor Colour = bComplete ? StoryGreen : StoryRed;
+	StampEdge->SetBrush(FSlateColorBrush(Colour));
+	StampInnerEdge->SetBrush(FSlateColorBrush(Colour));
+	StampKick->SetColorAndOpacity(FSlateColor(Colour));
+	StampKick->SetText(bComplete ? NSLOCTEXT("RobberCaseFile", "QuestComplete", "QUEST COMPLETE") : NSLOCTEXT("RobberCaseFile", "NewQuest", "NEW QUEST"));
+	StampTitle->SetText(Title);
+	StampSubtitle->SetText(Subtitle);
+	StampRoot->SetVisibility(ESlateVisibility::HitTestInvisible);
+}
+
+void URobberCaseFileHUD::FillStoryNote(FRobberStoryNoteUI& Ui, const FText& Title, const TArray<FRobberStoryLine>& Lines, const FText& Footer)
+{
+	SetText(Ui.Title, Title);
+	for (int32 Index = 0; Index < Ui.Rows.Num(); ++Index)
+	{
+		const FRobberStoryRowUI& Row = Ui.Rows[Index];
+		const bool bUsed = Lines.IsValidIndex(Index);
+		Show(Row.Row, bUsed);
+		if (bUsed)
+		{
+			const FRobberStoryLine& Line = Lines[Index];
+			SetText(Row.Text, Line.Text);
+			Row.Text->SetColorAndOpacity(FSlateColor(Line.bDone ? StoryDone : Line.bWarning ? StoryRed : StoryInk));
+			Show(Row.Bullet, !Line.bDone);
+			Show(Row.Tick, Line.bDone);
+			Show(Row.Strike, Line.bDone);
+		}
+	}
+	Show(Ui.FooterPanel, !Footer.IsEmpty());
+	SetText(Ui.Footer, Footer);
+}
+
+void URobberCaseFileHUD::UpdateStory(float DeltaTime)
+{
+	const APlayerController* PC = GetOwningPlayer();
+	UPlayerQuestComponent* Quests = PC ? PC->FindComponentByClass<UPlayerQuestComponent>() : nullptr;
+	if (!StoryColumn || !Quests)
+	{
+		return;
+	}
+	if (!bStoryBound)
+	{
+		bStoryBound = true;
+		Quests->OnStoryStamp.AddUObject(this, &URobberCaseFileHUD::OnStoryStamp);
+	}
+
+	// Under the job note, whose height changes with its list.
+	if (const UWidget* JobNote = Find(TEXT("NoteSize")))
+	{
+		if (UCanvasPanelSlot* ColumnSlot = Cast<UCanvasPanelSlot>(StoryColumn->Slot))
+		{
+			ColumnSlot->SetPosition(FVector2D(CornerMargin + 14.f, CornerMargin + JobNote->GetDesiredSize().Y * NoteScale + 2.f));
+		}
+	}
+
+	// --- Stamp: slams in, shakes the screen, holds, then goes. ---
+	constexpr float SlamTime = 0.13f, ShakeTime = 0.2f, HoldTime = 1.9f, FadeTime = 0.28f;
+	const bool bStampRunning = StampClock >= 0.f;
+	if (bStampRunning)
+	{
+		StampClock += DeltaTime;
+		const float Time = StampClock;
+		FVector2D Shake = FVector2D::ZeroVector;
+		float Scale = 1.f;
+		float Opacity = 1.f;
+		FVector2D Rise = FVector2D::ZeroVector;
+		if (Time < SlamTime)
+		{
+			const float Alpha = Time / SlamTime;
+			Scale = FMath::Lerp(3.2f, 1.f, Alpha * Alpha);
+			Opacity = Alpha;
+		}
+		else if (Time < SlamTime + ShakeTime)
+		{
+			const float Alpha = (Time - SlamTime) / ShakeTime;
+			const float Fade = 1.f - Alpha;
+			Shake = FVector2D(FMath::Sin(Alpha * 22.f) * 9.f, FMath::Cos(Alpha * 19.f) * 7.f) * Fade;
+		}
+		else if (Time > SlamTime + HoldTime)
+		{
+			const float Alpha = FMath::Clamp((Time - SlamTime - HoldTime) / FadeTime, 0.f, 1.f);
+			Opacity = 1.f - Alpha;
+			if (bStampComplete)
+			{
+				Rise = FVector2D(0., -30. * Alpha);
+			}
+		}
+		StampRoot->SetRenderScale(FVector2D(Scale * StoryScale));
+		StampRoot->SetRenderOpacity(Opacity);
+		StampRoot->SetRenderTranslation(Rise);
+		if (UWidget* Root = GetRootWidget())
+		{
+			Root->SetRenderTranslation(Shake);
+		}
+		if (Time >= SlamTime + HoldTime + FadeTime)
+		{
+			StampClock = -1.f;
+			StampRoot->SetVisibility(ESlateVisibility::Collapsed);
+			if (UWidget* Root = GetRootWidget())
+			{
+				Root->SetRenderTranslation(FVector2D::ZeroVector);
+			}
+			if (!bStampComplete)
+			{
+				NotePopClock = 0.f;
+			}
+		}
+	}
+
+	// --- The notes: held back until a NEW QUEST stamp has gone, and dropped when the quest is over. ---
+	const FRobberStoryNote& Note = Quests->StoryNote;
+	const bool bHeldBack = StampClock >= 0.f && !bStampComplete;
+	const bool bWanted = Note.bShown && !bHeldBack;
+	if (bWanted)
+	{
+		NoteDropClock = -1.f;
+		StoryColumn->SetRenderOpacity(1.f);
+		StoryColumn->SetRenderTranslation(FVector2D::ZeroVector);
+		StoryColumn->SetRenderTransformAngle(0.f);
+		FillStoryNote(StoryNoteUi, Note.Title, Note.Lines, Note.Footer);
+		const bool bErrand = !Note.ErrandTitle.IsEmpty();
+		Show(StoryErrandUi.Root, bErrand);
+		if (bErrand)
+		{
+			FillStoryNote(StoryErrandUi, Note.ErrandTitle, Note.ErrandLines, FText::GetEmpty());
+		}
+		Show(StoryColumn, true);
+		bStoryNoteUp = true;
+	}
+	else if (bStoryNoteUp && !Note.bShown)
+	{
+		bStoryNoteUp = false;
+		NoteDropClock = 0.f;
+	}
+	else if (!bStoryNoteUp && NoteDropClock < 0.f)
+	{
+		Show(StoryColumn, false);
+	}
+	if (NotePopClock >= 0.f)
+	{
+		NotePopClock += DeltaTime;
+		const float Alpha = FMath::Clamp(NotePopClock / 0.16f, 0.f, 1.f);
+		StoryNoteUi.Root->SetRenderScale(FVector2D(FMath::Lerp(1.12f, 1.f, Alpha)));
+		if (Alpha >= 1.f)
+		{
+			NotePopClock = -1.f;
+		}
+	}
+	if (NoteDropClock >= 0.f)
+	{
+		NoteDropClock += DeltaTime;
+		const float Alpha = FMath::Clamp(NoteDropClock / 0.65f, 0.f, 1.f);
+		const float Eased = Alpha * Alpha;
+		StoryColumn->SetRenderTranslation(FVector2D(0., 240. * Eased));
+		StoryColumn->SetRenderTransformAngle(18.f * Eased);
+		StoryColumn->SetRenderOpacity(1.f - Alpha);
+		if (Alpha >= 1.f)
+		{
+			NoteDropClock = -1.f;
+			Show(StoryColumn, false);
+		}
+	}
+}
+
+namespace
+{
+	const FLinearColor MarkerYellow = FLinearColor::FromSRGBColor(FColor(255, 210, 63));
+	const FLinearColor MarkerInk = FLinearColor::FromSRGBColor(FColor(35, 32, 26));
+	constexpr int32 MaxPins = 4;
+	constexpr int32 MaxBubbles = 8;
+	constexpr double BubbleRange = 800.;
+	constexpr double PinFadeNear = 400.;
+	constexpr double PinFadeFar = 600.;
+	constexpr double FloorHeight = 500.;
+
+	UBorder* MarkerBox(UWidgetTree* Tree, const FLinearColor& Fill, float Radius, const FMargin& Padding, UWidget* Content)
+	{
+		UBorder* Box = Tree->ConstructWidget<UBorder>();
+		Box->SetBrush(FSlateRoundedBoxBrush(Fill, Radius, FLinearColor::Black, 2.f));
+		Box->SetPadding(Padding);
+		Box->SetContent(Content);
+		return Box;
+	}
+
+	void PlaceOnCanvas(UWidget* Widget, const FVector2D& Position)
+	{
+		if (UCanvasPanelSlot* CanvasSlot = Cast<UCanvasPanelSlot>(Widget->Slot))
+		{
+			CanvasSlot->SetPosition(Position);
+		}
+	}
+}
+
+void URobberCaseFileHUD::BuildMarkerWidgets(UCanvasPanel* Root)
+{
+	for (int32 Index = 0; Index < MaxPins; ++Index)
+	{
+		FRobberPinUI Pin;
+		UVerticalBox* Text = WidgetTree->ConstructWidget<UVerticalBox>();
+		Pin.Name = StoryLabel(WidgetTree, StoryFont(TEXT("F_Fredoka"), 18.f, TEXT("Bold")), MarkerInk);
+		Pin.Detail = StoryLabel(WidgetTree, StoryFont(TEXT("F_Fredoka"), 15.f), MarkerInk);
+		Pin.Name->SetJustification(ETextJustify::Center);
+		Pin.Detail->SetJustification(ETextJustify::Center);
+		Text->AddChildToVerticalBox(Pin.Name);
+		Text->AddChildToVerticalBox(Pin.Detail);
+
+		USizeBox* DiamondSize = StorySized(WidgetTree, MarkerBox(WidgetTree, MarkerYellow, 2.f, FMargin(0.f), nullptr), 22.f, 22.f);
+		DiamondSize->SetRenderTransformAngle(45.f);
+
+		UTextBlock* Arrow = StoryLabel(WidgetTree, StoryFont(TEXT("F_Bangers"), 18.f), MarkerInk);
+		Arrow->SetText(FText::FromString(TEXT(">")));
+		Arrow->SetJustification(ETextJustify::Center);
+		Pin.Arrow = Arrow;
+
+		UOverlay* Mark = WidgetTree->ConstructWidget<UOverlay>();
+		StoryFill(Mark, DiamondSize);
+		UOverlaySlot* ArrowSlot = Mark->AddChildToOverlay(Arrow);
+		ArrowSlot->SetHorizontalAlignment(HAlign_Center);
+		ArrowSlot->SetVerticalAlignment(VAlign_Center);
+
+		UVerticalBox* Column = WidgetTree->ConstructWidget<UVerticalBox>();
+		UVerticalBoxSlot* TagSlot = Column->AddChildToVerticalBox(MarkerBox(WidgetTree, MarkerYellow, 5.f, FMargin(9.f, 4.f), Text));
+		TagSlot->SetHorizontalAlignment(HAlign_Center);
+		UVerticalBoxSlot* MarkSlot = Column->AddChildToVerticalBox(Mark);
+		MarkSlot->SetHorizontalAlignment(HAlign_Center);
+		MarkSlot->SetPadding(FMargin(0.f, 7.f, 0.f, 0.f));
+		Column->SetVisibility(ESlateVisibility::Collapsed);
+
+		UCanvasPanelSlot* PinSlot = Root->AddChildToCanvas(Column);
+		PinSlot->SetAutoSize(true);
+		PinSlot->SetAlignment(FVector2D(0.5f, 1.f));
+		PinSlot->SetZOrder(-5);
+		Pin.Root = Column;
+		Pins.Add(Pin);
+	}
+
+	for (int32 Index = 0; Index < MaxBubbles; ++Index)
+	{
+		UTextBlock* Dots = StoryLabel(WidgetTree, StoryFont(TEXT("F_Fredoka"), 26.f, TEXT("Bold")), MarkerInk);
+		Dots->SetText(FText::FromString(TEXT("...")));
+		Dots->SetJustification(ETextJustify::Center);
+		UBorder* Bubble = MarkerBox(WidgetTree, FLinearColor::White, 10.f, FMargin(12.f, 0.f, 12.f, 6.f), Dots);
+
+		USizeBox* TailSize = StorySized(WidgetTree, StorySolid(WidgetTree, FLinearColor::White), 9.f, 9.f);
+		TailSize->SetRenderTransformAngle(45.f);
+
+		UVerticalBox* Column = WidgetTree->ConstructWidget<UVerticalBox>();
+		Column->AddChildToVerticalBox(Bubble);
+		UVerticalBoxSlot* TailSlot = Column->AddChildToVerticalBox(TailSize);
+		TailSlot->SetHorizontalAlignment(HAlign_Center);
+		// Tucked up behind the bubble so only its point shows.
+		TailSlot->SetPadding(FMargin(0.f, -5.f, 0.f, 0.f));
+		Column->SetVisibility(ESlateVisibility::Collapsed);
+
+		UCanvasPanelSlot* BubbleSlot = Root->AddChildToCanvas(Column);
+		BubbleSlot->SetAutoSize(true);
+		BubbleSlot->SetAlignment(FVector2D(0.5f, 1.f));
+		BubbleSlot->SetZOrder(-6);
+		Bubbles.Add(Column);
+	}
+
+	// Looking out through the gaps in whatever you're inside. Fractions of the screen, top to bottom.
+	UCanvasPanel* View = WidgetTree->ConstructWidget<UCanvasPanel>();
+	const FVector2D Bands[] = { { 0.f, 0.34f }, { 0.38f, 0.44f }, { 0.505f, 0.56f }, { 0.60f, 1.f } };
+	for (const FVector2D& Band : Bands)
+	{
+		UCanvasPanelSlot* BandSlot = View->AddChildToCanvas(StorySolid(WidgetTree, FLinearColor(0.004f, 0.003f, 0.002f)));
+		BandSlot->SetAnchors(FAnchors(0.f, Band.X, 1.f, Band.Y));
+		BandSlot->SetOffsets(FMargin(0.f));
+	}
+	UTextBlock* Title = StoryLabel(WidgetTree, StoryFont(TEXT("F_Bangers"), 46.f), MarkerYellow);
+	Title->SetText(NSLOCTEXT("RobberTour", "HiddenTitle", "HIDDEN"));
+	UCanvasPanelSlot* TitleSlot = View->AddChildToCanvas(Title);
+	TitleSlot->SetAutoSize(true);
+	TitleSlot->SetAnchors(FAnchors(0.5f, 0.13f));
+	TitleSlot->SetAlignment(FVector2D(0.5f, 0.5f));
+	HidingName = StoryLabel(WidgetTree, StoryFont(TEXT("F_SpecialElite"), 22.f), FLinearColor(0.75f, 0.72f, 0.62f));
+	UCanvasPanelSlot* NameSlot = View->AddChildToCanvas(HidingName);
+	NameSlot->SetAutoSize(true);
+	NameSlot->SetAnchors(FAnchors(0.5f, 0.19f));
+	NameSlot->SetAlignment(FVector2D(0.5f, 0.5f));
+	View->SetVisibility(ESlateVisibility::Collapsed);
+	UCanvasPanelSlot* ViewSlot = Root->AddChildToCanvas(View);
+	ViewSlot->SetAnchors(FAnchors(0.f, 0.f, 1.f, 1.f));
+	ViewSlot->SetOffsets(FMargin(0.f));
+	ViewSlot->SetZOrder(-10);
+	HidingView = View;
+}
+
+void URobberCaseFileHUD::UpdateMarkers(const FGeometry& MyGeometry, float DeltaTime)
+{
+	APlayerController* PC = GetOwningPlayer();
+	const APlayerCameraManager* Camera = PC ? PC->PlayerCameraManager.Get() : nullptr;
+	const ARobberGameState* State = GetRobberState();
+	if (!Camera || !State)
+	{
+		return;
+	}
+	SinceMarkerScan += DeltaTime;
+	if (SinceMarkerScan >= 0.5f)
+	{
+		SinceMarkerScan = 0.f;
+		MarkerTargets.Reset();
+		RobberMarkers::Gather(State, PC->PlayerState, MarkerTargets);
+	}
+	const FVector2D Size = MyGeometry.GetLocalSize();
+	const FVector Eye = Camera->GetCameraLocation();
+	const FRotationMatrix View(Camera->GetCameraRotation());
+	const AProductionGameCharacter* Robber = Cast<AProductionGameCharacter>(PC->GetPawn());
+	const bool bHiding = Robber && Robber->IsHiding();
+
+	TArray<TPair<UWidget*, FVector2D>> Placed;
+	for (int32 Index = 0; Index < Pins.Num(); ++Index)
+	{
+		const FRobberPinUI& Pin = Pins[Index];
+		const bool bHasTarget = !bHiding && MarkerTargets.IsValidIndex(Index);
+		const double Distance = bHasTarget ? FVector::Dist(Eye, MarkerTargets[Index].Location) : 0.;
+		const float Fade = bHasTarget ? FMath::GetMappedRangeValueClamped(FVector2D(PinFadeNear, PinFadeFar), FVector2D(0.f, 1.f), Distance) : 0.f;
+		Pin.Root->SetVisibility(Fade > 0.f ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+		if (Fade <= 0.f)
+		{
+			continue;
+		}
+		const FRobberMarkerTarget& Target = MarkerTargets[Index];
+		Pin.Root->SetRenderOpacity(Fade);
+		Pin.Name->SetText(Target.Label);
+
+		const int32 Metres = FMath::RoundToInt32(Distance / 100.);
+		const int32 Floors = FMath::RoundToInt32((Target.Location.Z - Eye.Z) / FloorHeight);
+		Pin.Detail->SetText(Floors == 0
+			? FText::Format(NSLOCTEXT("RobberMarker", "Metres", "{0} m"), Metres)
+			: FText::Format(Floors > 0 ? NSLOCTEXT("RobberMarker", "MetresUp", "{0} m, {1} {1}|plural(one=floor,other=floors) up") : NSLOCTEXT("RobberMarker", "MetresDown", "{0} m, {1} {1}|plural(one=floor,other=floors) down"), Metres, FMath::Abs(Floors)));
+
+		const float Margin = 80.f;
+		FVector2D Position;
+		const bool bProjected = UWidgetLayoutLibrary::ProjectWorldLocationToWidgetPosition(PC, Target.Location, Position, true);
+		const bool bOnScreen = bProjected && FVector::DotProduct(Target.Location - Eye, View.GetUnitAxis(EAxis::X)) > 0.
+			&& Position.X > Margin && Position.X < Size.X - Margin && Position.Y > Margin && Position.Y < Size.Y - Margin;
+		Pin.Arrow->SetVisibility(bOnScreen ? ESlateVisibility::Collapsed : ESlateVisibility::HitTestInvisible);
+		if (!bOnScreen)
+		{
+			// Off screen or behind: slide to the screen edge in the direction you'd turn. Camera axes, because a point behind you projects mirrored.
+			const FVector Delta = Target.Location - Eye;
+			FVector2D Direction(FVector::DotProduct(Delta, View.GetUnitAxis(EAxis::Y)), -FVector::DotProduct(Delta, View.GetUnitAxis(EAxis::Z)));
+			if (!Direction.Normalize())
+			{
+				Direction = FVector2D(0.f, 1.f);
+			}
+			const FVector2D Half = Size * 0.5f;
+			const FVector2D Room = Half - FVector2D(Margin * 1.6f, Margin * 1.2f);
+			const double Scale = FMath::Min(Direction.X != 0. ? Room.X / FMath::Abs(Direction.X) : DBL_MAX, Direction.Y != 0. ? Room.Y / FMath::Abs(Direction.Y) : DBL_MAX);
+			Position = Half + Direction * Scale;
+			Pin.Arrow->SetRenderTransformAngle(FMath::RadiansToDegrees(FMath::Atan2(Direction.Y, Direction.X)));
+		}
+		Placed.Add({ Pin.Root.Get(), Position });
+	}
+
+	// Targets in the same direction would otherwise sit exactly on top of each other, most of all at the screen edge.
+	Placed.Sort([](const TPair<UWidget*, FVector2D>& A, const TPair<UWidget*, FVector2D>& B) { return A.Value.Y < B.Value.Y; });
+	const float PinHeight = 78.f;
+	const float PinWidth = 190.f;
+	for (int32 Index = 0; Index < Placed.Num(); ++Index)
+	{
+		for (int32 Earlier = 0; Earlier < Index; ++Earlier)
+		{
+			if (FMath::Abs(Placed[Index].Value.X - Placed[Earlier].Value.X) < PinWidth && Placed[Index].Value.Y - Placed[Earlier].Value.Y < PinHeight)
+			{
+				Placed[Index].Value.Y = Placed[Earlier].Value.Y + PinHeight;
+			}
+		}
+		PlaceOnCanvas(Placed[Index].Key, Placed[Index].Value);
+	}
+}
+
+void URobberCaseFileHUD::UpdateExhibitBubbles(const FGeometry& MyGeometry, float DeltaTime)
+{
+	APlayerController* PC = GetOwningPlayer();
+	const APlayerCameraManager* Camera = PC ? PC->PlayerCameraManager.Get() : nullptr;
+	const ARobberGameState* State = GetRobberState();
+	if (!Camera || !State)
+	{
+		return;
+	}
+	SinceBubbleScan += DeltaTime;
+	if (SinceBubbleScan >= 0.25f)
+	{
+		SinceBubbleScan = 0.f;
+		BubbleExhibits.Reset();
+		const AProductionGameCharacter* Robber = Cast<AProductionGameCharacter>(PC->GetPawn());
+		if (State->CanChatWithExhibits() && !RobberStage::IsInLobby(State->GetGameStage()) && !(Robber && Robber->IsHiding()))
+		{
+			const FVector Eye = Camera->GetCameraLocation();
+			TArray<TPair<double, AActor*>> Near;
+			for (TActorIterator<AQuestDialogueCharacter> It(GetWorld()); It; ++It)
+			{
+				const double Distance = FVector::Dist(Eye, It->GetActorLocation());
+				if (Distance > BubbleRange)
+				{
+					continue;
+				}
+				FCollisionQueryParams Params(SCENE_QUERY_STAT(ExhibitBubble), false, PC->GetPawn());
+				Params.AddIgnoredActor(*It);
+				if (!GetWorld()->LineTraceTestByChannel(Eye, It->GetActorLocation(), ECC_Visibility, Params))
+				{
+					Near.Add({ Distance, *It });
+				}
+			}
+			Near.Sort([](const TPair<double, AActor*>& A, const TPair<double, AActor*>& B) { return A.Key < B.Key; });
+			for (int32 Index = 0; Index < FMath::Min(Near.Num(), MaxBubbles); ++Index)
+			{
+				BubbleExhibits.Add(Near[Index].Value);
+			}
+		}
+	}
+	for (int32 Index = 0; Index < Bubbles.Num(); ++Index)
+	{
+		const AActor* Exhibit = BubbleExhibits.IsValidIndex(Index) ? BubbleExhibits[Index].Get() : nullptr;
+		FVector2D Position;
+		bool bShow = false;
+		if (Exhibit)
+		{
+			FVector Centre;
+			FVector Extent;
+			Exhibit->GetActorBounds(true, Centre, Extent);
+			const FVector Top(Centre.X, Centre.Y, Centre.Z + Extent.Z + 25.);
+			bShow = UWidgetLayoutLibrary::ProjectWorldLocationToWidgetPosition(PC, Top, Position, true)
+				&& FVector::DotProduct(Top - Camera->GetCameraLocation(), Camera->GetCameraRotation().Vector()) > 0.;
+		}
+		Bubbles[Index]->SetVisibility(bShow ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+		if (bShow)
+		{
+			PlaceOnCanvas(Bubbles[Index], Position);
+		}
+	}
+}
+
+void URobberCaseFileHUD::UpdateHidingView()
+{
+	const AProductionGameCharacter* Robber = Cast<AProductionGameCharacter>(GetOwningPlayer() ? GetOwningPlayer()->GetPawn() : nullptr);
+	const ARobberHidingSpot* Spot = Robber ? Robber->GetHidingSpot() : nullptr;
+	if (HidingView)
+	{
+		HidingView->SetVisibility(Spot ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+	}
+	if (Spot && HidingName)
+	{
+		HidingName->SetText(Spot->GetDisplayLabel());
+	}
+}
+
 void URobberCaseFileHUD::UpdateSprint(float DeltaTime)
 {
 	const AProductionGameCharacter* Character = Cast<AProductionGameCharacter>(GetOwningPlayerPawn());
@@ -280,14 +1041,18 @@ void URobberCaseFileHUD::NativeTick(const FGeometry& MyGeometry, float InDeltaTi
 {
 	Super::NativeTick(MyGeometry, InDeltaTime);
 	UpdateSprint(InDeltaTime);
+	UpdateStory(InDeltaTime);
 	const ARobberGameState* State = GetRobberState();
 	if (!State)
 	{
 		return;
 	}
+	UpdateMarkers(MyGeometry, InDeltaTime);
+	UpdateExhibitBubbles(MyGeometry, InDeltaTime);
+	UpdateHidingView();
 	UpdateNote(State);
 	UpdatePaper(State);
-	UpdateCrew(State);
+	FillCrew(State, TEXT("CrewCard"));
 
 	const ARobberController* Robber = GetRobber();
 	const bool bMessage = Robber && Robber->IsHeistMessageVisible();
@@ -323,14 +1088,9 @@ void URobberCaseFileHUD::UpdateNote(const ARobberGameState* State)
 	TArray<FRow> Rows;
 	if (RobberStage::IsInLobby(Stage))
 	{
-		TArray<const ARobberEntryPoint*> Counted;
-		for (const FRobberEntryVote& Vote : State->GetVotes())
+		for (const TPair<const ARobberEntryPoint*, int32>& Tally : State->GetVoteTallies())
 		{
-			if (Vote.Entry && !Counted.Contains(Vote.Entry))
-			{
-				Counted.Add(Vote.Entry);
-				Rows.Add({ FText::Format(NSLOCTEXT("RobberCaseFile", "VoteRow", "{0}: {1} {1}|plural(one=vote,other=votes)"), Vote.Entry->DisplayName, State->GetVoteCount(Vote.Entry)), false, false });
-			}
+			Rows.Add({ FText::Format(NSLOCTEXT("RobberCaseFile", "VoteRow", "{0}: {1} {1}|plural(one=vote,other=votes)"), Tally.Key->DisplayName, Tally.Value), false, false });
 		}
 	}
 	else
@@ -382,7 +1142,7 @@ void URobberCaseFileHUD::UpdatePaper(const ARobberGameState* State)
 		Fuse->SetPercent(State->GetHeat() / ARobberGameState::MaxHeat);
 		Fuse->SetFillColorAndOpacity(HeatColour(Level));
 	}
-	SetText(Find<UTextBlock>(TEXT("HeadlineText")), Headline(Level));
+	SetText(Find<UTextBlock>(TEXT("HeadlineText")), GetHeadline());
 	SetText(Find<UTextBlock>(TEXT("SublineText")), Subline(Level));
 
 	const float Guards = State->GetGuardsTimeRemaining();
@@ -390,13 +1150,13 @@ void URobberCaseFileHUD::UpdatePaper(const ARobberGameState* State)
 	SetText(Find<UTextBlock>(TEXT("GuardsText")), FText::Format(NSLOCTEXT("RobberCaseFile", "Guards", "GUARDS {0}"), Clock(Guards)));
 }
 
-void URobberCaseFileHUD::UpdateCrew(const ARobberGameState* State)
+void URobberCaseFileWidgetBase::FillCrew(const ARobberGameState* State, const TCHAR* RowName)
 {
 	const TArray<APlayerState*> Crew = SortedCrew(State);
 	for (int32 Index = 0; Index < 4; ++Index)
 	{
 		const APlayerState* Player = Crew.IsValidIndex(Index) ? Crew[Index] : nullptr;
-		Show(Find(FString::Printf(TEXT("CrewCard%d"), Index)), Player != nullptr);
+		Show(Find(FString::Printf(TEXT("%s%d"), RowName, Index)), Player != nullptr);
 		if (!Player)
 		{
 			continue;
@@ -482,6 +1242,11 @@ void URobberJournalWidget::ShowTab(int32 Index)
 
 void URobberJournalWidget::OnOpened()
 {
+	if (UWidget* Book = Find(TEXT("Book")))
+	{
+		Book->SetRenderTransformPivot(FVector2D(0.5f, 0.5f));
+		Book->SetRenderScale(FVector2D(BookScale));
+	}
 	if (URobberJournalComponent* Journal = GetJournal())
 	{
 		OpenedReadRevision = Journal->GetReadRevision();
@@ -570,23 +1335,7 @@ void URobberJournalWidget::Refresh()
 	}
 	SetText(Find<UTextBlock>(TEXT("KeysText")), Keys.IsEmpty() ? NSLOCTEXT("RobberJournal", "NoKeys", "No keys yet.") : FText::FromString(FString::Join(Keys, TEXT("\n"))));
 
-	// --- CREW ---
-	const TArray<APlayerState*> Crew = SortedCrew(State);
-	for (int32 Index = 0; Index < 4; ++Index)
-	{
-		const APlayerState* Player = Crew.IsValidIndex(Index) ? Crew[Index] : nullptr;
-		Show(Find(FString::Printf(TEXT("CrewRow%d"), Index)), Player != nullptr);
-		if (!Player)
-		{
-			continue;
-		}
-		if (UBorder* Colour = Find<UBorder>(FString::Printf(TEXT("CrewColour%d"), Index)))
-		{
-			Colour->SetBrushColor(CrewColour(Player));
-		}
-		SetText(Find<UTextBlock>(FString::Printf(TEXT("CrewName%d"), Index)), PlayerName(Player));
-		SetText(Find<UTextBlock>(FString::Printf(TEXT("CrewStatus%d"), Index)), CrewStatus(State, Player));
-	}
+	FillCrew(State, TEXT("CrewRow"));
 
 	// --- NIGHT ---
 	TArray<FString> Jobs;

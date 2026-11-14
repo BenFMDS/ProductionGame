@@ -34,6 +34,13 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Robber|Interact")
 	FString GetInteractPrompt() const;
 
+	/**
+	 * From BPC_Interaction's trace, before it overwrites Hit Actor: takes the outline off the old target. The trace's
+	 * own clear-up runs on the new Hit Actor, so aiming straight from a prop onto a wall or another prop left it lit.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Robber|Interact")
+	static void ClearStaleOutline(AActor* Previous, AActor* Now);
+
 	virtual void Tick(float DeltaSeconds) override;
 
 	/**
@@ -44,6 +51,8 @@ public:
 	TObjectPtr<ARobberEntryPoint> OwningEntry;
 
 	bool IsActive(const ARobberGameState* GameState) const;
+	/** Shows or removes a part: hidden with its children, and nothing to bump into while it's gone. */
+	static void ShowPart(UPrimitiveComponent* Part, bool bShown);
 
 protected:
 	virtual void OnServerInteract(APawn* Pawn, APlayerState* Player, ARobberGameState* GameState) {}
@@ -104,7 +113,10 @@ protected:
 	virtual FText GetPrompt(const ARobberGameState* GameState, const APlayerState* Viewer) const override;
 };
 
-/** An exhibit a ticket holder can hide in until closing. */
+/**
+ * Something big enough to climb inside. One player at a time. Inside, guards and cameras can't see you unless a guard
+ * was already onto you when you climbed in. The object's +X side is its open front; the unit cube is scaled to its size.
+ */
 UCLASS(Blueprintable)
 class PRODUCTIONGAME_API ARobberHidingSpot : public ARobberInteractable
 {
@@ -113,15 +125,45 @@ class PRODUCTIONGAME_API ARobberHidingSpot : public ARobberInteractable
 public:
 	ARobberHidingSpot();
 
-	/** Where a hidden player waits, relative to this actor. */
-	UPROPERTY(EditAnywhere, Category = "Robber|BreakIn", meta = (MakeEditWidget = "true"))
-	FVector HideOffset = FVector(0, 0, 100);
+	virtual void BeginPlay() override;
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
-	FVector GetHideLocation() const { return GetActorTransform().TransformPosition(HideOffset); }
+	/** A guard's detection of this player at or above this when they climb in means the guard saw it happen. */
+	UPROPERTY(EditAnywhere, Category = "Robber|Hiding")
+	float SeenDetection = 50.f;
+
+	/** Above 0, the hider's camera sits this high (cm) above the spot's floor, for low spots like under a desk. 0 keeps standing height. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Robber|Hiding", meta = (ClampMin = "0"))
+	float HiddenEyeHeight = 0.f;
+
+	double GetFloorZ() const { return GetActorLocation().Z - GetActorScale3D().Z * 50.; }
+
+	/** Just inside the front, so a guard who saw you go in can get within its catch radius. */
+	FVector GetHideLocation() const;
+	FVector GetExitLocation() const;
+	FRotator GetFacing() const { return GetActorForwardVector().Rotation(); }
+	const FText& GetDisplayLabel() const { return Label; }
+
+	APawn* GetOccupant() const { return Occupant; }
+	void SetOccupant(APawn* Pawn);
+
+	/** On the hider's own machine only: the door panel is right in front of their camera, and would black out the view. */
+	void SetViewedFromInside(bool bInside) { Opening->SetVisibility(!bInside); }
+
+	/** Server only. Is any guard targeting this pawn with at least this much detection? */
+	static bool IsGuardOnto(const APawn* Pawn, float MinDetection);
 
 protected:
 	virtual void OnServerInteract(APawn* Pawn, APlayerState* Player, ARobberGameState* GameState) override;
 	virtual FText GetPrompt(const ARobberGameState* GameState, const APlayerState* Viewer) const override;
+
+	/** Dark panel on the front face: this is what reads as "you could get in there". */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Robber|Hiding")
+	TObjectPtr<UStaticMeshComponent> Opening;
+
+private:
+	UPROPERTY(Replicated)
+	TObjectPtr<APawn> Occupant = nullptr;
 };
 
 /**
@@ -185,7 +227,19 @@ public:
 
 	bool IsTaken() const { return bTaken; }
 
+	virtual void Tick(float DeltaSeconds) override;
+
+	/** The "!" floats over the key while this machine's own player is within this many cm and it's still there. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Robber|Door", meta = (ClampMin = "0"))
+	float AlertRange = 600.f;
+
+	bool IsAlertShowing() const;
+
 protected:
+	/** Drawn per machine, never replicated: each player sees it only near the key themselves. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Robber|Door")
+	TObjectPtr<UTextRenderComponent> Alert;
+
 	virtual void OnServerInteract(APawn* Pawn, APlayerState* Player, ARobberGameState* GameState) override;
 	virtual FText GetPrompt(const ARobberGameState* GameState, const APlayerState* Viewer) const override;
 	virtual FText GetLabel(const ARobberGameState* GameState) const override;

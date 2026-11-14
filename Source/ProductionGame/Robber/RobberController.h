@@ -6,6 +6,7 @@
 #include "AchievementTypes.h"
 #include "ProductionGamePlayerController.h"
 #include "Robber/RobberAchievementTracker.h"
+#include "Heist/RobberDevMenu.h"
 #include "Heist/RobberHideout.h"
 #include "RobberController.generated.h"
 
@@ -14,12 +15,16 @@ class ARobberMapTable;
 class URobberCaseFileHUD;
 class URobberJournalComponent;
 class URobberJournalWidget;
+class URobberPowerCut;
+class URobberServerConsole;
+class URobberShopCatalogue;
+class UMaterialInstanceDynamic;
 class UAchievementDefinitionAsset;
-class UAchievementPopupWidget;
+class URobberAchievementPopup;
 class UInputAction;
-class SWidget;
 class USoundMix;
 class UUserWidget;
+class UWidget;
 
 /**
  * Native controller for the Robber gameplay maps. The identically named
@@ -32,6 +37,14 @@ class PRODUCTIONGAME_API ARobberController : public AProductionGamePlayerControl
 
 public:
 	ARobberController();
+
+	/** Server: a ClientHeistMessage to this player, if they're a robber. */
+	static void Tell(const APlayerState* Player, const FText& Message);
+	static void Tell(const APawn* Pawn, const FText& Message);
+
+	/** A full-screen widget takes the mouse and keys: no looking or walking. Returns whether the cursor was showing, for LeaveModal. */
+	static bool EnterModal(APlayerController* Controller, UWidget* Focus);
+	static void LeaveModal(APlayerController* Controller, bool bCursorWasShown);
 
 	/** Allows menus that referenced the old Blueprint custom event to close themselves. */
 	UFUNCTION(BlueprintCallable, Category = "Robber|UI")
@@ -64,13 +77,26 @@ public:
 	UUserWidget* GetDevUIWidget() const { return DevUIRef; }
 	UUserWidget* GetGameUIWidget() const { return GameUIRef; }
 
-	/** Dev tool, F10: buttons for every night and the tutorial. Not in Shipping builds. */
-	void ToggleNightSwitcher();
-	bool IsNightSwitcherOpen() const;
+	/** Dev tool, F10: WBP_DevMenu (pick a night, skip stages, cheats). Not in Shipping builds. */
+	void ToggleDevMenu();
+	void CloseDevMenu();
+	bool IsDevMenuOpen() const;
+	URobberDevMenu* GetDevMenu() const { return DevMenu; }
 
-	/** What the night switcher's buttons send. NightIndex as ARobberGameState::SwitchNight. Ignored in Shipping. */
+	/** What the dev menu's buttons send. Defined in RobberDevMenu.cpp. Ignored in Shipping. */
 	UFUNCTION(Server, Reliable)
-	void ServerSwitchNight(int32 NightIndex);
+	void ServerDevAction(ERobberDevAction Action, int32 Value);
+
+	/** Dev menu: who has what quest tonight. The deal only exists on the server. */
+	UFUNCTION(Client, Reliable)
+	void ClientDevQuestList(const TArray<FString>& Lines, const TArray<uint8>& CanFind);
+	FString GetDevQuestList() const { return FString::Join(DevQuestLines, TEXT("\n")); }
+	void ClearDevQuestList() { DevQuestLines.Reset(); DevQuestCanFind.Reset(); ++DevQuestRevision; }
+	TArray<FString> DevQuestLines;
+	TArray<uint8> DevQuestCanFind;
+	int32 DevQuestRevision = 0;
+	/** Server only: what each row's Find button goes to. */
+	TArray<TWeakObjectPtr<AActor>> DevFindTargets;
 
 	/** From the planning table's interact: lean over Table, or step back if already looking at it. */
 	UFUNCTION(Client, Reliable)
@@ -79,6 +105,30 @@ public:
 	/** From a hideout object in the lobby: opens its screen (settings, achievements, or the quit check) for this player. */
 	UFUNCTION(Client, Reliable)
 	void ClientOpenLobbyMenu(ERobberLobbyMenu Menu);
+
+	/** Software Update's console. Action is an EConsoleAction. Defined in RobberSoftwareUpdate.cpp. */
+	UFUNCTION(Server, Reliable)
+	void ServerConsoleAction(uint8 Action, int32 Value, const FString& Text);
+	UFUNCTION(Client, Reliable)
+	void ClientServerConsole(bool bOpen);
+	UFUNCTION(Client, Reliable)
+	void ClientConsoleMessage(const FText& Message);
+	URobberServerConsole* GetServerConsole() const { return ServerConsole.Get(); }
+
+	/** Local only. The iris (WBP_Transition): shut for HoldSeconds, then opens. Defined in RobberTransition.cpp. */
+	void PlayTransition(float HoldSeconds);
+	bool IsTransitionPlaying() const { return TransitionTime >= 0.f; }
+	virtual void PlayerTick(float DeltaTime) override;
+
+	/** A new pawn counts as a level load; moving further than this in one frame counts as a teleport. */
+	UPROPERTY(EditDefaultsOnly, Category = "Robber|Transition")
+	float TeleportFadeDistance = 800.f;
+	UPROPERTY(EditDefaultsOnly, Category = "Robber|Transition")
+	float LoadFadeHold = 2.f;
+	UPROPERTY(EditDefaultsOnly, Category = "Robber|Transition")
+	float TeleportFadeHold = 0.3f;
+	UPROPERTY(EditDefaultsOnly, Category = "Robber|Transition")
+	float FadeOpenSeconds = 1.f;
 
 	/** The settings or achievements screen a lobby object opened, while it's up. */
 	UUserWidget* GetLobbyMenu() const { return LobbyMenu; }
@@ -109,9 +159,32 @@ public:
 	void OnSprintReleased();
 	bool IsJournalOpen() const;
 
+	/** The shop, opened from the catalogue on the lobby's lectern. Takes the mouse and stops the player moving. */
+	void OpenShopCatalogue();
+	void CloseShopCatalogue();
+	bool IsShopOpen() const;
+	URobberShopCatalogue* GetShopWidget() const { return ShopWidget; }
+
+	/** The generator's breaker panel for this player. These four are defined in RobberPowerCut.cpp. */
+	UFUNCTION(Client, Reliable)
+	void ClientOpenPowerCut(AActor* Generator);
+	void ClosePowerCut();
+	bool IsPowerCutOpen() const;
+	URobberPowerCut* GetPowerCut() const { return PowerCutWidget; }
+
+	/** Every breaker's down: the server runs the generator's CutPower, if this player's still next to it. */
+	UFUNCTION(Server, Reliable)
+	void ServerFinishPowerCut(AActor* Generator);
+
+	/** A mistimed trip: the bang adds heat. */
+	UFUNCTION(Server, Reliable)
+	void ServerPowerCutMiss(AActor* Generator);
+
 	/** The Case File HUD (null on non-local controllers); while it exists, the old debug text and heist card stay hidden. */
 	URobberCaseFileHUD* GetCaseFileHUD() const { return CaseFileHUD; }
 	URobberJournalWidget* GetJournalWidget() const { return JournalWidget; }
+	/** Null until the first popup on this (local) controller. */
+	URobberAchievementPopup* GetAchievementPopup() const { return AchievementPopup; }
 	URobberJournalComponent* GetJournal() const { return Journal; }
 
 	/** A code typed into a code lock's screen. The server checks it, so the answer never has to reach a client. Defined in RobberPuzzle.cpp. */
@@ -128,12 +201,6 @@ protected:
 	virtual void SetupInputComponent() override;
 
 private:
-	void CloseNightSwitcher();
-
-#if !UE_BUILD_SHIPPING
-	TSharedPtr<SWidget> NightSwitcher;
-#endif
-
 	void TogglePauseMenu();
 	void OpenPauseMenu();
 	/** Journal and Pause are bound here, not in the input mapping context, and follow the player's key settings. */
@@ -146,6 +213,7 @@ private:
 	FDelegateHandle ControlsChangedHandle;
 	void UnmuteVoice();
 	void BindAchievementNotifications();
+	URobberAchievementPopup* GetOrMakeAchievementPopup();
 	void ApplyHeistFrozen(bool bFrozen);
 
 	UFUNCTION(Client, Reliable)
@@ -187,8 +255,9 @@ private:
 	UPROPERTY(EditDefaultsOnly, Category = "Robber|UI")
 	TSoftClassPtr<UUserWidget> DevUIWidgetClass;
 
-	UPROPERTY(EditDefaultsOnly, Category = "Robber|Achievements")
-	TSoftClassPtr<UAchievementPopupWidget> AchievementPopupClass;
+	/** Plays this player's unlock and progress popups, one at a time. Made on first use. */
+	UPROPERTY(Transient)
+	TObjectPtr<URobberAchievementPopup> AchievementPopup;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Robber|Voice")
 	TObjectPtr<USoundMix> MuteVoiceSoundMix;
@@ -222,4 +291,26 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<URobberJournalWidget> JournalWidget;
+
+	UPROPERTY(Transient)
+	TObjectPtr<URobberShopCatalogue> ShopWidget;
+
+	/** Kept between openings, so the terms the player has scrolled through are still scrolled. */
+	UPROPERTY(Transient)
+	TObjectPtr<URobberServerConsole> ServerConsole;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UUserWidget> TransitionWidget;
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInstanceDynamic> TransitionMaterial;
+	float TransitionTime = -1.f;
+	float TransitionHold = 0.f;
+	TWeakObjectPtr<APawn> TransitionPawn;
+	FVector TransitionPawnLocation = FVector::ZeroVector;
+
+	UPROPERTY(Transient)
+	TObjectPtr<URobberDevMenu> DevMenu;
+
+	UPROPERTY(Transient)
+	TObjectPtr<URobberPowerCut> PowerCutWidget;
 };

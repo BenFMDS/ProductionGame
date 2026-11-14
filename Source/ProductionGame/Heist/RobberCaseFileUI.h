@@ -2,13 +2,16 @@
 
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
+#include "Heist/RobberEntryPoint.h"
 #include "RobberCaseFileUI.generated.h"
 
 class ARobberController;
 class ARobberGameState;
 class APlayerState;
+struct FRobberStoryLine;
 class UBorder;
 class UButton;
+class UCanvasPanel;
 class UPanelWidget;
 class UProgressBar;
 class UTextBlock;
@@ -57,6 +60,43 @@ protected:
 	static FText CrewStatus(const ARobberGameState* State, const APlayerState* Player);
 	static bool VaultStillShut(const ARobberGameState* State);
 	FText PlayerName(const APlayerState* Player) const;
+	/** Fills <RowName>0-3 with the crew in PlayerId order: the row, CrewColour, CrewName and CrewStatus widgets. */
+	void FillCrew(const ARobberGameState* State, const TCHAR* RowName);
+};
+
+/** One quest marker on screen: the target's name and distance over a yellow diamond. */
+USTRUCT()
+struct FRobberPinUI
+{
+	GENERATED_BODY()
+	UPROPERTY() TObjectPtr<UWidget> Root;
+	UPROPERTY() TObjectPtr<UTextBlock> Name;
+	UPROPERTY() TObjectPtr<UTextBlock> Detail;
+	UPROPERTY() TObjectPtr<UWidget> Arrow;
+};
+
+/** One bullet on a story quest's pinned note. */
+USTRUCT()
+struct FRobberStoryRowUI
+{
+	GENERATED_BODY()
+	UPROPERTY() TObjectPtr<UWidget> Row;
+	UPROPERTY() TObjectPtr<UWidget> Bullet;
+	UPROPERTY() TObjectPtr<UWidget> Tick;
+	UPROPERTY() TObjectPtr<UTextBlock> Text;
+	UPROPERTY() TObjectPtr<UWidget> Strike;
+};
+
+/** A pinned note: the quest's own, or the errand under it. */
+USTRUCT()
+struct FRobberStoryNoteUI
+{
+	GENERATED_BODY()
+	UPROPERTY() TObjectPtr<UWidget> Root;
+	UPROPERTY() TObjectPtr<UTextBlock> Title;
+	UPROPERTY() TArray<FRobberStoryRowUI> Rows;
+	UPROPERTY() TObjectPtr<UWidget> FooterPanel;
+	UPROPERTY() TObjectPtr<UTextBlock> Footer;
 };
 
 /**
@@ -97,15 +137,67 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Case File")
 	FLinearColor WindedColour = FLinearColor(FColor(0xff, 0x6b, 0x4a));
 
+	/** Drawn sizes of the two big corner pieces. The toast under the paper keeps its own size. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Case File|Sizes")
+	float NoteScale = 0.65f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Case File|Sizes")
+	float PaperScale = 0.65f;
+
+	/** Gap between the note and paper and the screen edges. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Case File|Sizes")
+	float CornerMargin = 27.f;
+
+	/** The story quest's pinned notes and stamp, on top of the sizes the mock-up used. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Case File|Sizes")
+	float StoryScale = 1.f;
+
 protected:
 	virtual void NativeOnInitialized() override;
 	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
 
 private:
+	void ApplySizes();
 	void UpdateSprint(float DeltaTime);
 	void UpdateNote(const ARobberGameState* State);
 	void UpdatePaper(const ARobberGameState* State);
-	void UpdateCrew(const ARobberGameState* State);
+
+	FRobberStoryRowUI MakeStoryRow(const FSlateFontInfo& Font);
+	FRobberStoryNoteUI MakeStoryNote(const FLinearColor& Paper, int32 RowCount, float Width);
+	void BuildStoryWidgets(UCanvasPanel* Root);
+	void FillStoryNote(FRobberStoryNoteUI& Ui, const FText& Title, const TArray<FRobberStoryLine>& Lines, const FText& Footer);
+	void UpdateStory(float DeltaTime);
+	void OnStoryStamp(bool bComplete, const FText& Title, const FText& Subtitle);
+	void BuildMarkerWidgets(UCanvasPanel* Root);
+	void UpdateMarkers(const FGeometry& MyGeometry, float DeltaTime);
+	void UpdateExhibitBubbles(const FGeometry& MyGeometry, float DeltaTime);
+	void UpdateHidingView();
+
+	UPROPERTY(Transient) TArray<FRobberPinUI> Pins;
+	UPROPERTY(Transient) TArray<TObjectPtr<UWidget>> Bubbles;
+	UPROPERTY(Transient) TObjectPtr<UWidget> HidingView;
+	UPROPERTY(Transient) TObjectPtr<UTextBlock> HidingName;
+	TArray<struct FRobberMarkerTarget> MarkerTargets;
+	TArray<TWeakObjectPtr<AActor>> BubbleExhibits;
+	float SinceMarkerScan = 1.f;
+	float SinceBubbleScan = 1.f;
+
+	UPROPERTY(Transient) FRobberStoryNoteUI StoryNoteUi;
+	UPROPERTY(Transient) FRobberStoryNoteUI StoryErrandUi;
+	UPROPERTY(Transient) TObjectPtr<UWidget> StoryColumn;
+	UPROPERTY(Transient) TObjectPtr<UWidget> StampRoot;
+	UPROPERTY(Transient) TObjectPtr<UBorder> StampEdge;
+	UPROPERTY(Transient) TObjectPtr<UBorder> StampInnerEdge;
+	UPROPERTY(Transient) TObjectPtr<UTextBlock> StampKick;
+	UPROPERTY(Transient) TObjectPtr<UTextBlock> StampTitle;
+	UPROPERTY(Transient) TObjectPtr<UTextBlock> StampSubtitle;
+	bool bStoryBound = false;
+	bool bStampComplete = false;
+	bool bStoryNoteUp = false;
+	/** Seconds into each animation; below zero when it isn't running. */
+	float StampClock = -1.f;
+	float NotePopClock = -1.f;
+	float NoteDropClock = -1.f;
 };
 
 /**
@@ -144,6 +236,10 @@ public:
 	/** One OVERHEARD entry. Empty uses WBP_JournalEntry. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Case File")
 	TSubclassOf<URobberJournalEntryWidget> EntryClass;
+
+	/** Drawn size of the book. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Case File|Sizes")
+	float BookScale = 0.7f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Case File")
 	FLinearColor KnownDigitColour = FLinearColor(FColor(0xff, 0xf3, 0xbf));

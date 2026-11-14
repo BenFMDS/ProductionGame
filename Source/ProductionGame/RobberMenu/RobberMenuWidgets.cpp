@@ -58,6 +58,13 @@ namespace RobberMenuDetail
 		}
 	}
 
+	template <typename T>
+	T* SubsystemOf(const UUserWidget* Widget)
+	{
+		const UGameInstance* GameInstance = Widget ? Widget->GetGameInstance() : nullptr;
+		return GameInstance ? GameInstance->GetSubsystem<T>() : nullptr;
+	}
+
 	FText MenuPercent(float Value)
 	{
 		return FText::AsNumber(FMath::RoundToInt(Value * 100.f));
@@ -71,9 +78,7 @@ namespace RobberMenuDetail
 	TArray<FAchievementDefinition> GetDefinitions(const UUserWidget* Widget, bool bSecret)
 	{
 		TArray<FAchievementDefinition> Result;
-		const UGameInstance* GameInstance = Widget->GetGameInstance();
-		const UAchievementSubsystem* Achievements = GameInstance ? GameInstance->GetSubsystem<UAchievementSubsystem>() : nullptr;
-		if (Achievements)
+		if (const UAchievementSubsystem* Achievements = SubsystemOf<UAchievementSubsystem>(Widget))
 		{
 			for (const FAchievementDefinition& Definition : Achievements->GetAchievementDefinitions())
 			{
@@ -155,14 +160,12 @@ FReply URobberMenuWidget::NativeOnKeyDown(const FGeometry& MyGeometry, const FKe
 
 URobberPartySubsystem* URobberMenuWidget::GetParty() const
 {
-	const UGameInstance* GameInstance = GetGameInstance();
-	return GameInstance ? GameInstance->GetSubsystem<URobberPartySubsystem>() : nullptr;
+	return RobberMenuDetail::SubsystemOf<URobberPartySubsystem>(this);
 }
 
 URobberSettingsSubsystem* URobberMenuWidget::GetSettingsSystem() const
 {
-	const UGameInstance* GameInstance = GetGameInstance();
-	return GameInstance ? GameInstance->GetSubsystem<URobberSettingsSubsystem>() : nullptr;
+	return RobberMenuDetail::SubsystemOf<URobberSettingsSubsystem>(this);
 }
 
 // --- URobberFriendRow ---
@@ -185,8 +188,7 @@ void URobberFriendRow::SetFriend(URobberPlayMenu* InMenu, const FRobberFriendInf
 	Menu = InMenu;
 	Friend = InFriend;
 
-	const UGameInstance* GameInstance = GetGameInstance();
-	const URobberPartySubsystem* Party = GameInstance ? GameInstance->GetSubsystem<URobberPartySubsystem>() : nullptr;
+	const URobberPartySubsystem* Party = RobberMenuDetail::SubsystemOf<URobberPartySubsystem>(this);
 	if (!Party)
 	{
 		return;
@@ -245,8 +247,7 @@ void URobberFriendRow::SetFriend(URobberPlayMenu* InMenu, const FRobberFriendInf
 
 void URobberFriendRow::OnJoinClicked()
 {
-	const UGameInstance* GameInstance = GetGameInstance();
-	if (URobberPartySubsystem* Party = GameInstance ? GameInstance->GetSubsystem<URobberPartySubsystem>() : nullptr)
+	if (URobberPartySubsystem* Party = RobberMenuDetail::SubsystemOf<URobberPartySubsystem>(this))
 	{
 		bJoining = true;
 		SetText(Find<UTextBlock>(TEXT("JoinText")), NSLOCTEXT("RobberMenu", "Joining", "JOINING"));
@@ -256,8 +257,7 @@ void URobberFriendRow::OnJoinClicked()
 
 void URobberFriendRow::OnInviteClicked()
 {
-	const UGameInstance* GameInstance = GetGameInstance();
-	URobberPartySubsystem* Party = GameInstance ? GameInstance->GetSubsystem<URobberPartySubsystem>() : nullptr;
+	URobberPartySubsystem* Party = RobberMenuDetail::SubsystemOf<URobberPartySubsystem>(this);
 	const URobberPlayMenu* PlayMenu = Menu.Get();
 	if (Party && PlayMenu)
 	{
@@ -543,6 +543,11 @@ void URobberSettingsMenu::NativeOnInitialized()
 	if (UButton* Button = Find<UButton>(TEXT("KeyJournal"))) Button->OnClicked.AddUniqueDynamic(this, &URobberSettingsMenu::OnKeyJournal);
 	if (UButton* Button = Find<UButton>(TEXT("KeyPause"))) Button->OnClicked.AddUniqueDynamic(this, &URobberSettingsMenu::OnKeyPause);
 	if (UButton* Button = Find<UButton>(TEXT("KeySprint"))) Button->OnClicked.AddUniqueDynamic(this, &URobberSettingsMenu::OnKeySprint);
+	if (USlider* Slider = Find<USlider>(TEXT("UiSizeSlider")))
+	{
+		Slider->OnValueChanged.AddUniqueDynamic(this, &URobberSettingsMenu::OnUiSizeChanged);
+		Slider->OnMouseCaptureEnd.AddUniqueDynamic(this, &URobberSettingsMenu::OnUiSizeReleased);
+	}
 
 	UKismetSystemLibrary::GetSupportedFullscreenResolutions(Resolutions);
 	if (Resolutions.Num() == 0)
@@ -609,6 +614,8 @@ void URobberSettingsMenu::LoadFromSettings()
 	if (USlider* Slider = Find<USlider>(TEXT("SfxSlider"))) Slider->SetValue(Sfx);
 	if (USlider* Slider = Find<USlider>(TEXT("VoiceSlider"))) Slider->SetValue(Voice);
 	if (USlider* Slider = Find<USlider>(TEXT("SensSlider"))) Slider->SetValue(Sens);
+	if (USlider* Slider = Find<USlider>(TEXT("UiSizeSlider"))) Slider->SetValue(Settings->UiSize);
+	RefreshUiSize();
 	if (UCheckBox* Box = Find<UCheckBox>(TEXT("InvertBox"))) Box->SetIsChecked(Settings->bInvertLook);
 	if (UCheckBox* Box = Find<UCheckBox>(TEXT("SmoothBox"))) Box->SetIsChecked(Settings->bSmoothMouse);
 
@@ -748,64 +755,62 @@ void URobberSettingsMenu::MarkChanged()
 	RefreshApply();
 }
 
-void URobberSettingsMenu::OnMusicChanged(float Value)
+void URobberSettingsMenu::ChangeSettings(TFunctionRef<void(URobberSettingsSave&)> Edit, bool bAudio)
 {
-	if (URobberSettingsSubsystem* System = bLoading ? nullptr : GetSettingsSystem())
+	URobberSettingsSubsystem* System = bLoading ? nullptr : GetSettingsSystem();
+	if (!System)
 	{
-		System->GetSettings()->MusicVolume = Value;
+		return;
+	}
+	Edit(*System->GetSettings());
+	if (bAudio)
+	{
+		// Not for the UI size: rescaling mid-drag would move the slider out from under the mouse.
 		System->Apply();
 		RefreshAudio();
-		MarkChanged();
 	}
+	MarkChanged();
 }
 
-void URobberSettingsMenu::OnSfxChanged(float Value)
-{
-	if (URobberSettingsSubsystem* System = bLoading ? nullptr : GetSettingsSystem())
-	{
-		System->GetSettings()->SfxVolume = Value;
-		System->Apply();
-		RefreshAudio();
-		MarkChanged();
-	}
-}
-
-void URobberSettingsMenu::OnVoiceChanged(float Value)
-{
-	if (URobberSettingsSubsystem* System = bLoading ? nullptr : GetSettingsSystem())
-	{
-		System->GetSettings()->VoiceVolume = Value;
-		System->Apply();
-		RefreshAudio();
-		MarkChanged();
-	}
-}
+void URobberSettingsMenu::OnMusicChanged(float Value) { ChangeSettings([Value](URobberSettingsSave& Save) { Save.MusicVolume = Value; }, true); }
+void URobberSettingsMenu::OnSfxChanged(float Value) { ChangeSettings([Value](URobberSettingsSave& Save) { Save.SfxVolume = Value; }, true); }
+void URobberSettingsMenu::OnVoiceChanged(float Value) { ChangeSettings([Value](URobberSettingsSave& Save) { Save.VoiceVolume = Value; }, true); }
+void URobberSettingsMenu::OnInvertChanged(bool bChecked) { ChangeSettings([bChecked](URobberSettingsSave& Save) { Save.bInvertLook = bChecked; }); }
+void URobberSettingsMenu::OnSmoothChanged(bool bChecked) { ChangeSettings([bChecked](URobberSettingsSave& Save) { Save.bSmoothMouse = bChecked; }); }
 
 void URobberSettingsMenu::OnSensChanged(float Value)
 {
-	if (URobberSettingsSubsystem* System = bLoading ? nullptr : GetSettingsSystem())
-	{
-		System->GetSettings()->LookSensitivity = Value;
-		RefreshMouse();
-		MarkChanged();
-	}
+	ChangeSettings([Value](URobberSettingsSave& Save) { Save.LookSensitivity = Value; });
+	RefreshMouse();
 }
 
-void URobberSettingsMenu::OnInvertChanged(bool bChecked)
+void URobberSettingsMenu::RefreshUiSize()
 {
-	if (URobberSettingsSubsystem* System = bLoading ? nullptr : GetSettingsSystem())
+	const URobberSettingsSubsystem* System = GetSettingsSystem();
+	const URobberSettingsSave* Settings = System ? System->GetSettings() : nullptr;
+	if (!Settings)
 	{
-		System->GetSettings()->bInvertLook = bChecked;
-		MarkChanged();
+		return;
 	}
+	if (UProgressBar* Fill = Find<UProgressBar>(TEXT("UiSizeFill")))
+	{
+		Fill->SetPercent((Settings->UiSize - 0.75f) / 0.5f);
+	}
+	SetText(Find<UTextBlock>(TEXT("UiSizeValue")), FText::Format(INVTEXT("{0}%"), FText::AsNumber(FMath::RoundToInt(Settings->UiSize * 100.f))));
 }
 
-void URobberSettingsMenu::OnSmoothChanged(bool bChecked)
+void URobberSettingsMenu::OnUiSizeChanged(float Value)
 {
-	if (URobberSettingsSubsystem* System = bLoading ? nullptr : GetSettingsSystem())
+	ChangeSettings([Value](URobberSettingsSave& Save) { Save.UiSize = FMath::Clamp(FMath::RoundToFloat(Value * 20.f) / 20.f, 0.75f, 1.25f); });
+	RefreshUiSize();
+}
+
+void URobberSettingsMenu::OnUiSizeReleased()
+{
+	// Rescaling mid-drag would move the slider out from under the mouse.
+	if (URobberSettingsSubsystem* System = GetSettingsSystem())
 	{
-		System->GetSettings()->bSmoothMouse = bChecked;
-		MarkChanged();
+		System->ApplyUiSize();
 	}
 }
 
@@ -1047,20 +1052,17 @@ void URobberAchievementStory::SetStory(const FAchievementDefinition& Definition,
 void URobberAchievementScrap::SetScrap(const FAchievementDefinition& Definition, const FAchievementProgressState& Progress, int32 Index)
 {
 	const bool bEarned = Progress.bUnlocked;
+	UTexture2D* Torn = TornPapers.Num() > 0 ? TornPapers[Index % TornPapers.Num()].Get() : nullptr;
+	for (const TCHAR* Name : { TEXT("ScrapPaper"), TEXT("ScrapShadow") })
+	{
+		if (UImage* Image = Find<UImage>(Name); Image && Torn)
+		{
+			Image->SetBrushFromTexture(Torn);
+		}
+	}
 	if (UImage* Paper = Find<UImage>(TEXT("ScrapPaper")))
 	{
-		if (TornPapers.Num() > 0 && TornPapers[Index % TornPapers.Num()])
-		{
-			Paper->SetBrushFromTexture(TornPapers[Index % TornPapers.Num()]);
-		}
 		Paper->SetColorAndOpacity(bEarned && EarnedPaperColours.Num() > 0 ? EarnedPaperColours[Index % EarnedPaperColours.Num()] : LockedPaperColour);
-	}
-	if (UImage* Shadow = Find<UImage>(TEXT("ScrapShadow")))
-	{
-		if (TornPapers.Num() > 0 && TornPapers[Index % TornPapers.Num()])
-		{
-			Shadow->SetBrushFromTexture(TornPapers[Index % TornPapers.Num()]);
-		}
 	}
 	RobberRansom::Fill(Find<UPanelWidget>(TEXT("TitleLetters")), bEarned ? Definition.Title.ToString() : TEXT("? ? ?"), 28, 40.f, this);
 	SetText(Find<UTextBlock>(TEXT("BodyText")), bEarned
@@ -1118,8 +1120,7 @@ void URobberAchievementsMenu::ShowTab(int32 Index)
 void URobberAchievementsMenu::Refresh()
 {
 	using namespace RobberMenuDetail;
-	const UGameInstance* GameInstance = GetGameInstance();
-	const UAchievementSubsystem* Achievements = GameInstance ? GameInstance->GetSubsystem<UAchievementSubsystem>() : nullptr;
+	const UAchievementSubsystem* Achievements = SubsystemOf<UAchievementSubsystem>(this);
 	if (!Achievements)
 	{
 		return;

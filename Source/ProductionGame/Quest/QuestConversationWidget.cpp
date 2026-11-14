@@ -20,6 +20,27 @@
 #include "Kismet/GameplayStatics.h"
 #include "UObject/ConstructorHelpers.h"
 
+namespace ExhibitLabelDetail
+{
+	/** The museum-label layouts, or null where they haven't been made (the folder is always cooked). */
+	UClass* LoadLayout(const TCHAR* Path)
+	{
+		return StaticLoadClass(UUserWidget::StaticClass(), nullptr, Path, nullptr, LOAD_Quiet | LOAD_NoWarn);
+	}
+
+	FText Initials(const FText& Name)
+	{
+		TArray<FString> Words;
+		Name.ToString().ParseIntoArrayWS(Words);
+		FString Letters;
+		for (int32 Index = 0; Index < FMath::Min(Words.Num(), 2); ++Index)
+		{
+			Letters += Words[Index].Left(1).ToUpper();
+		}
+		return FText::FromString(Letters);
+	}
+}
+
 UConversationChoiceWidget::UConversationChoiceWidget(const FObjectInitializer& Initializer) : Super(Initializer)
 {
 	static ConstructorHelpers::FClassFinder<UUserWidget> Original(TEXT("/Game/OurStuff/Core/Dialogue/WBP_TextEntry"));
@@ -28,6 +49,10 @@ UConversationChoiceWidget::UConversationChoiceWidget(const FObjectInitializer& I
 
 TSharedRef<SWidget> UConversationChoiceWidget::RebuildWidget()
 {
+	if (UClass* ChoiceLayout = WidgetTree->RootWidget ? nullptr : ExhibitLabelDetail::LoadLayout(TEXT("/Game/OurStuff/UI/CaseFile/WBP_ExhibitChoice.WBP_ExhibitChoice_C")))
+	{
+		LayoutClass = ChoiceLayout;
+	}
 	if (!WidgetTree->RootWidget && LayoutClass)
 	{
 		Layout = CreateWidget<UUserWidget>(GetOwningPlayer(), LayoutClass);
@@ -68,6 +93,11 @@ UDialoguePresentationWidget::UDialoguePresentationWidget(const FObjectInitialize
 
 TSharedRef<SWidget> UDialoguePresentationWidget::RebuildWidget()
 {
+	if (UClass* Label = WidgetTree->RootWidget ? nullptr : ExhibitLabelDetail::LoadLayout(TEXT("/Game/OurStuff/UI/CaseFile/WBP_ExhibitLabel.WBP_ExhibitLabel_C")))
+	{
+		LayoutClass = Label;
+		bExhibitLabel = true;
+	}
 	if (!WidgetTree->RootWidget && LayoutClass)
 	{
 		Layout = CreateWidget<UUserWidget>(GetOwningPlayer(), LayoutClass);
@@ -81,18 +111,10 @@ void UDialoguePresentationWidget::NativeConstruct()
 	Super::NativeConstruct();
 	APlayerController* PC = GetOwningPlayer();
 	Player = PC ? PC->FindComponentByClass<UPlayerQuestComponent>() : nullptr;
-	TextBox = Layout ? Cast<UUserWidget>(Layout->GetWidgetFromName(TEXT("TextBox"))) : nullptr;
+	TextBox = bExhibitLabel ? Layout.Get() : Layout ? Cast<UUserWidget>(Layout->GetWidgetFromName(TEXT("TextBox"))) : nullptr;
 	if (!Player || !TextBox) return;
 	SetVisibility(ESlateVisibility::Visible);
-	bPreviousCursor = PC->bShowMouseCursor;
-	PC->SetIgnoreLookInput(true);
-	PC->SetIgnoreMoveInput(true);
-	PC->bShowMouseCursor = true;
-	// Release gameplay mouse capture and focus the modal above the existing HUD.
-	FInputModeUIOnly Mode;
-	Mode.SetWidgetToFocus(TakeWidget());
-	Mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
-	PC->SetInputMode(Mode);
+	bPreviousCursor = ARobberController::EnterModal(PC, this);
 	RefreshConversation();
 }
 
@@ -125,6 +147,13 @@ void UDialoguePresentationWidget::RefreshConversation()
 		Image->SetBrushFromTexture(Snapshot.Portrait);
 		Image->SetVisibility(Snapshot.Portrait ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Hidden);
 	}
+	if (bExhibitLabel)
+	{
+		SetText(TEXT("TXT_Initials"), ExhibitLabelDetail::Initials(Snapshot.Speaker));
+		SetBoxVisibility(TEXT("BOX_Initials"), Snapshot.Portrait ? ESlateVisibility::Collapsed : ESlateVisibility::HitTestInvisible);
+		SetText(TEXT("TXT_Location"), Snapshot.Location.ToUpper());
+		SetBoxVisibility(TEXT("TXT_Location"), Snapshot.Location.IsEmpty() ? ESlateVisibility::Collapsed : ESlateVisibility::HitTestInvisible);
+	}
 	if (Voice) Voice->Stop();
 	Voice = Snapshot.Voice ? UGameplayStatics::SpawnSound2D(this, Snapshot.Voice) : nullptr;
 	ChoiceWidgets.Reset();
@@ -140,10 +169,16 @@ void UDialoguePresentationWidget::RefreshConversation()
 			Choice->ChoiceID = Snapshot.ChoiceIDs.IsValidIndex(Index) ? Snapshot.ChoiceIDs[Index] : INDEX_NONE;
 			Choice->Label = Snapshot.Choices.IsValidIndex(Index) ? Snapshot.Choices[Index] : NSLOCTEXT("Dialogue", "Close", "Goodbye");
 			ChoiceWidgets.Add(Choice);
-			Choices->AddChild(Choice);
+			UPanelSlot* ChoiceSlot = Choices->AddChild(Choice);
+			if (UVerticalBoxSlot* Row = bExhibitLabel ? Cast<UVerticalBoxSlot>(ChoiceSlot) : nullptr)
+			{
+				Row->SetPadding(FMargin(0.f, 0.f, 0.f, 5.f));
+			}
 		}
 	}
 	SetUserFocus(GetOwningPlayer());
+	// The label keeps the line up beside its answers, so a separate "line only" step just repeats it.
+	if (bExhibitLabel) ShowChoices();
 }
 
 void UDialoguePresentationWidget::ShowChoices()
@@ -153,7 +188,10 @@ void UDialoguePresentationWidget::ShowChoices()
 	SetBoxVisibility(TEXT("VBOX_Speaker"), ESlateVisibility::Collapsed);
 	SetBoxVisibility(TEXT("VBOX_Choice"), ESlateVisibility::SelfHitTestInvisible);
 	SetBoxVisibility(TEXT("TextBlock_0"), ESlateVisibility::Collapsed);
-	SetBoxVisibility(TEXT("IMG_Picture"), ESlateVisibility::Hidden);
+	if (!bExhibitLabel)
+	{
+		SetBoxVisibility(TEXT("IMG_Picture"), ESlateVisibility::Hidden);
+	}
 	if (!ChoiceWidgets.IsEmpty() && ChoiceWidgets[0]->GetChoiceButton())
 		ChoiceWidgets[0]->GetChoiceButton()->SetUserFocus(GetOwningPlayer());
 }
@@ -186,14 +224,7 @@ FReply UDialoguePresentationWidget::NativeOnKeyDown(const FGeometry& Geometry, c
 void UDialoguePresentationWidget::NativeDestruct()
 {
 	if (Voice) Voice->Stop();
-	if (Player)
-		if (auto* PC = GetOwningPlayer())
-		{
-			PC->SetIgnoreLookInput(false);
-			PC->SetIgnoreMoveInput(false);
-			PC->bShowMouseCursor = bPreviousCursor;
-			PC->SetInputMode(FInputModeGameOnly());
-		}
+	if (Player && GetOwningPlayer()) ARobberController::LeaveModal(GetOwningPlayer(), bPreviousCursor);
 	Super::NativeDestruct();
 }
 
@@ -306,13 +337,8 @@ void UQuestConversationWidget::RefreshQuests()
 	TArray<TPair<FString, int32>> Votes;
 	if (bHeist && RobberStage::IsInLobby(Stage))
 	{
-		TArray<const ARobberEntryPoint*> Counted;
-		for (const FRobberEntryVote& Vote : GameState->GetVotes())
-			if (Vote.Entry && !Counted.Contains(Vote.Entry))
-			{
-				Counted.Add(Vote.Entry);
-				Votes.Emplace(Vote.Entry->DisplayName.ToString(), GameState->GetVoteCount(Vote.Entry));
-			}
+		for (const TPair<const ARobberEntryPoint*, int32>& Tally : GameState->GetVoteTallies())
+			Votes.Emplace(Tally.Key->DisplayName.ToString(), Tally.Value);
 	}
 	static const TArray<FRobberJob> NoJobs;
 	const TArray<FRobberJob>& Jobs = bHeist ? GameState->GetJobs() : NoJobs;
