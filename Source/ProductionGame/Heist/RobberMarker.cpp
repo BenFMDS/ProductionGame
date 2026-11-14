@@ -1,4 +1,4 @@
-#include "Heist/RobberMenuMarker.h"
+#include "Heist/RobberMarker.h"
 
 #include "Blueprint/WidgetTree.h"
 #include "Brushes/SlateRoundedBoxBrush.h"
@@ -9,8 +9,9 @@
 #include "Components/VerticalBoxSlot.h"
 #include "Engine/Font.h"
 #include "Engine/World.h"
+#include "Camera/PlayerCameraManager.h"
 #include "GameFramework/PlayerController.h"
-#include "Heist/RobberHideout.h"
+#include "Heist/RobberHighlight.h"
 
 namespace
 {
@@ -37,7 +38,7 @@ namespace
 	}
 }
 
-void URobberMenuMarker::NativeOnInitialized()
+void URobberMarkerWidget::NativeOnInitialized()
 {
 	Super::NativeOnInitialized();
 	if (!WidgetTree || WidgetTree->RootWidget)
@@ -76,7 +77,7 @@ void URobberMenuMarker::NativeOnInitialized()
 	SetVisibility(ESlateVisibility::HitTestInvisible);
 }
 
-void URobberMenuMarker::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
+void URobberMarkerWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 {
 	Super::NativeTick(MyGeometry, InDeltaTime);
 	Age += InDeltaTime;
@@ -94,7 +95,7 @@ void URobberMenuMarker::NativeTick(const FGeometry& MyGeometry, float InDeltaTim
 	}
 }
 
-void URobberMenuMarker::SetName(const FText& Name)
+void URobberMarkerWidget::SetName(const FText& Name)
 {
 	if (NameText)
 	{
@@ -102,12 +103,12 @@ void URobberMenuMarker::SetName(const FText& Name)
 	}
 }
 
-FText URobberMenuMarker::GetName() const
+FText URobberMarkerWidget::GetName() const
 {
 	return NameText ? NameText->GetText() : FText::GetEmpty();
 }
 
-void URobberMenuMarker::SetNameShown(bool bShown)
+void URobberMarkerWidget::SetNameShown(bool bShown)
 {
 	if (bShown == bNameShown || !Tag)
 	{
@@ -119,7 +120,7 @@ void URobberMenuMarker::SetNameShown(bool bShown)
 	Tag->SetVisibility(bShown ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Hidden);
 }
 
-URobberMenuMarkerComponent::URobberMenuMarkerComponent()
+URobberMarkerComponent::URobberMarkerComponent()
 {
 	PrimaryComponentTick.bCanEverTick = true;
 	SetWidgetSpace(EWidgetSpace::Screen);
@@ -127,21 +128,21 @@ URobberMenuMarkerComponent::URobberMenuMarkerComponent()
 	SetPivot(FVector2D(0.5f, 1.f));
 	SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	SetGenerateOverlapEvents(false);
-	SetWidgetClass(URobberMenuMarker::StaticClass());
+	SetWidgetClass(URobberMarkerWidget::StaticClass());
 }
 
-void URobberMenuMarkerComponent::BeginPlay()
+void URobberMarkerComponent::BeginPlay()
 {
 	PlaceAboveOwner();
 	Super::BeginPlay();
-	if (URobberMenuMarker* Marker = GetMarker())
+	if (URobberMarkerWidget* Marker = GetMarker())
 	{
 		Marker->SetName(Label);
 	}
 	SetVisibility(false);
 }
 
-void URobberMenuMarkerComponent::PlaceAboveOwner()
+void URobberMarkerComponent::PlaceAboveOwner()
 {
 	const AActor* Owner = GetOwner();
 	if (!Owner)
@@ -159,26 +160,41 @@ void URobberMenuMarkerComponent::PlaceAboveOwner()
 	SetWorldLocation(FVector(Centre.X, Centre.Y, Centre.Z + Extent.Z + Gap));
 }
 
-URobberMenuMarker* URobberMenuMarkerComponent::GetMarker() const
+URobberMarkerWidget* URobberMarkerComponent::GetMarker() const
 {
-	return Cast<URobberMenuMarker>(GetUserWidgetObject());
+	return Cast<URobberMarkerWidget>(GetUserWidgetObject());
 }
 
-void URobberMenuMarkerComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
+void URobberMarkerComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 	const APlayerController* Viewer = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr;
-	const bool bShowMark = ARobberLobbyObject::IsInHighlightRange(GetOwner(), Viewer, MarkRange);
+	// A dedicated server's first controller is someone else's: it has no view of its own.
+	if (Viewer && !Viewer->IsLocalController())
+	{
+		Viewer = nullptr;
+	}
+	const bool bShowMark = bMarkerEnabled && IsWithin(Viewer, MarkRange);
 	if (IsVisible() != bShowMark)
 	{
 		SetVisibility(bShowMark);
 	}
-	if (URobberMenuMarker* Marker = GetMarker())
+	if (URobberMarkerWidget* Marker = GetMarker())
 	{
 		if (!Marker->GetName().EqualTo(Label))
 		{
 			Marker->SetName(Label);
 		}
-		Marker->SetNameShown(bShowMark && ARobberLobbyObject::IsInHighlightRange(GetOwner(), Viewer, NameRange));
+		Marker->SetNameShown(bShowMark && !Label.IsEmpty() && IsWithin(Viewer, NameRange));
 	}
+}
+
+bool URobberMarkerComponent::IsWithin(const APlayerController* Viewer, double Range) const
+{
+	if (bNeedsClearView)
+	{
+		return URobberHighlightComponent::IsInClearView(GetOwner(), Viewer, Range);
+	}
+	const APlayerCameraManager* Camera = Viewer ? Viewer->PlayerCameraManager.Get() : nullptr;
+	return Camera && FVector::Dist(Camera->GetCameraLocation(), GetOwner()->GetActorLocation()) <= Range;
 }

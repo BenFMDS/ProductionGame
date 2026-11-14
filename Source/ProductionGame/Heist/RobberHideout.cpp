@@ -9,7 +9,8 @@
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
 #include "Heist/RobberGlassCase.h"
-#include "Heist/RobberMenuMarker.h"
+#include "Heist/RobberHighlight.h"
+#include "Heist/RobberMarker.h"
 #include "Heist/RobberStage.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Robber/RobberController.h"
@@ -18,41 +19,16 @@
 
 ARobberLobbyObject::ARobberLobbyObject()
 {
-	// Every frame, so the highlight comes on the moment you step into range.
-	PrimaryActorTick.TickInterval = 0.f;
 	Prompt = NSLOCTEXT("RobberHideout", "Prompt", "Interact With Object");
+	Highlight->Mode = ERobberHighlightMode::InRange;
+	Highlight->Range = HighlightRange;
+	// Like its BP_MenuObject twin, whose outline is on Mesh alone.
+	Highlight->PartNames = { TEXT("Mesh") };
 }
 
-bool ARobberLobbyObject::IsInHighlightRange(const AActor* Target, const APlayerController* Viewer, double Range)
+bool ARobberLobbyObject::IsHovered() const
 {
-	const APlayerCameraManager* Camera = Viewer ? Viewer->PlayerCameraManager.Get() : nullptr;
-	if (!Target || !Camera)
-	{
-		return false;
-	}
-	const FVector Eye = Camera->GetCameraLocation();
-	FVector Centre;
-	FVector Extent;
-	Target->GetActorBounds(true, Centre, Extent);
-	if (FVector::Dist(Eye, Centre) > Range)
-	{
-		return false;
-	}
-	// Otherwise the outline would draw straight through whatever is in front of it.
-	FCollisionQueryParams Params(SCENE_QUERY_STAT(MenuObjectHighlight), false, Viewer->GetPawn());
-	Params.AddIgnoredActor(Target);
-	return !Target->GetWorld()->LineTraceTestByChannel(Eye, Centre, ECC_Visibility, Params);
-}
-
-void ARobberLobbyObject::Tick(float DeltaSeconds)
-{
-	Super::Tick(DeltaSeconds);
-	const bool bInRange = IsInHighlightRange(this, GetWorld()->GetFirstPlayerController());
-	if (bInRange != bHovered)
-	{
-		bHovered = bInRange;
-		Mesh->SetRenderCustomDepth(bHovered);
-	}
+	return Highlight->IsHighlighted();
 }
 
 FText ARobberLobbyObject::GetMenuName() const
@@ -80,7 +56,7 @@ void URobberMenuObjectSubsystem::AddMarker(AActor* Object, const FText& Name)
 	{
 		return;
 	}
-	URobberMenuMarkerComponent* Marker = NewObject<URobberMenuMarkerComponent>(Object, TEXT("MenuMarker"));
+	URobberMarkerComponent* Marker = NewObject<URobberMarkerComponent>(Object, TEXT("MenuMarker"));
 	Marker->Label = Name;
 	Marker->NameRange = ARobberLobbyObject::HighlightRange;
 	Marker->SetupAttachment(Object->GetRootComponent());
@@ -102,6 +78,7 @@ void URobberMenuObjectSubsystem::OnWorldBeginPlay(UWorld& World)
 			continue;
 		}
 		Objects.Add(*It);
+		AddHighlight(*It);
 		for (UActorComponent* Component : It->GetComponents())
 		{
 			if (UTextRenderComponent* Text = Cast<UTextRenderComponent>(Component))
@@ -128,26 +105,14 @@ void URobberMenuObjectSubsystem::OnWorldBeginPlay(UWorld& World)
 	}
 }
 
-void URobberMenuObjectSubsystem::Tick(float DeltaTime)
+void URobberMenuObjectSubsystem::AddHighlight(AActor* Object)
 {
-	const APlayerController* LocalPlayer = GetWorld()->GetFirstPlayerController();
-	for (const TWeakObjectPtr<AActor>& Object : Objects)
-	{
-		if (!Object.IsValid())
-		{
-			continue;
-		}
-		const bool bInRange = ARobberLobbyObject::IsInHighlightRange(Object.Get(), LocalPlayer);
-		// Every frame: BPC_Interaction switches the outline off when your aim leaves the object, even if you're still in range.
-		for (UActorComponent* Component : Object->GetComponents())
-		{
-			UPrimitiveComponent* Primitive = Component->GetFName() == TEXT("Mesh") ? Cast<UPrimitiveComponent>(Component) : nullptr;
-			if (Primitive && Primitive->bRenderCustomDepth != bInRange)
-			{
-				Primitive->SetRenderCustomDepth(bInRange);
-			}
-		}
-	}
+	// BPC_Interaction lights BP_MenuObject's Mesh only while aimed at; this keeps it lit anywhere in range.
+	URobberHighlightComponent* Highlight = NewObject<URobberHighlightComponent>(Object, TEXT("RobberHighlight"));
+	Highlight->Mode = ERobberHighlightMode::InRange;
+	Highlight->Range = ARobberLobbyObject::HighlightRange;
+	Highlight->PartNames = { TEXT("Mesh") };
+	Highlight->RegisterComponent();
 }
 
 void ARobberLobbyObject::OnServerInteract(APawn* Pawn, APlayerState* Player, ARobberGameState* GameState)

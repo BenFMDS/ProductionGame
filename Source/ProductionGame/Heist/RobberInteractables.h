@@ -2,12 +2,13 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
-#include "Subsystems/WorldSubsystem.h"
 #include "RobberInteractables.generated.h"
 
 class APlayerState;
 class ARobberEntryPoint;
 class ARobberGameState;
+class URobberHighlightComponent;
+class URobberMarkerComponent;
 class UStaticMeshComponent;
 class UTextRenderComponent;
 
@@ -55,8 +56,7 @@ public:
 	/** Shows or removes a part: hidden with its children, and nothing to bump into while it's gone. */
 	static void ShowPart(UPrimitiveComponent* Part, bool bShown);
 
-	/** True for props that light themselves up some other way, so URobberLookOutlineSubsystem leaves them alone. */
-	virtual bool OutlinesItself() const { return false; }
+	URobberHighlightComponent* GetHighlight() const { return Highlight; }
 
 protected:
 	virtual void OnServerInteract(APawn* Pawn, APlayerState* Player, ARobberGameState* GameState) {}
@@ -68,6 +68,10 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Robber|Interact")
 	TObjectPtr<UTextRenderComponent> LabelText;
+
+	/** Red outline while aimed at, by default. Subclasses that light up another way change its Mode. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Robber|Interact")
+	TObjectPtr<URobberHighlightComponent> Highlight;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Robber|Interact")
 	FText Prompt;
@@ -233,16 +237,12 @@ public:
 
 	virtual void Tick(float DeltaSeconds) override;
 
-	/** The "!" floats over the key while this machine's own player is within this many cm and it's still there. */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Robber|Door", meta = (ClampMin = "0"))
-	float AlertRange = 600.f;
-
 	bool IsAlertShowing() const;
 
 protected:
-	/** Drawn per machine, never replicated: each player sees it only near the key themselves. */
+	/** The "!" over the key while it's still there, drawn per machine: each player sees it only near the key themselves (MarkRange). */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Robber|Door")
-	TObjectPtr<UTextRenderComponent> Alert;
+	TObjectPtr<URobberMarkerComponent> Alert;
 
 	virtual void OnServerInteract(APawn* Pawn, APlayerState* Player, ARobberGameState* GameState) override;
 	virtual FText GetPrompt(const ARobberGameState* GameState, const APlayerState* Viewer) const override;
@@ -254,33 +254,4 @@ private:
 
 	UFUNCTION()
 	void OnRep_Taken();
-};
-
-/**
- * The red outline for the C++ props. BPC_Interaction only outlines BP_InteractMaster children, and these can't be
- * one (a C++ class can't have a Blueprint parent), so this does the same for them: the prop this machine's player
- * is looking at, within the interact trace (Visibility, 300 from the camera) and usable right now, gets custom
- * depth on every visible part, which M_HoverOutline on the camera draws red. Local only.
- */
-UCLASS()
-class PRODUCTIONGAME_API URobberLookOutlineSubsystem : public UTickableWorldSubsystem
-{
-	GENERATED_BODY()
-
-public:
-	/** BPC_Interaction's trace length. */
-	static constexpr double Reach = 300.;
-
-	virtual bool ShouldCreateSubsystem(UObject* Outer) const override;
-	virtual void Tick(float DeltaTime) override;
-	virtual TStatId GetStatId() const override { RETURN_QUICK_DECLARE_CYCLE_STAT(URobberLookOutlineSubsystem, STATGROUP_Tickables); }
-
-	ARobberInteractable* GetOutlined() const { return Outlined.Get(); }
-
-private:
-	ARobberInteractable* FindTarget() const;
-	void SetOutline(bool bOn);
-
-	TWeakObjectPtr<ARobberInteractable> Outlined;
-	TArray<TWeakObjectPtr<UPrimitiveComponent>> Parts;
 };

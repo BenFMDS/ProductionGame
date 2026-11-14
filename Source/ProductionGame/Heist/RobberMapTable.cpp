@@ -13,6 +13,7 @@
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/PlayerState.h"
 #include "Heist/RobberEntryPoint.h"
+#include "Heist/RobberHighlight.h"
 #include "Heist/RobberStage.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Misc/App.h"
@@ -333,6 +334,10 @@ ARobberMapObject::ARobberMapObject()
 	static ConstructorHelpers::FObjectFinder<UMaterialInterface> ShapeMaterial(TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
 	PinMaterial = ShapeMaterial.Object;
 	ObjectMesh = Mesh->GetStaticMesh();
+
+	// The table's hover (crosshair or, leaning in, the mouse cursor) lights the piece and its base, not the voters' pins.
+	Highlight->Mode = ERobberHighlightMode::Manual;
+	Highlight->PartNames = { TEXT("Mesh"), TEXT("Base") };
 }
 
 void ARobberMapObject::OnConstruction(const FTransform& Transform)
@@ -521,7 +526,10 @@ void ARobberMapObject::FaceLabelToCamera()
 
 void ARobberMapObject::SetHovered(bool bInHovered)
 {
-	bHovered = bInHovered;
-	Mesh->SetRenderCustomDepth(bHovered);
-	Base->SetRenderCustomDepth(bHovered);
+	Highlight->SetManualHighlight(bInHovered);
+}
+
+bool ARobberMapObject::IsHovered() const
+{
+	return Highlight->IsHighlighted();
 }

@@ -5,6 +5,7 @@
 #include "Dialogue/DialogueComponent.h"
 #include "Engine/SkeletalMesh.h"
 #include "Engine/StaticMesh.h"
+#include "Heist/RobberHighlight.h"
 #include "Heist/RobberPuzzle.h"
 #include "Quest/QuestGiverComponent.h"
 
@@ -30,6 +31,8 @@ AQuestDialogueCharacter::AQuestDialogueCharacter()
 	StatueModelMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	StatueModelMesh->SetGenerateOverlapEvents(false);
 	StatueModelMesh->SetVisibility(false);
+	// BPC_Interaction only outlines BP_InteractMaster children, so talkers had no outline of their own.
+	Highlight = CreateDefaultSubobject<URobberHighlightComponent>(TEXT("RobberHighlight"));
 }
 
 void AQuestDialogueCharacter::ApplyExhibitLook()

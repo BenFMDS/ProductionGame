@@ -8,6 +8,7 @@ class UDialogueDefinition;
 class UMaterialInterface;
 class UQuestGiverComponent;
 class UQuestDefinition;
+class URobberHighlightComponent;
 class USkeletalMesh;
 class UStaticMesh;
 class UStaticMeshComponent;
@@ -51,6 +52,8 @@ public:
 	UPROPERTY(EditDefaultsOnly, Category="Exhibit Look") float StatueModelYaw = 0.f;
 	UPROPERTY(VisibleAnywhere, Category="Exhibit Look") TObjectPtr<UStaticMeshComponent> StatueModelMesh;
 	UPROPERTY(VisibleAnywhere, Category="Exhibit Look") TArray<TObjectPtr<UStaticMeshComponent>> FrameBars;
+	/** Red outline on whatever shows of the exhibit (painting and frame, statue, cube) while aimed at. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Interact") TObjectPtr<URobberHighlightComponent> Highlight;
 	/** How far a painting's actor stands off its wall, so the capsule clears it. The picture sits back against the wall. */
 	static constexpr double PaintingWallGap = 45.;
 	/** Picture centre above the actor's origin: eye level for a capsule standing on the floor. */

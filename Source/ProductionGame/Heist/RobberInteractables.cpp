@@ -16,6 +16,8 @@
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/PlayerState.h"
 #include "Heist/RobberEntryPoint.h"
+#include "Heist/RobberHighlight.h"
+#include "Heist/RobberMarker.h"
 #include "Heist/RobberStage.h"
 #include "Net/UnrealNetwork.h"
 #include "Quest/PlayerQuestComponent.h"
@@ -41,6 +43,8 @@ ARobberInteractable::ARobberInteractable()
 	LabelText->SetWorldSize(30.f);
 	LabelText->SetTextRenderColor(FColor::White);
 	LabelText->SetAbsolute(false, false, true);
+
+	Highlight = CreateDefaultSubobject<URobberHighlightComponent>(TEXT("RobberHighlight"));
 }
 
 void ARobberInteractable::HandleInteract(AActor* InteractingPlayer)
@@ -375,49 +379,24 @@ ARobberKeyPickup::ARobberKeyPickup()
 	Label = NSLOCTEXT("RobberDoor", "KeyLabel", "KEY");
 	KeyName = NSLOCTEXT("RobberDoor", "DefaultKey", "key");
 
-	// Every frame while shown, so it can turn to the camera and bob smoothly; cheap, there are only a few keys.
-	PrimaryActorTick.TickInterval = 0.f;
-	Alert = CreateDefaultSubobject<UTextRenderComponent>(TEXT("Alert"));
+	// New name: placed keys saved the old text "!" component as "Alert", and a different class under that name won't load cleanly.
+	Alert = CreateDefaultSubobject<URobberMarkerComponent>(TEXT("KeyMarker"));
 	Alert->SetupAttachment(Mesh);
-	// Absolute so the key's flat scale (a badge is 4 cm thick) doesn't squash it; placed in world space in Tick.
-	Alert->SetAbsolute(true, true, true);
-	Alert->SetText(NSLOCTEXT("RobberDoor", "KeyAlert", "!"));
-	Alert->SetHorizontalAlignment(EHTA_Center);
-	Alert->SetVerticalAlignment(EVRTA_TextCenter);
-	Alert->SetWorldSize(70.f);
-	Alert->SetTextRenderColor(FColor(0xff, 0xc8, 0x1e));
-	Alert->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	Alert->SetCastShadow(false);
-	Alert->SetHiddenInGame(true);
+	Alert->MarkRange = 600.f;
+	// The staff badge hangs on a wall rack under a shelf, which would otherwise hide it.
+	Alert->bNeedsClearView = false;
 }
 
 bool ARobberKeyPickup::IsAlertShowing() const
 {
-	return Alert && !Alert->bHiddenInGame;
+	return Alert && Alert->IsMarkShowing();
 }
 
 void ARobberKeyPickup::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
-	// The local player's own view: a dedicated server has none and never shows it.
-	const APlayerController* Local = GetWorld()->GetFirstPlayerController();
-	const APawn* Viewer = Local && Local->IsLocalController() ? Local->GetPawn() : nullptr;
 	const ARobberGameState* GameState = GetWorld()->GetGameState<ARobberGameState>();
-	const bool bShow = Viewer && GameState && !bTaken && IsActive(GameState) && !RobberStage::IsInLobby(GameState->GetGameStage())
-		&& FVector::DistSquared(Viewer->GetActorLocation(), GetActorLocation()) < FMath::Square(AlertRange);
-	Alert->SetHiddenInGame(!bShow);
-	if (!bShow)
-	{
-		return;
-	}
-	// Above the key, bobbing, and turned to face the camera (text is mirrored from behind). Pulled 40 cm towards the
-	// viewer so a key hung on a wall rack (the staff badge) doesn't have the shelf above it hide the "!".
-	const double Bob = 6. * FMath::Sin(GetWorld()->GetTimeSeconds() * 3.);
-	const FVector Camera = Local->PlayerCameraManager ? Local->PlayerCameraManager->GetCameraLocation() : Viewer->GetActorLocation();
-	FVector ToCamera = Camera - GetActorLocation();
-	ToCamera.Z = 0.;
-	const FVector Dir = ToCamera.GetSafeNormal();
-	Alert->SetWorldLocationAndRotation(GetActorLocation() + Dir * 40. + FVector(0., 0., 60. + Bob), Dir.IsNearlyZero() ? FRotator::ZeroRotator : Dir.Rotation());
+	Alert->SetMarkerEnabled(GameState && !bTaken && IsActive(GameState) && !RobberStage::IsInLobby(GameState->GetGameStage()));
 }
 
 void ARobberKeyPickup::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -456,70 +435,3 @@ void ARobberKeyPickup::OnRep_Taken()
 	ShowPart(Mesh, !bTaken);
 }
 
-bool URobberLookOutlineSubsystem::ShouldCreateSubsystem(UObject* Outer) const
-{
-	const UWorld* World = Cast<UWorld>(Outer);
-	return World && World->IsGameWorld() && Super::ShouldCreateSubsystem(Outer);
-}
-
-ARobberInteractable* URobberLookOutlineSubsystem::FindTarget() const
-{
-	const APlayerController* LocalPlayer = GetWorld()->GetFirstPlayerController();
-	const APlayerCameraManager* Camera = LocalPlayer && LocalPlayer->IsLocalController() ? LocalPlayer->PlayerCameraManager.Get() : nullptr;
-	if (!Camera)
-	{
-		return nullptr;
-	}
-	const FVector Eye = Camera->GetCameraLocation();
-	FHitResult Hit;
-	FCollisionQueryParams Params(SCENE_QUERY_STAT(RobberLookOutline), false, LocalPlayer->GetPawn());
-	if (!GetWorld()->LineTraceSingleByChannel(Hit, Eye, Eye + Camera->GetCameraRotation().Vector() * Reach, ECC_Visibility, Params))
-	{
-		return nullptr;
-	}
-	ARobberInteractable* Prop = Cast<ARobberInteractable>(Hit.GetActor());
-	// An empty prompt means pressing it would do nothing now (wrong stage, key taken), so it shouldn't light up.
-	return Prop && !Prop->OutlinesItself() && !Prop->GetInteractPrompt().IsEmpty() ? Prop : nullptr;
-}
-
-void URobberLookOutlineSubsystem::SetOutline(bool bOn)
-{
-	TArray<TWeakObjectPtr<UPrimitiveComponent>> Now;
-	if (bOn && Outlined.IsValid())
-	{
-		// Every visible part, not just Mesh: doors, valves and cases are several pieces. Text and widgets would draw a box.
-		for (UActorComponent* Component : Outlined->GetComponents())
-		{
-			UPrimitiveComponent* Part = Cast<UPrimitiveComponent>(Component);
-			if (Part && Part->IsRegistered() && Part->IsVisible() && !Part->bHiddenInGame
-				&& !Part->IsA<UTextRenderComponent>() && !Part->IsA<UWidgetComponent>())
-			{
-				Now.Add(Part);
-			}
-		}
-	}
-	for (const TWeakObjectPtr<UPrimitiveComponent>& Part : Parts)
-	{
-		if (Part.IsValid() && !Now.Contains(Part))
-		{
-			Part->SetRenderCustomDepth(false);
-		}
-	}
-	// Set every frame, not just on change: BPC_Interaction's trace clears Mesh on any non-BP_InteractMaster it hits.
-	for (const TWeakObjectPtr<UPrimitiveComponent>& Part : Now)
-	{
-		Part->SetRenderCustomDepth(true);
-	}
-	Parts = MoveTemp(Now);
-}
-
-void URobberLookOutlineSubsystem::Tick(float DeltaTime)
-{
-	ARobberInteractable* Target = FindTarget();
-	if (Target != Outlined.Get())
-	{
-		SetOutline(false);
-		Outlined = Target;
-	}
-	SetOutline(Target != nullptr);
-}
