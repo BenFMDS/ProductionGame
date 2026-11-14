@@ -13,6 +13,7 @@
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/PlayerState.h"
 #include "Heist/RobberEntryPoint.h"
+#include "Heist/RobberFocus.h"
 #include "Heist/RobberHighlight.h"
 #include "Heist/RobberStage.h"
 #include "Materials/MaterialInstanceDynamic.h"
@@ -232,17 +233,10 @@ void ARobberMapTable::UpdateHover(APlayerController* LocalPlayer)
 		// Leaning in: whatever is under the mouse cursor.
 		Hit = Robber->GetMapPieceUnderCursor();
 	}
-	// Standing: the same crosshair trace as BPC_Interaction, which only outlines BP_InteractMaster children.
-	else if (const APlayerCameraManager* Camera = LocalPlayer->PlayerCameraManager;
-		Camera && FVector::Dist(Camera->GetCameraLocation(), GetActorLocation()) < 600.)
+	// Standing: whatever the crosshair is on, from the same focus trace the outline uses.
+	else if (const URobberFocusComponent* Focus = URobberFocusComponent::For(LocalPlayer))
 	{
-		const FVector Start = Camera->GetCameraLocation();
-		FCollisionQueryParams Params(SCENE_QUERY_STAT(MapTableHover), false, LocalPlayer->GetPawn());
-		FHitResult Result;
-		if (GetWorld()->LineTraceSingleByChannel(Result, Start, Start + Camera->GetCameraRotation().Vector() * 300., ECC_Visibility, Params))
-		{
-			Hit = Cast<ARobberMapObject>(Result.GetActor());
-		}
+		Hit = Cast<ARobberMapObject>(Focus->GetHitActor());
 	}
 	if (Hit != HoveredPiece)
 	{

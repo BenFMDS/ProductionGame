@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
+#include "Heist/RobberFocus.h"
 #include "Subsystems/WorldSubsystem.h"
 #include "RobberHighlight.generated.h"
 
@@ -23,7 +24,7 @@ enum class ERobberHighlightMode : uint8
 /**
  * The red outline on a prop: custom depth on its visible parts, which M_HoverOutline on the player camera draws red.
  * Local only, each machine lights what its own player sees. URobberHighlightSubsystem drives every one of these
- * once a frame from a single look trace, so two pieces of code can't fight over the same outline.
+ * once a frame from the player's URobberFocusComponent, so two pieces of code can't fight over the same outline.
  */
 UCLASS(ClassGroup = (Robber), meta = (BlueprintSpawnableComponent))
 class PRODUCTIONGAME_API URobberHighlightComponent : public UActorComponent
@@ -50,8 +51,8 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Robber|Highlight")
 	bool IsHighlighted() const { return bHighlighted; }
 
-	/** BPC_Interaction's trace length, which OnLook uses too. */
-	static constexpr double Reach = 300.;
+	/** How far OnLook reaches: the focus trace's length. */
+	static constexpr double Reach = URobberFocusComponent::Reach;
 
 	/** True when Target is within Range of Viewer's camera with nothing in the way. */
 	static bool IsInClearView(const AActor* Target, const APlayerController* Viewer, double Range);
@@ -74,8 +75,8 @@ private:
 };
 
 /**
- * Drives every URobberHighlightComponent in the world: one Visibility trace from this machine's camera per frame
- * finds the OnLook target, InRange ones check their own distance. Game worlds only.
+ * Drives every URobberHighlightComponent in the world: OnLook ones light when they're the local player's
+ * URobberFocusComponent target, InRange ones check their own distance. Game worlds only.
  */
 UCLASS()
 class PRODUCTIONGAME_API URobberHighlightSubsystem : public UTickableWorldSubsystem
@@ -97,8 +98,6 @@ public:
 	static bool IsUsable(const AActor* Actor);
 
 private:
-	AActor* FindLookTarget(const APlayerController* LocalPlayer) const;
-
 	TArray<TWeakObjectPtr<URobberHighlightComponent>> Components;
 	TWeakObjectPtr<AActor> LookTarget;
 };

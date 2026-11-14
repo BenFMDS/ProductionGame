@@ -7,6 +7,7 @@
 #include "Dialogue/QuestDialogueCharacter.h"
 #include "Engine/World.h"
 #include "GameFramework/PlayerController.h"
+#include "Heist/RobberFocus.h"
 #include "Heist/RobberInteractables.h"
 #include "Robber/RobberGameState.h"
 
@@ -123,38 +124,24 @@ bool URobberHighlightSubsystem::ShouldCreateSubsystem(UObject* Outer) const
 
 bool URobberHighlightSubsystem::IsUsable(const AActor* Actor)
 {
-	const URobberInteractComponent* Interact = URobberInteractComponent::Of(Actor);
-	return !Interact || !Interact->GetPrompt().IsEmpty();
-}
-
-AActor* URobberHighlightSubsystem::FindLookTarget(const APlayerController* LocalPlayer) const
-{
-	const APlayerCameraManager* Camera = LocalPlayer ? LocalPlayer->PlayerCameraManager.Get() : nullptr;
-	if (!Camera)
-	{
-		return nullptr;
-	}
-	const FVector Eye = Camera->GetCameraLocation();
-	FHitResult Hit;
-	FCollisionQueryParams Params(SCENE_QUERY_STAT(RobberLookHighlight), false, LocalPlayer->GetPawn());
-	if (!GetWorld()->LineTraceSingleByChannel(Hit, Eye, Eye + Camera->GetCameraRotation().Vector() * URobberHighlightComponent::Reach, ECC_Visibility, Params))
-	{
-		return nullptr;
-	}
-	AActor* Actor = Hit.GetActor();
-	const URobberHighlightComponent* Highlight = Actor ? Actor->FindComponentByClass<URobberHighlightComponent>() : nullptr;
-	return Highlight && Highlight->Mode == ERobberHighlightMode::OnLook && IsUsable(Actor) ? Actor : nullptr;
+	return URobberFocusComponent::IsUsable(Actor);
 }
 
 void URobberHighlightSubsystem::Tick(float DeltaTime)
 {
 	// The local player's own view: a dedicated server has none and lights nothing.
-	const APlayerController* LocalPlayer = GetWorld()->GetFirstPlayerController();
+	APlayerController* LocalPlayer = GetWorld()->GetFirstPlayerController();
 	if (LocalPlayer && !LocalPlayer->IsLocalController())
 	{
 		LocalPlayer = nullptr;
 	}
-	AActor* Target = FindLookTarget(LocalPlayer);
+	const URobberFocusComponent* Focus = URobberFocusComponent::For(LocalPlayer);
+	AActor* Target = Focus ? Focus->GetTarget() : nullptr;
+	const URobberHighlightComponent* TargetHighlight = Target ? Target->FindComponentByClass<URobberHighlightComponent>() : nullptr;
+	if (!TargetHighlight || TargetHighlight->Mode != ERobberHighlightMode::OnLook)
+	{
+		Target = nullptr;
+	}
 	LookTarget = Target;
 
 	Components.RemoveAll([](const TWeakObjectPtr<URobberHighlightComponent>& Each) { return !Each.IsValid(); });
