@@ -33,6 +33,11 @@ ARobberEntryPoint::ARobberEntryPoint()
 	EditorLabel->SetHiddenInGame(true);
 }
 
+FText ARobberEntryPoint::ComingInAlphaText()
+{
+	return NSLOCTEXT("RobberEntry", "ComingInAlpha", "Coming in Alpha");
+}
+
 FTransform ARobberEntryPoint::GetSpawnTransform(int32 PlayerIndex) const
 {
 	const FVector Offset = SpawnOffsets.Num() > 0 ? SpawnOffsets[PlayerIndex % SpawnOffsets.Num()] : FVector::ZeroVector;

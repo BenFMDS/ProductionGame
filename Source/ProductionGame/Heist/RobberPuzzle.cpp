@@ -8,8 +8,12 @@
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/PlayerState.h"
+#include "EngineUtils.h"
 #include "Heist/RobberJournal.h"
+#include "Kismet/GameplayStatics.h"
 #include "Net/UnrealNetwork.h"
+#include "Sound/SoundBase.h"
+#include "TimerManager.h"
 #include "Robber/RobberController.h"
 #include "Robber/RobberGameState.h"
 #include "UObject/ConstructorHelpers.h"
@@ -161,7 +165,7 @@ void URobberPuzzleComponent::BeginPlay()
 	{
 		for (const AActor* Target : SolveTargets)
 		{
-			if (Target && !Target->GetClass()->ImplementsInterface(Interface))
+			if (Target && !Target->GetClass()->ImplementsInterface(Interface) && !Target->IsA<ARobberLockedDoor>())
 			{
 				UE_LOG(LogRobberPuzzle, Warning, TEXT("%s: Solve Target %s doesn't implement BPI_PuzzleSolver, so solving won't reach it."), *Owner->GetName(), *Target->GetName());
 			}
@@ -191,6 +195,13 @@ void URobberPuzzleComponent::Solve(APawn* SolvedBy)
 	{
 		if (!IsValid(Target))
 		{
+			continue;
+		}
+		// The greybox's key doors are C++ (no Blueprint graph to hang the interface on), so they're opened directly.
+		if (ARobberLockedDoor* Door = Cast<ARobberLockedDoor>(Target))
+		{
+			Door->OpenFromPuzzle();
+			OnTargetCalled.Broadcast(this, Target);
 			continue;
 		}
 		UFunction* Function = Interface && Target->GetClass()->ImplementsInterface(Interface) ? Target->FindFunction(OnPuzzleSolvedName) : nullptr;
@@ -357,6 +368,111 @@ void URobberPuzzleComponent::SubmitCode(AActor* Lock, int32 TypedNumber, int32 D
 	}
 	// The screen builds the code as a number, which drops leading zeros; the digit count puts them back.
 	Controller->ServerSubmitPuzzleCode(Lock, FString::Printf(TEXT("%0*d"), FMath::Clamp(Digits, 1, 9), TypedNumber));
+}
+
+// --- Lock picker ---
+
+URobberPuzzleComponent* URobberPuzzleComponent::FindPickableLock(const APawn* Picker)
+{
+	UWorld* World = Picker ? Picker->GetWorld() : nullptr;
+	if (!World)
+	{
+		return nullptr;
+	}
+	// Nearest unsolved code lock within code-typing reach, and not behind the picker.
+	URobberPuzzleComponent* Best = nullptr;
+	double BestDistance = RobberPuzzle::MaxCodeDistance;
+	const FVector From = Picker->GetActorLocation();
+	const FVector Facing = Picker->GetActorForwardVector().GetSafeNormal2D();
+	for (TActorIterator<AActor> It(World); It; ++It)
+	{
+		URobberPuzzleComponent* Puzzle = IsValid(*It) ? It->FindComponentByClass<URobberPuzzleComponent>() : nullptr;
+		if (!Puzzle || Puzzle->PuzzleType != ERobberPuzzleType::CodeLock || Puzzle->IsSolved())
+		{
+			continue;
+		}
+		const FVector To = It->GetActorLocation() - From;
+		const double Distance = To.Size();
+		if (Distance < BestDistance && FVector::DotProduct(To.GetSafeNormal2D(), Facing) > 0.)
+		{
+			Best = Puzzle;
+			BestDistance = Distance;
+		}
+	}
+	return Best;
+}
+
+void URobberPuzzleComponent::StartLockPick(AActor* Tool)
+{
+	if (!Tool || !Tool->HasAuthority())
+	{
+		return;
+	}
+	// BP_Holdable keeps its holder in HeldBy.
+	APawn* Holder = Cast<APawn>(RobberPuzzle::ObjectVar(Tool, TEXT("HeldBy")));
+	URobberPuzzleComponent* Lock = FindPickableLock(Holder);
+	if (!Lock)
+	{
+		ARobberController::Tell(Holder, NSLOCTEXT("RobberPuzzle", "NothingToPick", "Nothing to pick here. Stand at a keypad."));
+		return;
+	}
+	if (Lock->PickTimer.IsValid())
+	{
+		ARobberController::Tell(Holder, NSLOCTEXT("RobberPuzzle", "AlreadyPicking", "Someone's already picking that one."));
+		return;
+	}
+	Lock->Picker = Holder;
+	Lock->PickTool = Tool;
+	Lock->GetWorld()->GetTimerManager().SetTimer(Lock->PickTimer, Lock, &URobberPuzzleComponent::FinishPick, FMath::Max(Lock->PickSeconds, 0.01f), false);
+	ARobberController::Tell(Holder, FText::Format(NSLOCTEXT("RobberPuzzle", "Picking", "Picking the lock... stay put for {0} seconds."), FText::AsNumber(FMath::RoundToInt(Lock->PickSeconds))));
+}
+
+float URobberPuzzleComponent::GetPickTimeLeft() const
+{
+	const UWorld* World = GetWorld();
+	return World && PickTimer.IsValid() ? World->GetTimerManager().GetTimerRemaining(PickTimer) : 0.f;
+}
+
+void URobberPuzzleComponent::FinishPick()
+{
+	PickTimer.Invalidate();
+	APawn* Holder = Picker.Get();
+	AActor* Tool = PickTool.Get();
+	Picker.Reset();
+	PickTool.Reset();
+	// Walked off, dropped the pick, or someone typed the code meanwhile.
+	const bool bStillThere = Holder && Tool && RobberPuzzle::ObjectVar(Tool, TEXT("HeldBy")) == Holder
+		&& FVector::Dist(Holder->GetActorLocation(), GetOwner()->GetActorLocation()) <= RobberPuzzle::MaxCodeDistance;
+	if (IsSolved() || !bStillThere)
+	{
+		if (Holder && !IsSolved())
+		{
+			ARobberController::Tell(Holder, NSLOCTEXT("RobberPuzzle", "PickLost", "You moved. The pins dropped back. Start again."));
+		}
+		return;
+	}
+	Solve(Holder);
+	if (ARobberGameState* State = GetWorld()->GetGameState<ARobberGameState>())
+	{
+		State->AddHeat(PickHeat, TEXT("LockPick"));
+	}
+	// Reece's noise maker sound: the pick isn't quiet. Only its sound is borrowed, not the tool.
+	static TWeakObjectPtr<USoundBase> Racket;
+	if (!Racket.IsValid())
+	{
+		const UClass* NoiseMaker = LoadClass<AActor>(nullptr, TEXT("/Game/OurStuff/Blueprints/Tools/NoiseMaker/BP__SoundPlayer.BP__SoundPlayer_C"));
+		Racket = NoiseMaker ? Cast<USoundBase>(RobberPuzzle::ObjectVar(NoiseMaker->GetDefaultObject(), TEXT("Sound"))) : nullptr;
+	}
+	MulticastPickNoise(Racket.Get(), GetOwner()->GetActorLocation());
+	ARobberController::Tell(Holder, NSLOCTEXT("RobberPuzzle", "Picked", "Click. It's open. That was not quiet."));
+}
+
+void URobberPuzzleComponent::MulticastPickNoise_Implementation(USoundBase* Sound, FVector At)
+{
+	if (Sound && GetNetMode() != NM_DedicatedServer)
+	{
+		UGameplayStatics::PlaySoundAtLocation(this, Sound, At);
+	}
 }
 
 void ARobberController::ServerSubmitPuzzleCode_Implementation(AActor* Lock, const FString& Typed)

@@ -1,6 +1,8 @@
 #include "Heist/RobberDevMenu.h"
 
 #include "EngineUtils.h"
+#include "Components/CapsuleComponent.h"
+#include "GameFramework/Character.h"
 #include "Heist/RobberExhibitTalk.h"
 #include "ProductionGameCharacter.h"
 
@@ -278,7 +280,9 @@ namespace RobberDevTools
 				Journal->LearnVaultDigit(*Door, INVTEXT("Dev menu"), Index, Code[Index], ARobberVaultDoor::CodeLength);
 			}
 		}
-		return FText::Format(INVTEXT("Vault code: {0} (in your journal)"), FText::FromString(FString::JoinBy(Code, TEXT(" "), [](int32 Digit) { return FString::FromInt(Digit); })));
+		// Dialled in through the dials, so the job, crew message and achievement happen as in play.
+		Door->DialInCode();
+		return FText::Format(INVTEXT("Vault code: {0}. Vault open."), FText::FromString(FString::JoinBy(Code, TEXT(" "), [](int32 Digit) { return FString::FromInt(Digit); })));
 	}
 
 	/** Every key the loaded night asks for or hands out, including ones with no pickup. */
@@ -300,6 +304,58 @@ namespace RobberDevTools
 			Quests->GiveKey(Key);
 		}
 		return FText::Format(INVTEXT("Gave you {0} key(s)."), Keys.Num());
+	}
+
+	/**
+	 * Where to put the pawn so it can talk to Target: on a floor near it, with room for the capsule and nothing between
+	 * the eyes and the target (CanReach's rule). Exhibits hang on walls, so a fixed spot "in front" lands behind the
+	 * wall or in a prop half the time. Tries the facing first, then round the clock, near before far.
+	 */
+	bool FindTalkSpot(const APawn* Pawn, const AActor* Target, FVector& OutLocation, FRotator& OutFacing)
+	{
+		UWorld* World = Target->GetWorld();
+		const ACharacter* Character = Cast<ACharacter>(Pawn);
+		const UCapsuleComponent* Capsule = Character ? Character->GetCapsuleComponent() : nullptr;
+		const float Radius = Capsule ? Capsule->GetScaledCapsuleRadius() : 40.f;
+		const float HalfHeight = Capsule ? Capsule->GetScaledCapsuleHalfHeight() : 90.f;
+		const float EyeHeight = Pawn->BaseEyeHeight + HalfHeight;
+		const FVector Aim = Target->GetActorLocation();
+		FCollisionQueryParams Params(SCENE_QUERY_STAT(DevFindSpot), false);
+		Params.AddIgnoredActor(Pawn);
+		Params.AddIgnoredActor(Target);
+
+		const FVector Forward = Target->GetActorForwardVector().GetSafeNormal2D();
+		for (const float Distance : { 170.f, 240.f, 320.f })
+		{
+			for (int32 Step = 0; Step < 12; ++Step)
+			{
+				// 0, +30, -30, +60, -60 ... so the exhibit's own facing wins when it's free.
+				const float Angle = (Step + 1) / 2 * 30.f * (Step % 2 ? 1.f : -1.f);
+				const FVector Out = Forward.RotateAngleAxis(Angle, FVector::UpVector) * Distance;
+				// The floor under that spot, no more than a storey below the target, never above it.
+				FHitResult Floor;
+				const FVector Top = FVector(Aim.X + Out.X, Aim.Y + Out.Y, Aim.Z + 50.f);
+				if (!World->LineTraceSingleByChannel(Floor, Top, Top - FVector(0, 0, 450.f), ECC_Visibility, Params))
+				{
+					continue;
+				}
+				const FVector Feet = Floor.ImpactPoint + FVector(0, 0, 2.f);
+				const FVector Centre = Feet + FVector(0, 0, HalfHeight);
+				if (World->OverlapBlockingTestByChannel(Centre, FQuat::Identity, ECC_Pawn, FCollisionShape::MakeCapsule(Radius, HalfHeight), Params))
+				{
+					continue;
+				}
+				FHitResult Blocked;
+				if (World->LineTraceSingleByChannel(Blocked, Feet + FVector(0, 0, EyeHeight), Aim, ECC_Visibility, Params))
+				{
+					continue;
+				}
+				OutLocation = Centre;
+				OutFacing = (Aim - (Feet + FVector(0, 0, EyeHeight))).Rotation();
+				return true;
+			}
+		}
+		return false;
 	}
 }
 #endif
@@ -393,14 +449,18 @@ void ARobberController::ServerDevAction_Implementation(ERobberDevAction Action, 
 	case ERobberDevAction::FindExhibit:
 	{
 		AActor* Target = DevFindTargets.IsValidIndex(Value) ? DevFindTargets[Value].Get() : nullptr;
-		if (Target && GetPawn())
+		FVector Stand;
+		FRotator Facing;
+		if (Target && GetPawn() && RobberDevTools::FindTalkSpot(GetPawn(), Target, Stand, Facing))
 		{
-			// In front of them, facing them: where the player has to stand to talk anyway.
-			const FVector Stand = Target->GetActorLocation() + Target->GetActorForwardVector() * 170.;
-			GetPawn()->TeleportTo(Stand, GetPawn()->GetActorRotation());
-			SetControlRotation((Target->GetActorLocation() - Stand).Rotation());
-			ClientSetRotation((Target->GetActorLocation() - Stand).Rotation());
+			GetPawn()->TeleportTo(Stand, FRotator(0, Facing.Yaw, 0), false, true);
+			SetControlRotation(Facing);
+			ClientSetRotation(Facing);
 			Result = INVTEXT("Teleported.");
+		}
+		else if (Target)
+		{
+			Result = INVTEXT("No free spot to stand next to them.");
 		}
 		break;
 	}

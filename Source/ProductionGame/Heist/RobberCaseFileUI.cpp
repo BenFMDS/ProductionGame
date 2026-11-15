@@ -318,6 +318,9 @@ namespace
 	const FLinearColor StoryRed(FColor(0xc0, 0x39, 0x2b));
 	const FLinearColor StoryGreen(FColor(0x2f, 0x9e, 0x44));
 	const FLinearColor StoryPaper(FColor(0xfd, 0xf6, 0xe3));
+	const FLinearColor StoryMint(FColor(0xd8, 0xf0, 0xc8));
+	/** Past this the oldest finished side jobs fall off the note. */
+	constexpr int32 MaxSideJobs = 6;
 
 	/** Sizes here are the mock-up's pixels at 1080p; a UMG font size is in points. */
 	FSlateFontInfo StoryFont(const TCHAR* Name, float Pixels, FName Typeface = TEXT("Regular"))
@@ -445,7 +448,7 @@ FRobberStoryRowUI URobberCaseFileHUD::MakeStoryRow(const FSlateFontInfo& Font)
 	return Ui;
 }
 
-FRobberStoryNoteUI URobberCaseFileHUD::MakeStoryNote(const FLinearColor& Paper, int32 RowCount, float Width)
+FRobberStoryNoteUI URobberCaseFileHUD::MakeStoryNote(const FLinearColor& Paper, int32 RowCount, float Width, UWidget* Tucked)
 {
 	FRobberStoryNoteUI Ui;
 	const FSlateFontInfo RowFont = StoryFont(TEXT("F_PatrickHand"), 21.f);
@@ -464,6 +467,12 @@ FRobberStoryNoteUI URobberCaseFileHUD::MakeStoryNote(const FLinearColor& Paper, 
 		RowSlot->SetHorizontalAlignment(HAlign_Fill);
 		RowSlot->SetPadding(FMargin(0.f, 2.f));
 		Ui.Rows.Add(Row);
+	}
+	if (Tucked)
+	{
+		UVerticalBoxSlot* TuckedSlot = Column->AddChildToVerticalBox(Tucked);
+		TuckedSlot->SetHorizontalAlignment(HAlign_Fill);
+		TuckedSlot->SetPadding(FMargin(0.f, 4.f, 0.f, 2.f));
 	}
 	Ui.Footer = StoryLabel(WidgetTree, StoryFont(TEXT("F_PatrickHand"), 19.f), StoryInk);
 	UVerticalBox* FooterStack = WidgetTree->ConstructWidget<UVerticalBox>();
@@ -500,17 +509,109 @@ FRobberStoryNoteUI URobberCaseFileHUD::MakeStoryNote(const FLinearColor& Paper, 
 	return Ui;
 }
 
+FRobberStoryNoteUI URobberCaseFileHUD::MakeStorySlip(int32 RowCount)
+{
+	FRobberStoryNoteUI Ui;
+	const FSlateFontInfo RowFont = StoryFont(TEXT("F_PatrickHand"), 19.f);
+
+	UVerticalBox* Column = WidgetTree->ConstructWidget<UVerticalBox>();
+	Ui.Title = StoryLabel(WidgetTree, StoryFont(TEXT("F_PatrickHand"), 23.f), StoryInk);
+	Ui.Title->SetAutoWrapText(true);
+	Column->AddChildToVerticalBox(Ui.Title);
+	for (int32 Index = 0; Index < RowCount; ++Index)
+	{
+		FRobberStoryRowUI Row = MakeStoryRow(RowFont);
+		UVerticalBoxSlot* RowSlot = Column->AddChildToVerticalBox(Row.Row);
+		RowSlot->SetHorizontalAlignment(HAlign_Fill);
+		RowSlot->SetPadding(FMargin(0.f, 1.f));
+		Ui.Rows.Add(Row);
+	}
+
+	UBorder* Face = StoryBox(WidgetTree, StoryMint, FMargin(8.f, 4.f, 8.f, 6.f), Column);
+	UBorder* Ink = StoryBox(WidgetTree, StoryInk, FMargin(2.f), Face);
+	UOverlay* Stack = WidgetTree->ConstructWidget<UOverlay>();
+	UImage* Shadow = StorySolid(WidgetTree, StoryInk);
+	Shadow->SetRenderTranslation(FVector2D(3., 3.));
+	StoryFill(Stack, Shadow);
+	StoryFill(Stack, Ink);
+	Stack->SetRenderTransformPivot(FVector2D(0.5f, 0.5f));
+	Stack->SetRenderTransformAngle(-1.4f);
+
+	// A drawn hook off the step list, so the slip reads as part of the quest above it.
+	UCanvasPanel* Hook = WidgetTree->ConstructWidget<UCanvasPanel>();
+	const struct { FVector2D Where; FVector2D Size; } Strokes[] = {
+		{ FVector2D(5., 0.), FVector2D(2., 14.) },
+		{ FVector2D(5., 12.), FVector2D(10., 2.) },
+	};
+	for (const auto& Stroke : Strokes)
+	{
+		UCanvasPanelSlot* BarSlot = Hook->AddChildToCanvas(StorySolid(WidgetTree, StoryInk));
+		BarSlot->SetPosition(Stroke.Where);
+		BarSlot->SetSize(Stroke.Size);
+	}
+	UHorizontalBox* Hooked = WidgetTree->ConstructWidget<UHorizontalBox>();
+	Hooked->AddChildToHorizontalBox(StorySized(WidgetTree, Hook, 18.f, 16.f))->SetVerticalAlignment(VAlign_Top);
+	Hooked->AddChildToHorizontalBox(Stack)->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+	Ui.Root = Hooked;
+	return Ui;
+}
+
+FRobberSideJobUI URobberCaseFileHUD::MakeSideJob()
+{
+	FRobberSideJobUI Ui;
+	UVerticalBox* Entry = WidgetTree->ConstructWidget<UVerticalBox>();
+
+	UHorizontalBox* NameRow = WidgetTree->ConstructWidget<UHorizontalBox>();
+	UOverlay* NameStack = WidgetTree->ConstructWidget<UOverlay>();
+	Ui.Name = StoryLabel(WidgetTree, StoryFont(TEXT("F_PatrickHand"), 23.f), StoryInk);
+	Ui.Name->SetAutoWrapText(true);
+	StoryFill(NameStack, Ui.Name);
+	USizeBox* Strike = StoryRule(WidgetTree, StoryDone, 2.f);
+	UOverlaySlot* StrikeSlot = NameStack->AddChildToOverlay(Strike);
+	StrikeSlot->SetHorizontalAlignment(HAlign_Fill);
+	StrikeSlot->SetVerticalAlignment(VAlign_Center);
+	Ui.NameStrike = Strike;
+	NameRow->AddChildToHorizontalBox(NameStack)->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+	Ui.Tag = StoryLabel(WidgetTree, StoryFont(TEXT("F_PatrickHand"), 17.f), StoryRed);
+	Ui.Tag->SetText(NSLOCTEXT("RobberCaseFile", "HandIn", "hand in!"));
+	UHorizontalBoxSlot* TagSlot = NameRow->AddChildToHorizontalBox(Ui.Tag);
+	TagSlot->SetVerticalAlignment(VAlign_Center);
+	TagSlot->SetPadding(FMargin(6.f, 0.f, 0.f, 0.f));
+	Entry->AddChildToVerticalBox(NameRow)->SetHorizontalAlignment(HAlign_Fill);
+
+	Ui.Row = MakeStoryRow(StoryFont(TEXT("F_PatrickHand"), 19.f));
+	Entry->AddChildToVerticalBox(Ui.Row.Row)->SetHorizontalAlignment(HAlign_Fill);
+
+	Entry->SetRenderTransformPivot(FVector2D(0.f, 0.5f));
+	Ui.Root = Entry;
+	return Ui;
+}
+
 void URobberCaseFileHUD::BuildStoryWidgets(UCanvasPanel* Root)
 {
-	StoryNoteUi = MakeStoryNote(FLinearColor(FColor(0xff, 0xe9, 0x8a)), 3, 244.f);
-	StoryErrandUi = MakeStoryNote(FLinearColor(FColor(0xd8, 0xf0, 0xc8)), 3, 244.f);
+	StoryErrandUi = MakeStorySlip(3);
+	StoryNoteUi = MakeStoryNote(FLinearColor(FColor(0xff, 0xe9, 0x8a)), 3, 244.f, StoryErrandUi.Root);
+
+	UVerticalBox* JobList = WidgetTree->ConstructWidget<UVerticalBox>();
+	for (int32 Index = 0; Index < MaxSideJobs; ++Index)
+	{
+		FRobberSideJobUI Job = MakeSideJob();
+		UVerticalBoxSlot* JobSlot = JobList->AddChildToVerticalBox(Job.Root);
+		JobSlot->SetHorizontalAlignment(HAlign_Fill);
+		JobSlot->SetPadding(FMargin(0.f, 0.f, 0.f, 6.f));
+		Show(Job.Root, false);
+		SideJobs.Add(Job);
+	}
+	SideNoteUi = MakeStoryNote(StoryMint, 0, 244.f, JobList);
+	FillStoryNote(SideNoteUi, NSLOCTEXT("RobberCaseFile", "SideJobs", "Side jobs"), {}, FText::GetEmpty());
 
 	UVerticalBox* Column = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("StoryColumn"));
 	Column->SetVisibility(ESlateVisibility::HitTestInvisible);
 	Column->AddChildToVerticalBox(StoryNoteUi.Root)->SetHorizontalAlignment(HAlign_Left);
-	UVerticalBoxSlot* ErrandSlot = Column->AddChildToVerticalBox(StoryErrandUi.Root);
-	ErrandSlot->SetHorizontalAlignment(HAlign_Left);
-	ErrandSlot->SetPadding(FMargin(6.f, 0.f, 0.f, 0.f));
+	UVerticalBoxSlot* SideSlot = Column->AddChildToVerticalBox(SideNoteUi.Root);
+	SideSlot->SetHorizontalAlignment(HAlign_Left);
+	// Room for its pin, which would otherwise cover the end of the story note's footer.
+	SideSlot->SetPadding(FMargin(6.f, 14.f, 0.f, 0.f));
 	Column->SetRenderTransformPivot(FVector2D(0.f, 0.f));
 	Column->SetRenderScale(FVector2D(StoryScale));
 	UCanvasPanelSlot* ColumnSlot = Root->AddChildToCanvas(Column);
@@ -519,8 +620,9 @@ void URobberCaseFileHUD::BuildStoryWidgets(UCanvasPanel* Root)
 	StoryColumn = Column;
 
 	StoryNoteUi.Root->SetRenderTransformAngle(1.6f);
-	StoryErrandUi.Root->SetRenderTransformAngle(-1.2f);
-	Show(StoryColumn, false);
+	SideNoteUi.Root->SetRenderTransformAngle(-1.2f);
+	Show(StoryNoteUi.Root, false);
+	Show(SideNoteUi.Root, false);
 
 	// The stamp: a double ring of ink round a paper card.
 	UVerticalBox* StampText = WidgetTree->ConstructWidget<UVerticalBox>();
@@ -842,12 +944,14 @@ void URobberCaseFileHUD::UpdateStory(float DeltaTime)
 	const FRobberStoryNote& Note = Quests->StoryNote;
 	const bool bHeldBack = StampClock >= 0.f && !bStampComplete;
 	const bool bWanted = Note.bShown && !bHeldBack;
+	// Only the story note drops, so the side note under it stays put.
+	UWidget* StoryRoot = StoryNoteUi.Root;
 	if (bWanted)
 	{
 		NoteDropClock = -1.f;
-		StoryColumn->SetRenderOpacity(1.f);
-		StoryColumn->SetRenderTranslation(FVector2D::ZeroVector);
-		StoryColumn->SetRenderTransformAngle(0.f);
+		StoryRoot->SetRenderOpacity(1.f);
+		StoryRoot->SetRenderTranslation(FVector2D::ZeroVector);
+		StoryRoot->SetRenderTransformAngle(1.6f);
 		FillStoryNote(StoryNoteUi, Note.Title, Note.Lines, Note.Footer);
 		const bool bErrand = !Note.ErrandTitle.IsEmpty();
 		Show(StoryErrandUi.Root, bErrand);
@@ -855,7 +959,7 @@ void URobberCaseFileHUD::UpdateStory(float DeltaTime)
 		{
 			FillStoryNote(StoryErrandUi, Note.ErrandTitle, Note.ErrandLines, FText::GetEmpty());
 		}
-		Show(StoryColumn, true);
+		Show(StoryRoot, true);
 		bStoryNoteUp = true;
 	}
 	else if (bStoryNoteUp && !Note.bShown)
@@ -865,7 +969,7 @@ void URobberCaseFileHUD::UpdateStory(float DeltaTime)
 	}
 	else if (!bStoryNoteUp && NoteDropClock < 0.f)
 	{
-		Show(StoryColumn, false);
+		Show(StoryRoot, false);
 	}
 	if (NotePopClock >= 0.f)
 	{
@@ -882,15 +986,105 @@ void URobberCaseFileHUD::UpdateStory(float DeltaTime)
 		NoteDropClock += DeltaTime;
 		const float Alpha = FMath::Clamp(NoteDropClock / 0.65f, 0.f, 1.f);
 		const float Eased = Alpha * Alpha;
-		StoryColumn->SetRenderTranslation(FVector2D(0., 240. * Eased));
-		StoryColumn->SetRenderTransformAngle(18.f * Eased);
-		StoryColumn->SetRenderOpacity(1.f - Alpha);
+		StoryRoot->SetRenderTranslation(FVector2D(0., 240. * Eased));
+		StoryRoot->SetRenderTransformAngle(1.6f + 18.f * Eased);
+		StoryRoot->SetRenderOpacity(1.f - Alpha);
 		if (Alpha >= 1.f)
 		{
 			NoteDropClock = -1.f;
-			Show(StoryColumn, false);
+			Show(StoryRoot, false);
 		}
 	}
+
+	UpdateSideJobs(Quests->Quests, DeltaTime);
+}
+
+void URobberCaseFileHUD::UpdateSideJobs(const TArray<FPlayerQuest>& Quests, float DeltaTime)
+{
+	// Exhibit quests only: the story quest has its own note and no QuestID.
+	TArray<int32> Order;
+	for (int32 Index = 0; Index < Quests.Num(); ++Index)
+	{
+		if (!Quests[Index].QuestID.IsNone())
+		{
+			Order.Add(Index);
+		}
+	}
+	// Ones the player can hand in now go first, then the newest; finished ones sink to the bottom.
+	auto Rank = [&Quests](int32 Index)
+	{
+		const EPlayerQuestState State = Quests[Index].State;
+		return State == EPlayerQuestState::ReadyToTurnIn ? 0 : State == EPlayerQuestState::Active ? 1 : 2;
+	};
+	Order.Sort([&Rank](int32 A, int32 B) { return Rank(A) != Rank(B) ? Rank(A) < Rank(B) : A > B; });
+
+	TSet<FName> Present;
+	for (int32 Place = 0; Place < SideJobs.Num(); ++Place)
+	{
+		FRobberSideJobUI& Job = SideJobs[Place];
+		const bool bUsed = Order.IsValidIndex(Place);
+		Show(Job.Root, bUsed);
+		if (!bUsed)
+		{
+			continue;
+		}
+		const FPlayerQuest& Quest = Quests[Order[Place]];
+		Present.Add(Quest.QuestID);
+		const bool bDone = Quest.State == EPlayerQuestState::Completed;
+		const bool bReady = Quest.State == EPlayerQuestState::ReadyToTurnIn;
+
+		// A new quest, or one that just changed state, pops so the eye catches it moving.
+		const uint8 StateByte = static_cast<uint8>(Quest.State);
+		const uint8* LastState = SideJobState.Find(Quest.QuestID);
+		float& Age = SideJobAge.FindOrAdd(Quest.QuestID, 0.f);
+		Age = LastState && *LastState == StateByte ? Age + DeltaTime : 0.f;
+		SideJobState.Add(Quest.QuestID, StateByte);
+		Job.Root->SetRenderScale(FVector2D(FMath::Lerp(1.15f, 1.f, FMath::Clamp(Age / 0.2f, 0.f, 1.f))));
+
+		SetText(Job.Name, Quest.QuestName);
+		Job.Name->SetColorAndOpacity(FSlateColor(bDone ? StoryDone : StoryInk));
+		Show(Job.NameStrike, bDone);
+		Show(Job.Tag, bReady);
+		Show(Job.Row.Row, !bDone);
+		if (bDone)
+		{
+			continue;
+		}
+		const int32 Required = FMath::Max(1, Quest.RequiredAmount);
+		const FText Line = bReady ? NSLOCTEXT("RobberCaseFile", "HandInLine", "Go back and hand it in")
+			: Required > 1 ? FText::Format(NSLOCTEXT("RobberCaseFile", "SideJobCount", "{0} ({1}/{2})"), Quest.ObjectiveText, Quest.Amount, Required)
+			: Quest.ObjectiveText;
+		SetText(Job.Row.Text, Line);
+		Job.Row.Text->SetColorAndOpacity(FSlateColor(bReady ? StoryRed : StoryInk));
+		SetText(Cast<UTextBlock>(Job.Row.Bullet), FText::FromString(bReady ? TEXT("!") : TEXT("•")));
+		Show(Job.Row.Bullet, true);
+		Show(Job.Row.Tick, false);
+		Show(Job.Row.Strike, false);
+	}
+	// Each night starts with fresh quests, so forget the old ones.
+	for (auto It = SideJobState.CreateIterator(); It; ++It)
+	{
+		if (!Present.Contains(It.Key()))
+		{
+			SideJobAge.Remove(It.Key());
+			It.RemoveCurrent();
+		}
+	}
+
+	const bool bWasShown = SideNoteUi.Root->IsVisible();
+	const bool bShown = !Order.IsEmpty();
+	Show(SideNoteUi.Root, bShown);
+
+	// Slate lays the column out after this tick, so the story note's height here is last frame's; close enough
+	// for an ease that takes a fraction of a second.
+	const float Top = StoryNoteUi.Root->IsVisible() ? StoryNoteUi.Root->GetDesiredSize().Y : 0.f;
+	if (bShown && bWasShown)
+	{
+		SideNoteShift += SideNoteTop - Top;
+	}
+	SideNoteTop = Top;
+	SideNoteShift = FMath::FInterpTo(SideNoteShift, 0.f, DeltaTime, 10.f);
+	SideNoteUi.Root->SetRenderTranslation(FVector2D(0., SideNoteShift));
 }
 
 namespace

@@ -198,6 +198,10 @@ FText ARobberVoteStation::GetPrompt(const ARobberGameState* GameState, const APl
 	{
 		return FText::GetEmpty();
 	}
+	if (Target->bComingInAlpha)
+	{
+		return ARobberEntryPoint::ComingInAlphaText();
+	}
 	return FText::Format(NSLOCTEXT("RobberLobby", "VotePrompt", "Vote: {0}"), Target->DisplayName);
 }
 
@@ -207,6 +211,10 @@ FText ARobberVoteStation::GetLabel(const ARobberGameState* GameState) const
 	if (!Target)
 	{
 		return EntryId.IsNone() ? NSLOCTEXT("RobberLobby", "NoEntry", "No entry set") : NSLOCTEXT("RobberLobby", "NotTonight", "Not tonight");
+	}
+	if (Target->bComingInAlpha)
+	{
+		return FText::Format(NSLOCTEXT("RobberLobby", "AlphaLabel", "{0}\n{1}"), Target->DisplayName, ARobberEntryPoint::ComingInAlphaText());
 	}
 	return FText::Format(NSLOCTEXT("RobberLobby", "VoteLabel", "{0}\n{1} {1}|plural(one=vote,other=votes)"), Target->DisplayName, GameState->GetVoteCount(Target));
 }
@@ -426,6 +434,17 @@ void ARobberLockedDoor::OnServerInteract(APawn* Pawn, APlayerState* Player, ARob
 	ForceNetUpdate();
 }
 
+void ARobberLockedDoor::OpenFromPuzzle()
+{
+	if (!HasAuthority() || bOpen)
+	{
+		return;
+	}
+	bOpen = true;
+	OnRep_Open();
+	ForceNetUpdate();
+}
+
 FText ARobberLockedDoor::GetPrompt(const ARobberGameState* GameState, const APlayerState* Viewer) const
 {
 	if (bOpen)
@@ -535,6 +554,30 @@ FText ARobberKeyPickup::GetLabel(const ARobberGameState* GameState) const
 
 void ARobberKeyPickup::OnRep_Taken()
 {
-	ShowPart(Mesh, !bTaken);
+	ShowTaken(bTaken);
+}
+
+void ARobberKeyPickup::ShowTaken(bool bIsTaken)
+{
+	ShowPart(Mesh, !bIsTaken);
+}
+
+ARobberLostAndFound::ARobberLostAndFound()
+{
+	Label = NSLOCTEXT("RobberLostAndFound", "Label", "LOST & FOUND");
+	KeyId = TEXT("CuratorsOffice");
+	KeyName = NSLOCTEXT("RobberLostAndFound", "KeyName", "curator's key");
+}
+
+FText ARobberLostAndFound::GetPrompt(const ARobberGameState* GameState, const APlayerState* Viewer) const
+{
+	return IsTaken() || RobberStage::IsInLobby(GameState->GetGameStage()) ? FText::GetEmpty()
+		: NSLOCTEXT("RobberLostAndFound", "Search", "Search the lost & found");
+}
+
+FText ARobberLostAndFound::GetLabel(const ARobberGameState* GameState) const
+{
+	// The coat check's wall sign over the box says LOST & FOUND; a floating label on top would only repeat it.
+	return FText::GetEmpty();
 }
 

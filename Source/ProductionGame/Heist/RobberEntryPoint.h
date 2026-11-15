@@ -42,6 +42,12 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Robber|Entry")
 	FText DisplayName = NSLOCTEXT("RobberEntry", "DefaultName", "Entry");
 
+	/** Not in this build: it can't be voted for, and its own props say "Coming in Alpha" and do nothing. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Robber|Entry")
+	bool bComingInAlpha = false;
+
+	static FText ComingInAlphaText();
+
 	/** Which lobby exit sends the crew in (ARobberLobbyExit::ExitId). None = the museum door. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Robber|Entry")
 	FName LobbyExit;

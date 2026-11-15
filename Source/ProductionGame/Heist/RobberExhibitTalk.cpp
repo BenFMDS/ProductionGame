@@ -356,8 +356,9 @@ ARobberNightDirector::ARobberNightDirector()
 	PrimaryActorTick.bCanEverTick = false;
 	RootComponent = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
 	SetActorHiddenInGame(true);
-	// The Server Room key stays a pickup in the Curator's Office, which makes the curator's key the start of a chain.
-	RequiredQuestKeys = { TEXT("GeneratorRoom"), TEXT("SecurityKeycard"), TEXT("CuratorsOffice") };
+	// The curator's key isn't a reward: it's in the coat check's lost & found, and the Server Room key is a pickup in the
+	// Curator's Office, so lost & found -> office -> server room is a chain anyone can walk.
+	RequiredQuestKeys = { TEXT("GeneratorRoom"), TEXT("SecurityKeycard") };
 	QuestTools.Add(TEXT("Crowbar"));
 }
 
@@ -636,6 +637,16 @@ bool ARobberNightDirector::DealOnce(const TArray<AActor*>& Exhibits, const TArra
 	Assignments.Reset();
 	TArray<AActor*> Shuffled = Exhibits;
 	Algo::RandomShuffle(Shuffled);
+	// A puzzle tied to an exhibit (Quest Giver) makes that exhibit a quest giver every night it's here: to the front.
+	TMap<AActor*, URobberPuzzleComponent*> BoundPuzzles;
+	for (URobberPuzzleComponent* Puzzle : LevelPuzzles)
+	{
+		if (Puzzle && !Puzzle->IsSolved() && Puzzle->QuestGiver && Shuffled.Contains(Puzzle->QuestGiver.Get()) && ExhibitTalk::ImplementsSolver(Puzzle->QuestGiver))
+		{
+			BoundPuzzles.Add(Puzzle->QuestGiver, Puzzle);
+		}
+	}
+	Algo::StableSort(Shuffled, [&BoundPuzzles](const AActor* A, const AActor* B) { return BoundPuzzles.Contains(A) && !BoundPuzzles.Contains(B); });
 	const ARobberVaultDoor* Vault = ExhibitTalk::VaultIn(this);
 
 	for (int32 Index = 0; Index < Shuffled.Num(); ++Index)
@@ -764,9 +775,14 @@ bool ARobberNightDirector::DealOnce(const TArray<AActor*>& Exhibits, const TArra
 		}
 	}
 	TArray<URobberPuzzleComponent*> FreePuzzles;
+	TSet<FName> BoundRows;
 	for (URobberPuzzleComponent* Puzzle : LevelPuzzles)
 	{
-		if (Puzzle && !Puzzle->IsSolved())
+		if (Puzzle && !Puzzle->QuestRow.IsNone())
+		{
+			BoundRows.Add(Puzzle->QuestRow);
+		}
+		if (Puzzle && !Puzzle->IsSolved() && !BoundPuzzles.FindKey(Puzzle))
 		{
 			FreePuzzles.Add(Puzzle);
 		}
@@ -775,6 +791,8 @@ bool ARobberNightDirector::DealOnce(const TArray<AActor*>& Exhibits, const TArra
 
 	// --- A template per quest, not too many of a kind, nothing twice. ---
 	auto QuestRows = ExhibitTalk::RowsOf<FRobberQuestRow>(RandomQuests);
+	// A bound puzzle's row is written for its exhibit and puzzle; nobody else is dealt it.
+	QuestRows.RemoveAll([&BoundRows](const TPair<FName, const FRobberQuestRow*>& Row) { return BoundRows.Contains(Row.Key); });
 	Algo::RandomShuffle(QuestRows);
 	auto PuzzleRows = ExhibitTalk::RowsOf<FRobberPuzzleRow>(Puzzles);
 	Algo::RandomShuffle(PuzzleRows);
@@ -789,6 +807,21 @@ bool ARobberNightDirector::DealOnce(const TArray<AActor*>& Exhibits, const TArra
 		FRobberExhibitAssignment& Each = *Givers[Index];
 		Each.Reward = Pay.IsValidIndex(Index) ? Pay[Index] : FRobberReward();
 		const FRobberQuestRow* Chosen = nullptr;
+		if (URobberPuzzleComponent* const* Bound = BoundPuzzles.Find(Each.Exhibit.Get()))
+		{
+			const FRobberQuestRow* Row = RandomQuests->FindRow<FRobberQuestRow>((*Bound)->QuestRow, TEXT("ExhibitTalk"), false);
+			if (Row && Row->Kind == ERobberQuestKind::Puzzle)
+			{
+				Each.Puzzle = *Bound;
+				Each.QuestKind = ERobberQuestKind::Puzzle;
+				Each.QuestRow = (*Bound)->QuestRow;
+				++KindCounts.FindOrAdd(ERobberQuestKind::Puzzle);
+				Chosen = Row;
+				continue;
+			}
+			UE_LOG(LogExhibitTalk, Error, TEXT("%s's Quest Row '%s' isn't a Puzzle row in DT_RandomQuests; dealt at random instead."),
+				*GetNameSafe((*Bound)->GetOwner()), *(*Bound)->QuestRow.ToString());
+		}
 		for (; NextRow < QuestRows.Num() && !Chosen; ++NextRow)
 		{
 			const auto& Row = QuestRows[NextRow];
@@ -1207,6 +1240,8 @@ FFormatNamedArguments ARobberNightDirector::SlotsFor(const FRobberExhibitAssignm
 	const ARobberRoomInfo* Room = Each.Spot ? FindRoom(Each.Spot->GetActorLocation()) : Each.Target ? FindRoom(Each.Target->GetActorLocation())
 		: Each.Puzzle ? FindRoom(Each.Puzzle->GetPuzzleLocation()) : nullptr;
 	Slots.Add(TEXT("object"), ExhibitTalk::PuzzleName(Each.Puzzle));
+	// The puzzle's answer, for a giver who just tells you (The Founder knows tonight's Staff Only code).
+	Slots.Add(TEXT("hint"), Each.Puzzle ? Each.Puzzle->GetHintText() : FText::GetEmpty());
 	Slots.Add(TEXT("room"), Room ? Room->RoomName : NSLOCTEXT("ExhibitTalk", "SomeRoom", "the museum"));
 	Slots.Add(TEXT("floor"), Room ? Room->FloorName : FText::GetEmpty());
 	return Slots;

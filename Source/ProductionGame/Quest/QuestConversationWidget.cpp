@@ -404,7 +404,8 @@ void UQuestConversationWidget::RefreshQuests()
 				FMath::Clamp(float(Quest.Amount) / Required, 0.f, 1.f), Quest.State == EPlayerQuestState::ReadyToTurnIn);
 	}
 	TrimRows(FavourList, Favours.Num());
-	SetShown(FavourCard, !Favours.IsEmpty());
+	// The Case File HUD lists these on its side jobs note.
+	SetShown(FavourCard, !Favours.IsEmpty() && !(RobberController && RobberController->GetCaseFileHUD()));
 }
 
 void UQuestConversationWidget::RefreshConversation()

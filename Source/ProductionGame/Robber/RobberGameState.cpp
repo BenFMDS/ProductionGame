@@ -387,7 +387,7 @@ bool ARobberGameState::IsPowerOn() const
 
 void ARobberGameState::CastVote(APlayerState* Voter, ARobberEntryPoint* Entry)
 {
-	if (!HasAuthority() || !Voter || !Entry || !RobberStage::IsInLobby(ReplicatedGameStage))
+	if (!HasAuthority() || !Voter || !Entry || Entry->bComingInAlpha || !RobberStage::IsInLobby(ReplicatedGameStage))
 	{
 		return;
 	}
@@ -421,7 +421,7 @@ ARobberEntryPoint* ARobberGameState::GetWinningEntry() const
 	for (const FRobberEntryVote& Vote : Votes)
 	{
 		const int32 Count = Vote.Voter ? GetVoteCount(Vote.Entry) : 0;
-		if (Vote.Entry && Count > WinnerVotes)
+		if (Vote.Entry && !Vote.Entry->bComingInAlpha && Count > WinnerVotes)
 		{
 			Winner = Vote.Entry;
 			WinnerVotes = Count;

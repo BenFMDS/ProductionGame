@@ -237,6 +237,9 @@ public:
 	bool IsOpen() const { return bOpen; }
 	bool IsInside(const APawn* Pawn) const;
 
+	/** Server: a puzzle with this door in its Solve Targets was solved (a keypad beside it). Opens without the key. */
+	void OpenFromPuzzle();
+
 	/** Seconds the leaves take to slide into the walls. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Robber|Door", meta = (ClampMin = "0"))
 	float SlideTime = 0.8f;
@@ -306,10 +309,28 @@ protected:
 	virtual FText GetPrompt(const ARobberGameState* GameState, const APlayerState* Viewer) const override;
 	virtual FText GetLabel(const ARobberGameState* GameState) const override;
 
+	/** Hides the key once someone has it. */
+	virtual void ShowTaken(bool bIsTaken);
+
 private:
 	UPROPERTY(ReplicatedUsing = OnRep_Taken)
 	bool bTaken = false;
 
 	UFUNCTION()
 	void OnRep_Taken();
+};
+
+/** The coat check's lost & found box: searching it gives the curator's key. The box stays put once it's been emptied. */
+UCLASS(Blueprintable)
+class PRODUCTIONGAME_API ARobberLostAndFound : public ARobberKeyPickup
+{
+	GENERATED_BODY()
+
+public:
+	ARobberLostAndFound();
+
+protected:
+	virtual FText GetPrompt(const ARobberGameState* GameState, const APlayerState* Viewer) const override;
+	virtual FText GetLabel(const ARobberGameState* GameState) const override;
+	virtual void ShowTaken(bool bIsTaken) override {}
 };
