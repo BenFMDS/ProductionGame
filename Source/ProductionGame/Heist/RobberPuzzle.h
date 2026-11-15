@@ -8,6 +8,7 @@
 
 class APawn;
 class ARobberKeyPickup;
+class USoundBase;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FRobberPuzzleSolvedSignature, APawn*, SolvedBy);
 
@@ -49,6 +50,25 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle")
 	TArray<int32> RequiredPlates;
 
+	/**
+	 * Set, this exhibit always gives this puzzle's quest on any night it's in the director's roster (it's made a quest
+	 * giver first), with Quest Row's lines. Empty, any exhibit can be dealt it at random.
+	 */
+	UPROPERTY(EditAnywhere, Category = "Puzzle|Quest")
+	TObjectPtr<AActor> QuestGiver;
+
+	/** DT_RandomQuests row for Quest Giver's quest. Only ever dealt with this puzzle, never at random. */
+	UPROPERTY(EditAnywhere, Category = "Puzzle|Quest")
+	FName QuestRow;
+
+	/** Code lock only: seconds Reece's lock picker takes to open it. */
+	UPROPERTY(EditAnywhere, Category = "Puzzle|Lock Picker", meta = (ClampMin = "0"))
+	float PickSeconds = 5.f;
+
+	/** Code lock only: heat a picked lock adds (the racket it makes). */
+	UPROPERTY(EditAnywhere, Category = "Puzzle|Lock Picker", meta = (ClampMin = "0"))
+	float PickHeat = 15.f;
+
 	/** For the puzzle's own effects (lights, sounds). Fires on the server, and on clients when Is Solved arrives. */
 	UPROPERTY(BlueprintAssignable, Category = "Puzzle")
 	FRobberPuzzleSolvedSignature OnSolved;
@@ -80,6 +100,19 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Puzzle|Code Lock")
 	static void SubmitCode(AActor* Lock, int32 TypedNumber, int32 Digits);
 
+	/**
+	 * BP_LockPicker's server event. Picks the nearest unsolved code lock in front of whoever holds Tool: after Pick Seconds,
+	 * if they're still there, it opens (Solve), makes a racket everyone hears and adds Pick Heat. Server only.
+	 */
+	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Puzzle|Lock Picker")
+	static void StartLockPick(AActor* Tool);
+
+	/** The code lock a pawn standing here would pick, or null. */
+	static URobberPuzzleComponent* FindPickableLock(const APawn* Picker);
+
+	/** Seconds left on a pick in progress, or 0. Server. */
+	float GetPickTimeLeft() const;
+
 	static URobberPuzzleComponent* Find(const AActor* Puzzle);
 
 	/** Server. Also sets the length clients see. */
@@ -106,9 +139,15 @@ protected:
 
 private:
 	UFUNCTION() void OnRep_IsSolved();
+	void FinishPick();
+	UFUNCTION(NetMulticast, Unreliable) void MulticastPickNoise(USoundBase* Sound, FVector At);
 
 	UPROPERTY(ReplicatedUsing = OnRep_IsSolved) bool bIsSolved = false;
 	UPROPERTY(Replicated) int32 AnswerLength = 0;
+
+	TWeakObjectPtr<APawn> Picker;
+	TWeakObjectPtr<AActor> PickTool;
+	FTimerHandle PickTimer;
 };
 
 /**

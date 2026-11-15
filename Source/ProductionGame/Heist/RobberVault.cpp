@@ -55,6 +55,14 @@ ARobberVaultDoor::ARobberVaultDoor()
 	Wheel = RobberVault::MakeMesh(this, TEXT("Wheel"), Cylinder.Object, Hinge);
 	// The wheel is decoration: traces and the crew go by the slab.
 	Wheel->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	// Models are looks only; the slab stays the thing that blocks, even when it's hidden behind one.
+	ModelHinge = CreateDefaultSubobject<USceneComponent>(TEXT("ModelHinge"));
+	ModelHinge->SetupAttachment(DoorRoot);
+	ModelHinge->SetMobility(EComponentMobility::Movable);
+	DoorModel = RobberVault::MakeMesh(this, TEXT("DoorModel"), nullptr, ModelHinge);
+	DoorModel->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	FrameModel = RobberVault::MakeMesh(this, TEXT("FrameModel"), nullptr, DoorRoot);
+	FrameModel->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 
 	Sign = CreateDefaultSubobject<UTextRenderComponent>(TEXT("Sign"));
 	Sign->SetupAttachment(Hinge);
@@ -75,13 +83,49 @@ void ARobberVaultDoor::OnConstruction(const FTransform& Transform)
 	Wheel->SetRelativeLocation(FVector(Thickness / 2. + 4., Width / 2., Height * 0.6));
 	Wheel->SetRelativeRotation(FRotator(90., 0., 0.));
 	Wheel->SetRelativeScale3D(FVector(WheelSize / 100., WheelSize / 100., 0.08));
-	Sign->SetRelativeLocation(FVector(Thickness / 2. + 10., Width / 2., Height - 45.));
+
+	ModelHinge->SetRelativeLocation(DoorModelHinge);
+	// A placed door saves its components' parents, so one saved before ModelHinge existed keeps DoorModel on the slab hinge.
+	if (DoorModel->GetAttachParent() != ModelHinge)
+	{
+		DoorModel->AttachToComponent(ModelHinge, FAttachmentTransformRules::KeepRelativeTransform);
+	}
+	DoorModel->SetStaticMesh(DoorModelMesh);
+	DoorModel->SetRelativeTransform(DoorModelTransform);
+	FrameModel->SetStaticMesh(FrameModelMesh);
+	FrameModel->SetRelativeTransform(FrameModelTransform);
+	const bool bModel = DoorModelMesh != nullptr;
+	Slab->SetVisibility(!bModel);
+	Wheel->SetVisibility(!bModel);
+	// The sign hangs over the door; with a frame round it, it has to clear the frame's face too.
+	const double FrameFace = FrameModelMesh ? FrameModelMesh->GetBoundingBox().TransformBy(FrameModelTransform).Max.X : 0.;
+	Sign->SetRelativeLocation(FVector(FMath::Max(FrontFaceX(), FrameFace) + 4., Width / 2., Height - 45.));
+}
+
+double ARobberVaultDoor::FrontFaceX() const
+{
+	if (!DoorModelMesh)
+	{
+		return Thickness / 2.;
+	}
+	// The model's box as it sits on its hinge; the dials go just in front of it.
+	return DoorModelMesh->GetBoundingBox().TransformBy(DoorModelTransform).Max.X;
 }
 
 FTransform ARobberVaultDoor::GetDialTransform(int32 Index) const
 {
-	const FVector Local(Thickness / 2. + 6., Width / 2. + (Index - (CodeLength - 1) / 2.) * 50., 135.);
-	return FTransform(FRotator::ZeroRotator, Local) * Hinge->GetComponentTransform();
+	// Across the middle of the door, a little below its centre, where a hand would go.
+	double CentreY = Width / 2., Z = 135., Spacing = 50.;
+	if (DoorModelMesh)
+	{
+		const FBox Box = DoorModelMesh->GetBoundingBox().TransformBy(DoorModelTransform);
+		CentreY = Box.GetCenter().Y + DialShift;
+		Z = Box.GetCenter().Z - 50.;
+		// The round door's flat face is narrower than the slab.
+		Spacing = 42.;
+	}
+	const FVector Local(FrontFaceX() + 6., CentreY + (Index - (CodeLength - 1) / 2.) * Spacing, Z);
+	return FTransform(FRotator::ZeroRotator, Local) * GetHinge()->GetComponentTransform();
 }
 
 void ARobberVaultDoor::BeginPlay()
@@ -130,6 +174,22 @@ void ARobberVaultDoor::CheckDials()
 	}
 }
 
+void ARobberVaultDoor::DialInCode()
+{
+	if (!HasAuthority() || bOpen)
+	{
+		return;
+	}
+	for (TActorIterator<ARobberVaultDial> It(GetWorld()); It; ++It)
+	{
+		if (It->Door == this && Code.IsValidIndex(It->Index))
+		{
+			It->SetDigit(Code[It->Index]);
+		}
+	}
+	CheckDials();
+}
+
 void ARobberVaultDoor::OnRep_Open()
 {
 	OpenStartTime = GetWorld()->GetTimeSeconds();
@@ -151,7 +211,9 @@ void ARobberVaultDoor::Tick(float DeltaSeconds)
 	}
 	const float Alpha = FMath::Clamp(float((GetWorld()->GetTimeSeconds() - OpenStartTime) / OpenSeconds), 0.f, 1.f);
 	// Negative yaw swings the free edge out of the vault (+X).
-	Hinge->SetRelativeRotation(FRotator(0., -100. * FMath::InterpEaseInOut(0.f, 1.f, Alpha, 2.f), 0.));
+	const FRotator Swing(0., -100. * FMath::InterpEaseInOut(0.f, 1.f, Alpha, 2.f), 0.);
+	Hinge->SetRelativeRotation(Swing);
+	ModelHinge->SetRelativeRotation(Swing);
 	if (Alpha >= 1.f)
 	{
 		OpenStartTime = -1.;
@@ -183,6 +245,20 @@ ARobberVaultDial::ARobberVaultDial()
 	LabelText->SetTextRenderColor(FColor(0xf2, 0xc1, 0x4e));
 }
 
+void ARobberVaultDial::BeginPlay()
+{
+	Super::BeginPlay();
+	// The saved attachment to the door's hinge got lost in the greybox (dials sat at their door-relative offset near the
+	// map origin). Put each dial on its door every time, on every machine, so it never depends on that link.
+	if (Door && Door->GetHinge())
+	{
+		DialRoot->SetMobility(EComponentMobility::Movable);
+		DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
+		SetActorTransform(Door->GetDialTransform(Index));
+		AttachToComponent(Door->GetHinge(), FAttachmentTransformRules::KeepWorldTransform);
+	}
+}
+
 bool ARobberVaultDial::CanTurn(const ARobberGameState* GameState) const
 {
 	return Door && !Door->IsOpen() && RobberVault::InHeist(GameState);
@@ -197,6 +273,12 @@ void ARobberVaultDial::OnServerInteract(APawn* Pawn, APlayerState* Player, ARobb
 	Digit = (Digit + 1) % 10;
 	ForceNetUpdate();
 	Door->CheckDials();
+}
+
+void ARobberVaultDial::SetDigit(int32 NewDigit)
+{
+	Digit = NewDigit;
+	ForceNetUpdate();
 }
 
 FText ARobberVaultDial::GetPrompt(const ARobberGameState* GameState, const APlayerState* Viewer) const

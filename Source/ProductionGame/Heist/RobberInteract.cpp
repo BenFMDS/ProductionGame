@@ -5,6 +5,7 @@
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/PlayerState.h"
+#include "Heist/RobberEntryPoint.h"
 #include "Robber/RobberGameState.h"
 
 URobberInteractComponent::URobberInteractComponent()
@@ -31,6 +32,11 @@ FString URobberInteractComponent::GetPrompt() const
 		return FString();
 	}
 	const ARobberGameState* GameState = World->GetGameState<ARobberGameState>();
+	// Props of a way in that isn't in this build still answer, so players inside the museum know it's not broken.
+	if (OwningEntry && OwningEntry->bComingInAlpha)
+	{
+		return ARobberEntryPoint::ComingInAlphaText().ToString();
+	}
 	// No game state means a menu or editor world, where no way in has been voted for yet.
 	if (GameState && !IsActive(GameState))
 	{

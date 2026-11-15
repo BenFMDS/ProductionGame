@@ -99,6 +99,18 @@ struct FRobberStoryNoteUI
 	UPROPERTY() TObjectPtr<UTextBlock> Footer;
 };
 
+/** One exhibit's quest on the green side jobs note. */
+USTRUCT()
+struct FRobberSideJobUI
+{
+	GENERATED_BODY()
+	UPROPERTY() TObjectPtr<UWidget> Root;
+	UPROPERTY() TObjectPtr<UTextBlock> Name;
+	UPROPERTY() TObjectPtr<UWidget> NameStrike;
+	UPROPERTY() TObjectPtr<UTextBlock> Tag;
+	UPROPERTY() FRobberStoryRowUI Row;
+};
+
 /**
  * Logic for WBP_CaseFileHUD. Widgets it fills, by name (all optional):
  * NOTE   TitleText, NightText, ObjectiveText, JobRow0-5 + JobBox0-5 (border: tick colour) + JobText0-5,
@@ -163,10 +175,15 @@ private:
 	void UpdatePaper(const ARobberGameState* State);
 
 	FRobberStoryRowUI MakeStoryRow(const FSlateFontInfo& Font);
-	FRobberStoryNoteUI MakeStoryNote(const FLinearColor& Paper, int32 RowCount, float Width);
+	/** Tucked goes between the rows and the footer. */
+	FRobberStoryNoteUI MakeStoryNote(const FLinearColor& Paper, int32 RowCount, float Width, UWidget* Tucked = nullptr);
+	/** The errand's slip, tucked into the story note under its steps. */
+	FRobberStoryNoteUI MakeStorySlip(int32 RowCount);
+	FRobberSideJobUI MakeSideJob();
 	void BuildStoryWidgets(UCanvasPanel* Root);
 	void FillStoryNote(FRobberStoryNoteUI& Ui, const FText& Title, const TArray<FRobberStoryLine>& Lines, const FText& Footer);
 	void UpdateStory(float DeltaTime);
+	void UpdateSideJobs(const TArray<struct FPlayerQuest>& Quests, float DeltaTime);
 	void OnStoryStamp(bool bComplete, const FText& Title, const FText& Subtitle);
 	void BuildMarkerWidgets(UCanvasPanel* Root);
 	void UpdateMarkers(const FGeometry& MyGeometry, float DeltaTime);
@@ -208,6 +225,14 @@ private:
 
 	UPROPERTY(Transient) FRobberStoryNoteUI StoryNoteUi;
 	UPROPERTY(Transient) FRobberStoryNoteUI StoryErrandUi;
+	UPROPERTY(Transient) FRobberStoryNoteUI SideNoteUi;
+	UPROPERTY(Transient) TArray<FRobberSideJobUI> SideJobs;
+	/** Seconds since each side job turned up or changed state, for its pop; and the state it was in. */
+	TMap<FName, float> SideJobAge;
+	TMap<FName, uint8> SideJobState;
+	/** The side note sits under the story note; when that grows, shrinks or goes, this eases it to its new spot. */
+	float SideNoteShift = 0.f;
+	float SideNoteTop = 0.f;
 	UPROPERTY(Transient) TObjectPtr<UWidget> StoryColumn;
 	UPROPERTY(Transient) TObjectPtr<UWidget> StampRoot;
 	UPROPERTY(Transient) TObjectPtr<UBorder> StampEdge;
