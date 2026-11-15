@@ -56,10 +56,9 @@ void RobberMarkers::Gather(const ARobberGameState* State, const APlayerState* Vi
 		}
 		break;
 	case RobberStage::Investigate:
-		for (TActorIterator<ARobberGemRoomApproach> It(World); It; ++It)
+		if (const ARobberTriggerZone* GemDoor = ARobberTriggerZone::Find(World, ERobberTriggerKind::GemRoom))
 		{
-			Out.Add({ It->GetActorLocation(), Vault ? NSLOCTEXT("RobberMarker", "Vault", "Vault door") : NSLOCTEXT("RobberMarker", "GemDoor", "Gem room door") });
-			break;
+			Out.Add({ GemDoor->GetActorLocation(), Vault ? NSLOCTEXT("RobberMarker", "Vault", "Vault door") : NSLOCTEXT("RobberMarker", "GemDoor", "Gem room door") });
 		}
 		break;
 	case RobberStage::Heist:
@@ -86,11 +85,11 @@ void RobberMarkers::Gather(const ARobberGameState* State, const APlayerState* Vi
 		break;
 	}
 	case RobberStage::Escape:
-		for (TActorIterator<ARobberEscapeExit> It(World); It; ++It)
+		for (const ARobberTriggerZone* Exit : ARobberTriggerZone::FindAll(World, ERobberTriggerKind::EscapeExit))
 		{
-			if (It->IsActive(State))
+			if (Exit->IsActive(State))
 			{
-				Out.Add({ It->GetActorLocation(), NSLOCTEXT("RobberMarker", "WayOut", "Way out") });
+				Out.Add({ Exit->GetActorLocation(), NSLOCTEXT("RobberMarker", "WayOut", "Way out") });
 				break;
 			}
 		}

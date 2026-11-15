@@ -269,7 +269,6 @@ public:
 	/** Something the physics carry can pick up, for Deliver quests. A new one appears by the giver for each player who accepts. */
 	UPROPERTY(EditAnywhere, Category = "Classes") TSubclassOf<AActor> ParcelClass;
 
-	UPROPERTY(EditAnywhere, Category = "Lines") FText TellAnotherChoice = NSLOCTEXT("ExhibitTalk", "TellAnother", "Go on, then.");
 	UPROPERTY(EditAnywhere, Category = "Lines") FText GoodbyeChoice = NSLOCTEXT("ExhibitTalk", "Goodbye", "I'll leave you to it.");
 	UPROPERTY(EditAnywhere, Category = "Lines") FText NotNowChoice = NSLOCTEXT("ExhibitTalk", "NotNow", "Not right now.");
 	UPROPERTY(EditAnywhere, Category = "Lines") FText OnItChoice = NSLOCTEXT("ExhibitTalk", "OnIt", "I'm on it.");

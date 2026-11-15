@@ -1154,10 +1154,7 @@ void ARobberNightDirector::BuildSilly(FRobberExhibitAssignment& Each, UDialogueC
 	{
 		const FName Id(*FString::Printf(TEXT("Joke%d"), Index));
 		FDialogueNode Node = ExhibitTalk::MakeNode(Id, ExhibitJokes[Index]);
-		if (Count > 1)
-		{
-			Node.Choices.Add(ExhibitTalk::MakeChoice(TellAnotherChoice, FName(*FString::Printf(TEXT("Joke%d"), (Index + 1) % Count))));
-		}
+		// One joke per talk (Ben): talking again picks another at random.
 		Node.Choices.Add(ExhibitTalk::MakeChoice(GoodbyeChoice, NAME_None));
 		Dialogue->Nodes.Add(Node);
 		Dialogue->RandomEntryNodes.Add(Id);

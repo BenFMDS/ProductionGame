@@ -170,13 +170,11 @@ ARobberVaultDial::ARobberVaultDial()
 {
 	bReplicates = true;
 	bAlwaysRelevant = true;
-	static ConstructorHelpers::FObjectFinder<UStaticMesh> Cylinder(TEXT("/Engine/BasicShapes/Cylinder.Cylinder"));
 	DialRoot = CreateDefaultSubobject<USceneComponent>(TEXT("DialRoot"));
 	RootComponent = DialRoot;
 	Mesh->SetupAttachment(DialRoot);
 	Mesh->SetMobility(EComponentMobility::Movable);
-	Mesh->SetStaticMesh(Cylinder.Object);
-	// Face out along +X: 32 cm across, sticking 8 cm out of the door.
+	// The cylinder and the dial's dressing are in BP_VaultDial. Face out along +X: 32 cm across, sticking 8 cm out of the door.
 	Mesh->SetRelativeRotation(FRotator(90., 0., 0.));
 	Mesh->SetRelativeScale3D(FVector(0.32, 0.32, 0.08));
 	LabelText->SetupAttachment(DialRoot);

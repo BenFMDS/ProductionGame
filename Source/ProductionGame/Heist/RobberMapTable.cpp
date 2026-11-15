@@ -13,6 +13,8 @@
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/PlayerState.h"
 #include "Heist/RobberEntryPoint.h"
+#include "Heist/RobberFocus.h"
+#include "Heist/RobberHighlight.h"
 #include "Heist/RobberStage.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Misc/App.h"
@@ -40,11 +42,6 @@ namespace RobberMap
 		FLinearColor(0.08f, 0.60f, 0.12f), FLinearColor(0.50f, 0.10f, 0.70f),
 	};
 
-	UStaticMesh* LoadShape(const TCHAR* Path)
-	{
-		return ConstructorHelpers::FObjectFinder<UStaticMesh>(Path).Object;
-	}
-
 	ARobberController* LocalRobber(const UWorld* World)
 	{
 		return World ? Cast<ARobberController>(World->GetFirstPlayerController()) : nullptr;
@@ -62,20 +59,16 @@ ARobberMapTable::ARobberMapTable()
 	RootComponent = TableRoot;
 	Mesh->SetupAttachment(TableRoot);
 
-	static ConstructorHelpers::FObjectFinder<UStaticMesh> Plane(TEXT("/Engine/BasicShapes/Plane.Plane"));
-	static ConstructorHelpers::FObjectFinder<UMaterialInterface> MapMaterialBase(TEXT("/Engine/EngineMaterials/Widget3DPassThrough_Opaque_OneSided.Widget3DPassThrough_Opaque_OneSided"));
+	// The top, legs and map plane (with its pass-through material) get their shapes in BP_MapTable.
 	MapSurface = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("MapSurface"));
 	MapSurface->SetupAttachment(TableRoot);
-	MapSurface->SetStaticMesh(Plane.Object);
 	MapSurface->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	MapSurface->SetCastShadow(false);
-	MapSurface->SetMaterial(0, MapMaterialBase.Object);
 
 	for (int32 Index = 0; Index < 4; ++Index)
 	{
 		UStaticMeshComponent* Leg = CreateDefaultSubobject<UStaticMeshComponent>(*FString::Printf(TEXT("Leg%d"), Index));
 		Leg->SetupAttachment(TableRoot);
-		Leg->SetStaticMesh(Mesh->GetStaticMesh());
 		Legs.Add(Leg);
 	}
 
@@ -231,17 +224,10 @@ void ARobberMapTable::UpdateHover(APlayerController* LocalPlayer)
 		// Leaning in: whatever is under the mouse cursor.
 		Hit = Robber->GetMapPieceUnderCursor();
 	}
-	// Standing: the same crosshair trace as BPC_Interaction, which only outlines BP_InteractMaster children.
-	else if (const APlayerCameraManager* Camera = LocalPlayer->PlayerCameraManager;
-		Camera && FVector::Dist(Camera->GetCameraLocation(), GetActorLocation()) < 600.)
+	// Standing: whatever the crosshair is on, from the same focus trace the outline uses.
+	else if (const URobberFocusComponent* Focus = URobberFocusComponent::For(LocalPlayer))
 	{
-		const FVector Start = Camera->GetCameraLocation();
-		FCollisionQueryParams Params(SCENE_QUERY_STAT(MapTableHover), false, LocalPlayer->GetPawn());
-		FHitResult Result;
-		if (GetWorld()->LineTraceSingleByChannel(Result, Start, Start + Camera->GetCameraRotation().Vector() * 300., ECC_Visibility, Params))
-		{
-			Hit = Cast<ARobberMapObject>(Result.GetActor());
-		}
+		Hit = Cast<ARobberMapObject>(Focus->GetHitActor());
 	}
 	if (Hit != HoveredPiece)
 	{
@@ -324,15 +310,13 @@ ARobberMapObject::ARobberMapObject()
 	Base->SetupAttachment(PieceRoot);
 	Base->SetMobility(EComponentMobility::Movable);
 	Base->SetCastShadow(false);
-	Base->SetStaticMesh(LoadShape(TEXT("/Engine/BasicShapes/Cylinder.Cylinder")));
+	// Base's shape, ObjectMesh and the pin meshes/material are in BP_MapObject.
 	Base->SetRelativeLocation(FVector(0., 0., BaseHeight / 2.));
 	Base->SetRelativeScale3D(FVector(BaseRadius / 50., BaseRadius / 50., BaseHeight / 100.));
 
-	PinNeedleMesh = Base->GetStaticMesh();
-	PinBallMesh = LoadShape(TEXT("/Engine/BasicShapes/Sphere.Sphere"));
-	static ConstructorHelpers::FObjectFinder<UMaterialInterface> ShapeMaterial(TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
-	PinMaterial = ShapeMaterial.Object;
-	ObjectMesh = Mesh->GetStaticMesh();
+	// The table's hover (crosshair or, leaning in, the mouse cursor) lights the piece and its base, not the voters' pins.
+	Highlight->Mode = ERobberHighlightMode::Manual;
+	Highlight->PartNames = { TEXT("Mesh"), TEXT("Base") };
 }
 
 void ARobberMapObject::OnConstruction(const FTransform& Transform)
@@ -521,7 +505,10 @@ void ARobberMapObject::FaceLabelToCamera()
 
 void ARobberMapObject::SetHovered(bool bInHovered)
 {
-	bHovered = bInHovered;
-	Mesh->SetRenderCustomDepth(bHovered);
-	Base->SetRenderCustomDepth(bHovered);
+	Highlight->SetManualHighlight(bInHovered);
+}
+
+bool ARobberMapObject::IsHovered() const
+{
+	return Highlight->IsHighlighted();
 }

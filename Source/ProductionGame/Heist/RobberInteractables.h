@@ -2,68 +2,105 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "Heist/RobberPropBase.h"
 #include "RobberInteractables.generated.h"
 
 class APlayerState;
 class ARobberEntryPoint;
 class ARobberGameState;
+class URobberHighlightComponent;
+class URobberInteractComponent;
+class URobberMarkerComponent;
 class UStaticMeshComponent;
 class UTextRenderComponent;
 
+/** How the BP's model parts (under ModelRoot) are fitted to Mesh's box (the unit cube Mesh is scaled to). */
+UENUM(BlueprintType)
+enum class ERobberModelFit : uint8
+{
+	/** Parts are placed by hand in Mesh's own space, where the box is -50..50 on every axis. */
+	None,
+	/** The parts' combined bounds are stretched to fill the box: for meshes that should match the gap exactly (doors). */
+	Stretch,
+	/** As big as fits inside the box without changing shape, centred (keys). */
+	KeepProportions,
+};
+
 /**
- * Base for heist props the player presses Interact on. BPI_Interaction is a Blueprint interface, so each
+ * Base for heist props whose behaviour is in C++. BPI_Interaction is a Blueprint interface, so each
  * of these has a thin Blueprint child that implements it: Interact calls HandleInteract and
- * GetInteractData returns GetInteractPrompt.
+ * GetInteractData returns GetInteractPrompt. Both pass straight to the Interact component.
  */
 UCLASS(Abstract)
-class PRODUCTIONGAME_API ARobberInteractable : public AActor
+class PRODUCTIONGAME_API ARobberInteractable : public ARobberPropBase
 {
 	GENERATED_BODY()
 
 public:
 	ARobberInteractable();
 
-	/**
-	 * BPC_Interaction calls Interact locally and again on the server (twice on a listen-server host), so
-	 * only the server acts, and a second press from the same player straight after the first is dropped
-	 * (toggles like the skylight would otherwise undo themselves).
-	 */
+	/** Server only, one press per player per 0.2 s: see URobberInteractComponent::bServerOnly. */
 	UFUNCTION(BlueprintCallable, Category = "Robber|Interact")
 	void HandleInteract(AActor* InteractingPlayer);
 
 	UFUNCTION(BlueprintPure, Category = "Robber|Interact")
 	FString GetInteractPrompt() const;
 
-	/**
-	 * From BPC_Interaction's trace, before it overwrites Hit Actor: takes the outline off the old target. The trace's
-	 * own clear-up runs on the new Hit Actor, so aiming straight from a prop onto a wall or another prop left it lit.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "Robber|Interact")
-	static void ClearStaleOutline(AActor* Previous, AActor* Now);
-
 	virtual void Tick(float DeltaSeconds) override;
+	virtual void PostLoad() override;
+	virtual void OnConstruction(const FTransform& Transform) override;
+	virtual void PostInitializeComponents() override;
 
-	/**
-	 * The way in this prop belongs to. When set, it only works (and only shows its label) while that entry is
-	 * the one the crew voted for, so a night with several ways in only runs one of them.
-	 */
-	UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Robber|Interact")
-	TObjectPtr<ARobberEntryPoint> OwningEntry;
+	/** Any part under ModelRoot has a mesh. */
+	bool HasModel() const;
 
+	/** The Interact component's OwningEntry gate. */
 	bool IsActive(const ARobberGameState* GameState) const;
 	/** Shows or removes a part: hidden with its children, and nothing to bump into while it's gone. */
 	static void ShowPart(UPrimitiveComponent* Part, bool bShown);
+
+	virtual FText GetInteractText(const ARobberGameState* GameState, const APlayerState* Viewer) const override;
+	virtual void OnInteract(APawn* Pawn, APlayerState* Player, ARobberGameState* GameState) override { OnServerInteract(Pawn, Player, GameState); }
 
 protected:
 	virtual void OnServerInteract(APawn* Pawn, APlayerState* Player, ARobberGameState* GameState) {}
 	virtual FText GetPrompt(const ARobberGameState* GameState, const APlayerState* Viewer) const { return Prompt; }
 	virtual FText GetLabel(const ARobberGameState* GameState) const { return Label; }
 
+	/**
+	 * The prop's box: a unit cube scaled to its size, which is what the interact trace hits and what blocks. The shape is
+	 * set in the BP_ child. With a model (and bModelReplacesMesh) it stays as the invisible collision box.
+	 */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Robber|Interact")
 	TObjectPtr<UStaticMeshComponent> Mesh;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Robber|Interact")
 	TObjectPtr<UTextRenderComponent> LabelText;
+
+	/** Under Mesh. Its direct children are the model, fitted to Mesh's box by ModelFit. Placed by FitModel, not by hand. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Robber|Model")
+	TObjectPtr<USceneComponent> ModelRoot;
+
+	/** Model1..Model6: empty unless the BP_ child gives them meshes. No collision: Mesh does that. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Robber|Model")
+	TArray<TObjectPtr<UStaticMeshComponent>> ModelParts;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Robber|Model")
+	ERobberModelFit ModelFit = ERobberModelFit::None;
+
+	/**
+	 * Turns the whole model before it's fitted (Stretch/KeepProportions only). Turn the model here, not its parts: a part
+	 * turned inside an unevenly stretched box gets the wrong axes stretched (a door turned 90 came out 20 cm-box narrow).
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Robber|Model")
+	FRotator ModelRotation = FRotator::ZeroRotator;
+
+	/** Hide Mesh when there's a model. Off for models that dress the box rather than replace it (a frame round the skylight glass). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Robber|Model")
+	bool bModelReplacesMesh = true;
+
+	/** Model parts with no collision under ModelRoot, made in the constructor. */
+	UStaticMeshComponent* MakeModelPart(const TCHAR* Name);
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Robber|Interact")
 	FText Prompt;
@@ -72,8 +109,14 @@ protected:
 	FText Label;
 
 private:
-	/** Server only. World time of each player's last handled press. */
-	TMap<TWeakObjectPtr<APlayerState>, double> LastInteractTime;
+	void FitModel();
+
+	/**
+	 * Load-only: maps saved before the Interact component kept the way in here, under this name. PostLoad moves it to
+	 * InteractComponent->OwningEntry and clears it, so a resave stops writing it. Use the component's.
+	 */
+	UPROPERTY()
+	TObjectPtr<ARobberEntryPoint> OwningEntry;
 };
 
 /** Lobby board. Interact to vote for this way in. */
@@ -194,10 +237,24 @@ public:
 	bool IsOpen() const { return bOpen; }
 	bool IsInside(const APawn* Pawn) const;
 
+	/** Seconds the leaves take to slide into the walls. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Robber|Door", meta = (ClampMin = "0"))
+	float SlideTime = 0.8f;
+
 protected:
 	virtual void OnServerInteract(APawn* Pawn, APlayerState* Player, ARobberGameState* GameState) override;
 	virtual FText GetPrompt(const ARobberGameState* GameState, const APlayerState* Viewer) const override;
 	virtual FText GetLabel(const ARobberGameState* GameState) const override;
+
+	/** Model parts (meshes set in BP_LockedDoor). The leaves slide apart, each a leaf's width away from the middle, into the walls. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Robber|Door")
+	TObjectPtr<UStaticMeshComponent> DoorFrame;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Robber|Door")
+	TObjectPtr<UStaticMeshComponent> LeftLeaf;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Robber|Door")
+	TObjectPtr<UStaticMeshComponent> RightLeaf;
 
 private:
 	UPROPERTY(ReplicatedUsing = OnRep_Open)
@@ -205,6 +262,15 @@ private:
 
 	UFUNCTION()
 	void OnRep_Open();
+
+	/** Where a leaf ends up open, in ModelRoot space: out along its own width, away from the middle. */
+	static FVector OpenOffset(const UStaticMeshComponent* Leaf);
+	void StepSlide();
+
+	FVector LeftClosed = FVector::ZeroVector;
+	FVector RightClosed = FVector::ZeroVector;
+	double SlideStart = 0.;
+	FTimerHandle SlideTimer;
 };
 
 /** A key lying somewhere in the museum. Whoever picks it up carries it (UPlayerQuestComponent::Keys) until the night ends. */
@@ -229,16 +295,12 @@ public:
 
 	virtual void Tick(float DeltaSeconds) override;
 
-	/** The "!" floats over the key while this machine's own player is within this many cm and it's still there. */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Robber|Door", meta = (ClampMin = "0"))
-	float AlertRange = 600.f;
-
 	bool IsAlertShowing() const;
 
 protected:
-	/** Drawn per machine, never replicated: each player sees it only near the key themselves. */
+	/** The "!" over the key while it's still there, drawn per machine: each player sees it only near the key themselves (MarkRange). */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Robber|Door")
-	TObjectPtr<UTextRenderComponent> Alert;
+	TObjectPtr<URobberMarkerComponent> Alert;
 
 	virtual void OnServerInteract(APawn* Pawn, APlayerState* Player, ARobberGameState* GameState) override;
 	virtual FText GetPrompt(const ARobberGameState* GameState, const APlayerState* Viewer) const override;

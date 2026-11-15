@@ -9,12 +9,15 @@
 #include "ProductionGameCharacter.h"
 #include "Components/StaticMeshComponent.h"
 #include "Components/TextRenderComponent.h"
+#include "Components/WidgetComponent.h"
 #include "Engine/StaticMesh.h"
 #include "GameFramework/Controller.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/PlayerState.h"
 #include "Heist/RobberEntryPoint.h"
+#include "Heist/RobberHighlight.h"
+#include "Heist/RobberMarker.h"
 #include "Heist/RobberStage.h"
 #include "Net/UnrealNetwork.h"
 #include "Quest/PlayerQuestComponent.h"
@@ -27,10 +30,17 @@ ARobberInteractable::ARobberInteractable()
 	PrimaryActorTick.bCanEverTick = true;
 	PrimaryActorTick.TickInterval = 0.25f;
 
+	// No shape here: each BP_ child sets its own (object restructure stage 4).
 	Mesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Mesh"));
-	static ConstructorHelpers::FObjectFinder<UStaticMesh> Cube(TEXT("/Engine/BasicShapes/Cube.Cube"));
-	Mesh->SetStaticMesh(Cube.Object);
 	RootComponent = Mesh;
+
+	ModelRoot = CreateDefaultSubobject<USceneComponent>(TEXT("ModelRoot"));
+	ModelRoot->SetupAttachment(Mesh);
+	ModelRoot->SetMobility(EComponentMobility::Movable);
+	for (int32 Index = 1; Index <= 6; ++Index)
+	{
+		ModelParts.Add(MakeModelPart(*FString::Printf(TEXT("Model%d"), Index)));
+	}
 
 	LabelText = CreateDefaultSubobject<UTextRenderComponent>(TEXT("Label"));
 	LabelText->SetupAttachment(Mesh);
@@ -42,58 +52,113 @@ ARobberInteractable::ARobberInteractable()
 	LabelText->SetAbsolute(false, false, true);
 }
 
-void ARobberInteractable::HandleInteract(AActor* InteractingPlayer)
+void ARobberInteractable::PostLoad()
 {
-	if (!HasAuthority())
+	Super::PostLoad();
+	if (OwningEntry)
 	{
-		return;
+		InteractComponent->OwningEntry = OwningEntry;
+		OwningEntry = nullptr;
 	}
-	APawn* Pawn = Cast<APawn>(InteractingPlayer);
-	if (AController* Controller = Cast<AController>(InteractingPlayer))
-	{
-		Pawn = Controller->GetPawn();
-	}
-	APlayerState* Player = Pawn ? Pawn->GetPlayerState() : nullptr;
-	ARobberGameState* GameState = GetWorld()->GetGameState<ARobberGameState>();
-	if (!Player || !GameState || !IsActive(GameState))
-	{
-		return;
-	}
-	const double Now = GetWorld()->GetTimeSeconds();
-	if (const double* Last = LastInteractTime.Find(Player); Last && Now - *Last < 0.2)
-	{
-		return;
-	}
-	LastInteractTime.Add(Player, Now);
-	OnServerInteract(Pawn, Player, GameState);
 }
 
-void ARobberInteractable::ClearStaleOutline(AActor* Previous, AActor* Now)
+UStaticMeshComponent* ARobberInteractable::MakeModelPart(const TCHAR* Name)
 {
-	if (!IsValid(Previous) || Previous == Now)
+	UStaticMeshComponent* Part = CreateDefaultSubobject<UStaticMeshComponent>(Name);
+	Part->SetupAttachment(ModelRoot);
+	// Movable sits under any parent, static or not (map pieces and dials are movable), and door leaves slide.
+	Part->SetMobility(EComponentMobility::Movable);
+	Part->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	Part->SetGenerateOverlapEvents(false);
+	Part->SetCanEverAffectNavigation(false);
+	return Part;
+}
+
+void ARobberInteractable::OnConstruction(const FTransform& Transform)
+{
+	Super::OnConstruction(Transform);
+	FitModel();
+}
+
+void ARobberInteractable::PostInitializeComponents()
+{
+	Super::PostInitializeComponents();
+	// Maps saved before the model existed (and cooked ones) don't rerun construction, so fit again here.
+	FitModel();
+}
+
+bool ARobberInteractable::HasModel() const
+{
+	for (const USceneComponent* Child : ModelRoot->GetAttachChildren())
 	{
-		return;
-	}
-	// Same component the trace outlines: BP_InteractMaster's Mesh.
-	for (UActorComponent* Component : Previous->GetComponents())
-	{
-		UPrimitiveComponent* Primitive = Component->GetFName() == TEXT("Mesh") ? Cast<UPrimitiveComponent>(Component) : nullptr;
-		if (Primitive)
+		const UStaticMeshComponent* Part = Cast<UStaticMeshComponent>(Child);
+		if (Part && Part->GetStaticMesh())
 		{
-			Primitive->SetRenderCustomDepth(false);
+			return true;
 		}
 	}
+	return false;
+}
+
+void ARobberInteractable::FitModel()
+{
+	FBox Bounds(ForceInit);
+	for (const USceneComponent* Child : ModelRoot->GetAttachChildren())
+	{
+		const UStaticMeshComponent* Part = Cast<UStaticMeshComponent>(Child);
+		if (Part && Part->GetStaticMesh())
+		{
+			Bounds += Part->GetStaticMesh()->GetBoundingBox().TransformBy(Part->GetRelativeTransform());
+		}
+	}
+	// bVisible, not hidden-in-game: ShowPart toggles that one (with children) and must not bring the box back.
+	Mesh->SetVisibility(!(Bounds.IsValid && bModelReplacesMesh), false);
+	if (!Bounds.IsValid || ModelFit == ERobberModelFit::None)
+	{
+		// Hand-placed parts live in Mesh's own (stretched) space.
+		ModelRoot->SetUsingAbsoluteScale(false);
+		ModelRoot->SetRelativeTransform(FTransform::Identity);
+		return;
+	}
+	// Scale is set in world terms (absolute), so the turned model isn't stretched along Mesh's axes by Mesh's own scale.
+	ModelRoot->SetUsingAbsoluteScale(true);
+	const FVector MeshScale = Mesh->GetComponentScale().GetAbs().ComponentMax(FVector(KINDA_SMALL_NUMBER));
+	const FVector BoxSize = MeshScale * 100.;
+	const FQuat Turn = ModelRotation.Quaternion();
+	FVector Room;
+	for (int32 Axis = 0; Axis < 3; ++Axis)
+	{
+		FVector Along(0.);
+		Along[Axis] = 1.;
+		// How much of the box lies along this model axis once turned.
+		Room[Axis] = FVector::DotProduct(Turn.RotateVector(Along).GetAbs(), BoxSize);
+	}
+	const FVector Size = Bounds.GetSize().ComponentMax(FVector(0.1));
+	FVector Scale = Room / Size;
+	if (ModelFit == ERobberModelFit::KeepProportions)
+	{
+		Scale = FVector(Scale.GetMin());
+	}
+	ModelRoot->SetRelativeRotation(ModelRotation);
+	ModelRoot->SetRelativeScale3D(Scale);
+	// The location is still in Mesh's scaled space, so undo that scale to centre the model on the box.
+	ModelRoot->SetRelativeLocation(-Turn.RotateVector(Bounds.GetCenter() * Scale) / MeshScale);
+}
+
+void ARobberInteractable::HandleInteract(AActor* InteractingPlayer)
+{
+	InteractComponent->Press(InteractingPlayer);
+}
+
+FText ARobberInteractable::GetInteractText(const ARobberGameState* GameState, const APlayerState* Viewer) const
+{
+	// The subclasses' GetPrompt assumes a game state; without one (menus) the plain field is all there is.
+	return GameState ? GetPrompt(GameState, Viewer) : Prompt;
 }
 
 FString ARobberInteractable::GetInteractPrompt() const
 {
-	const APlayerController* LocalPlayer = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr;
-	const ARobberGameState* GameState = GetWorld() ? GetWorld()->GetGameState<ARobberGameState>() : nullptr;
-	if (!GameState)
-	{
-		return Prompt.ToString();
-	}
-	return IsActive(GameState) ? GetPrompt(GameState, LocalPlayer ? LocalPlayer->PlayerState : nullptr).ToString() : FString();
+	return InteractComponent->GetPrompt();
 }
 
 void ARobberInteractable::ShowPart(UPrimitiveComponent* Part, bool bShown)
@@ -104,7 +169,7 @@ void ARobberInteractable::ShowPart(UPrimitiveComponent* Part, bool bShown)
 
 bool ARobberInteractable::IsActive(const ARobberGameState* GameState) const
 {
-	return !OwningEntry || (GameState && GameState->GetActiveEntry() == OwningEntry);
+	return InteractComponent->IsActive(GameState);
 }
 
 void ARobberInteractable::Tick(float DeltaSeconds)
@@ -177,11 +242,7 @@ ARobberHidingSpot::ARobberHidingSpot()
 
 	Opening = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Opening"));
 	Opening->SetupAttachment(Mesh);
-	static ConstructorHelpers::FObjectFinder<UStaticMesh> OpeningCube(TEXT("/Engine/BasicShapes/Cube.Cube"));
-	static ConstructorHelpers::FObjectFinder<UMaterialInterface> OpeningMaterial(TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
-	Opening->SetStaticMesh(OpeningCube.Object);
-	Opening->SetMaterial(0, OpeningMaterial.Object);
-	// The parent's scale applies, so this stays in proportion on any size of spot: it just needs to sit proud of the +X face.
+	// Shape and material are in BP_HidingSpot. The parent's scale applies, so this stays in proportion on any size of spot: it just needs to sit proud of the +X face.
 	Opening->SetRelativeLocation(FVector(50.5, 0., -8.));
 	Opening->SetRelativeScale3D(FVector(0.02, 0.6, 0.82));
 	Opening->SetCollisionEnabled(ECollisionEnabled::NoCollision);
@@ -306,6 +367,36 @@ ARobberLockedDoor::ARobberLockedDoor()
 	bReplicates = true;
 	Label = NSLOCTEXT("RobberDoor", "Label", "LOCKED");
 	KeyName = NSLOCTEXT("RobberDoor", "DefaultKey", "key");
+	DoorFrame = MakeModelPart(TEXT("DoorFrame"));
+	LeftLeaf = MakeModelPart(TEXT("LeftLeaf"));
+	RightLeaf = MakeModelPart(TEXT("RightLeaf"));
+}
+
+FVector ARobberLockedDoor::OpenOffset(const UStaticMeshComponent* Leaf)
+{
+	if (!Leaf->GetStaticMesh())
+	{
+		return FVector::ZeroVector;
+	}
+	// A leaf's width is along its own Y. It slides that far, away from the frame's middle.
+	const FBox Box = Leaf->GetStaticMesh()->GetBoundingBox();
+	const FTransform Relative = Leaf->GetRelativeTransform();
+	const FVector Across = Relative.TransformVectorNoScale(FVector::YAxisVector);
+	const FVector Centre = Relative.TransformPosition(Box.GetCenter());
+	const double Side = FVector::DotProduct(Centre, Across) < 0. ? -1. : 1.;
+	return Across * Side * Box.GetSize().Y * FMath::Abs(Relative.GetScale3D().Y);
+}
+
+void ARobberLockedDoor::StepSlide()
+{
+	const double Alpha = SlideTime > 0.f ? FMath::Clamp((GetWorld()->GetTimeSeconds() - SlideStart) / SlideTime, 0., 1.) : 1.;
+	const double Eased = FMath::InterpEaseInOut(0., 1., Alpha, 2.);
+	LeftLeaf->SetRelativeLocation(LeftClosed + OpenOffset(LeftLeaf) * Eased);
+	RightLeaf->SetRelativeLocation(RightClosed + OpenOffset(RightLeaf) * Eased);
+	if (Alpha >= 1.)
+	{
+		GetWorldTimerManager().ClearTimer(SlideTimer);
+	}
 }
 
 void ARobberLockedDoor::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -358,8 +449,26 @@ FText ARobberLockedDoor::GetLabel(const ARobberGameState* GameState) const
 
 void ARobberLockedDoor::OnRep_Open()
 {
-	// No door model yet: an open door just gets out of the way.
-	ShowPart(Mesh, !bOpen);
+	if (!LeftLeaf->GetStaticMesh() && !RightLeaf->GetStaticMesh())
+	{
+		// No leaves to slide: an open door just gets out of the way.
+		ShowPart(Mesh, !bOpen);
+		return;
+	}
+	// The frame stays; the box stops blocking and the leaves slide into the walls.
+	Mesh->SetCollisionEnabled(bOpen ? ECollisionEnabled::NoCollision : ECollisionEnabled::QueryAndPhysics);
+	LeftClosed = CastChecked<USceneComponent>(LeftLeaf->GetArchetype())->GetRelativeLocation();
+	RightClosed = CastChecked<USceneComponent>(RightLeaf->GetArchetype())->GetRelativeLocation();
+	if (!bOpen)
+	{
+		GetWorldTimerManager().ClearTimer(SlideTimer);
+		LeftLeaf->SetRelativeLocation(LeftClosed);
+		RightLeaf->SetRelativeLocation(RightClosed);
+		return;
+	}
+	SlideStart = GetWorld()->GetTimeSeconds();
+	GetWorldTimerManager().SetTimer(SlideTimer, this, &ARobberLockedDoor::StepSlide, 1.f / 60.f, true);
+	StepSlide();
 }
 
 bool ARobberLockedDoor::IsInside(const APawn* Pawn) const
@@ -373,49 +482,24 @@ ARobberKeyPickup::ARobberKeyPickup()
 	Label = NSLOCTEXT("RobberDoor", "KeyLabel", "KEY");
 	KeyName = NSLOCTEXT("RobberDoor", "DefaultKey", "key");
 
-	// Every frame while shown, so it can turn to the camera and bob smoothly; cheap, there are only a few keys.
-	PrimaryActorTick.TickInterval = 0.f;
-	Alert = CreateDefaultSubobject<UTextRenderComponent>(TEXT("Alert"));
+	// New name: placed keys saved the old text "!" component as "Alert", and a different class under that name won't load cleanly.
+	Alert = CreateDefaultSubobject<URobberMarkerComponent>(TEXT("KeyMarker"));
 	Alert->SetupAttachment(Mesh);
-	// Absolute so the key's flat scale (a badge is 4 cm thick) doesn't squash it; placed in world space in Tick.
-	Alert->SetAbsolute(true, true, true);
-	Alert->SetText(NSLOCTEXT("RobberDoor", "KeyAlert", "!"));
-	Alert->SetHorizontalAlignment(EHTA_Center);
-	Alert->SetVerticalAlignment(EVRTA_TextCenter);
-	Alert->SetWorldSize(70.f);
-	Alert->SetTextRenderColor(FColor(0xff, 0xc8, 0x1e));
-	Alert->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	Alert->SetCastShadow(false);
-	Alert->SetHiddenInGame(true);
+	Alert->MarkRange = 600.f;
+	// The staff badge hangs on a wall rack under a shelf, which would otherwise hide it.
+	Alert->bNeedsClearView = false;
 }
 
 bool ARobberKeyPickup::IsAlertShowing() const
 {
-	return Alert && !Alert->bHiddenInGame;
+	return Alert && Alert->IsMarkShowing();
 }
 
 void ARobberKeyPickup::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
-	// The local player's own view: a dedicated server has none and never shows it.
-	const APlayerController* Local = GetWorld()->GetFirstPlayerController();
-	const APawn* Viewer = Local && Local->IsLocalController() ? Local->GetPawn() : nullptr;
 	const ARobberGameState* GameState = GetWorld()->GetGameState<ARobberGameState>();
-	const bool bShow = Viewer && GameState && !bTaken && IsActive(GameState) && !RobberStage::IsInLobby(GameState->GetGameStage())
-		&& FVector::DistSquared(Viewer->GetActorLocation(), GetActorLocation()) < FMath::Square(AlertRange);
-	Alert->SetHiddenInGame(!bShow);
-	if (!bShow)
-	{
-		return;
-	}
-	// Above the key, bobbing, and turned to face the camera (text is mirrored from behind). Pulled 40 cm towards the
-	// viewer so a key hung on a wall rack (the staff badge) doesn't have the shelf above it hide the "!".
-	const double Bob = 6. * FMath::Sin(GetWorld()->GetTimeSeconds() * 3.);
-	const FVector Camera = Local->PlayerCameraManager ? Local->PlayerCameraManager->GetCameraLocation() : Viewer->GetActorLocation();
-	FVector ToCamera = Camera - GetActorLocation();
-	ToCamera.Z = 0.;
-	const FVector Dir = ToCamera.GetSafeNormal();
-	Alert->SetWorldLocationAndRotation(GetActorLocation() + Dir * 40. + FVector(0., 0., 60. + Bob), Dir.IsNearlyZero() ? FRotator::ZeroRotator : Dir.Rotation());
+	Alert->SetMarkerEnabled(GameState && !bTaken && IsActive(GameState) && !RobberStage::IsInLobby(GameState->GetGameStage()));
 }
 
 void ARobberKeyPickup::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -453,3 +537,4 @@ void ARobberKeyPickup::OnRep_Taken()
 {
 	ShowPart(Mesh, !bTaken);
 }
+
