@@ -17,45 +17,23 @@ namespace { constexpr int32 ErrandChoiceBase = 200000; }
 
 UDialogueComponent::UDialogueComponent() { SetIsReplicatedByDefault(true); }
 
-void UDialogueComponent::BeginPlay()
+FText UDialogueComponent::GetSpeakerName() const
 {
-	Super::BeginPlay();
-	// BP_TalkingMaster's prompt defaults to "Talk to Gabe", and only talkers a commandlet or quest touched say otherwise.
-	// Runs on every machine: the prompt is a Blueprint variable each one reads for itself.
-	// A story quest's cast keeps BP_CaveMan's stand-in asset (Gabe's) until the quest names them via SetPromptSpeaker,
-	// which may land first on a client.
-	if (!Dialogue || Dialogue->SpeakerName.IsEmpty() || !PromptSpeaker.IsEmpty()) return;
-	AutoPrompt = FillDefaultPrompt(Dialogue->SpeakerName);
-}
-
-FString UDialogueComponent::FillDefaultPrompt(const FText& Speaker)
-{
-	if (Speaker.IsEmpty()) return FString();
-	for (TFieldIterator<FStrProperty> It(GetOwner()->GetClass()); It; ++It)
-	{
-		if (!It->GetName().Replace(TEXT(" "), TEXT("")).StartsWith(TEXT("InteractText"))) continue;
-		const UObject* Defaults = It->GetOwnerClass()->GetDefaultObject();
-		const FString Current = It->GetPropertyValue_InContainer(GetOwner());
-		// Also over BeginPlay's own fill from the stand-in asset, but never over a prompt a quest set itself (cave men's "Unknown").
-		if (Current == It->GetPropertyValue_InContainer(Defaults) || (!AutoPrompt.IsEmpty() && Current == AutoPrompt))
-		{
-			const FString Prompt = FText::Format(NSLOCTEXT("ExhibitTalk", "TalkTo", "Talk to {0}"), Speaker).ToString();
-			It->SetPropertyValue_InContainer(GetOwner(), Prompt);
-			return Prompt;
-		}
-	}
-	return FString();
+	// A script made at runtime only exists on the server; there its own name is the truth (the cave men's go Unknown -> real name).
+	if (Dialogue && !Dialogue->IsAsset() && !Dialogue->SpeakerName.IsEmpty()) return Dialogue->SpeakerName;
+	if (!PromptSpeaker.IsEmpty()) return PromptSpeaker;
+	if (!NpcName.IsEmpty()) return NpcName;
+	if (!Dialogue) return FText::GetEmpty();
+	// BP_TalkingMaster's default asset is DA_Dialogue_Gabe, so every child that never set its own asset inherits Gabe.
+	// Only Gabe's own Blueprints may be called Gabe.
+	const bool bGabeStandIn = Dialogue->SpeakerName.ToString().Contains(TEXT("Gabe")) && !GetOwner()->GetClass()->GetName().Contains(TEXT("Gabe"));
+	return bGabeStandIn ? FText::GetEmpty() : Dialogue->SpeakerName;
 }
 
 void UDialogueComponent::SetPromptSpeaker(const FText& Speaker)
 {
 	PromptSpeaker = Speaker;
-	FillDefaultPrompt(Speaker);
-}
-
-void UDialogueComponent::OnRep_PromptSpeaker()
-{
-	FillDefaultPrompt(PromptSpeaker);
+	GetOwner()->ForceNetUpdate();
 }
 
 void UDialogueComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -242,7 +220,7 @@ void UDialogueComponent::PublishNode()
 	if (bSmallTalk)
 	{
 		// No choices: the screen adds its own Goodbye for a line with none.
-		Snapshot.Speaker = !SmallTalkSpeaker.IsEmpty() ? SmallTalkSpeaker : Dialogue ? Dialogue->SpeakerName : FText::GetEmpty();
+		Snapshot.Speaker = !SmallTalkSpeaker.IsEmpty() ? SmallTalkSpeaker : GetSpeakerName();
 		Snapshot.Portrait = Dialogue ? Dialogue->Portrait : nullptr;
 		Snapshot.Text = SmallTalkLine;
 		Player->SetConversation(Snapshot);
@@ -252,7 +230,7 @@ void UDialogueComponent::PublishNode()
 	{
 		const FDialogueNode* Node = Dialogue->FindNode(CurrentNode);
 		if (!Node) { Release(Player); return; }
-		Snapshot.Speaker = Node->Speaker.IsEmpty() ? Dialogue->SpeakerName : Node->Speaker;
+		Snapshot.Speaker = Node->Speaker.IsEmpty() ? GetSpeakerName() : Node->Speaker;
 		Snapshot.Portrait = Dialogue->Portrait;
 		Snapshot.Text = Node->Text;
 		Snapshot.Voice = Node->Voice;
