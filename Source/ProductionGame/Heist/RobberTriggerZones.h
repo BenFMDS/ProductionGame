@@ -76,7 +76,8 @@ public:
 
 	/**
 	 * The coloured shapes are a level-design aid: always drawn in the editor, hidden in game unless this is on.
-	 * Console `Robber.ShowTriggers 1`, or the dev menu's Triggers button. Local to this machine. Labels still show.
+	 * Console `Robber.ShowTriggers 1`, or the dev menu's Triggers button. Local to this machine. Labels still show,
+	 * except ones a map tagged as dev text (see URobberDevText).
 	 */
 	static bool AreShapesShownInGame();
 	static void SetShapesShownInGame(bool bShow);

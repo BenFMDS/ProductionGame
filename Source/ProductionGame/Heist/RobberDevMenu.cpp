@@ -15,6 +15,7 @@
 #include "Components/VerticalBox.h"
 #include "GameFramework/PlayerState.h"
 #include "Heist/RobberBreakInProps.h"
+#include "Heist/RobberDevText.h"
 #include "Heist/RobberEntryPoint.h"
 #include "Heist/RobberInteractables.h"
 #include "Heist/RobberJournal.h"
@@ -67,26 +68,27 @@ void URobberDevMenu::NativeOnInitialized()
 	Bind(TEXT("GuardsMore"), ERobberDevAction::AddGuardsTime, 60);
 	Bind(TEXT("Immunity"), ERobberDevAction::ToggleImmunity);
 	Bind(TEXT("ShowQuests"), ERobberDevAction::ShowQuests);
-	AddTriggersButton();
+	TriggersLabel = AddToggleButton(TEXT("ShowTriggers"), TEXT("Immunity"), ERobberDevAction::ToggleTriggers);
+	DevTextLabel = AddToggleButton(TEXT("ShowDevText"), TEXT("ShowTriggers"), ERobberDevAction::ToggleDevText);
 }
 
-void URobberDevMenu::AddTriggersButton()
+UTextBlock* URobberDevMenu::AddToggleButton(const TCHAR* Name, const TCHAR* After, ERobberDevAction Action)
 {
-	UButton* Model = Find<UButton>(TEXT("Immunity"));
+	UButton* Model = Find<UButton>(After);
 	UPanelWidget* Panel = Model ? Model->GetParent() : nullptr;
 	if (!Panel)
 	{
-		return;
+		return nullptr;
 	}
-	UButton* Button = WidgetTree->ConstructWidget<UButton>(UButton::StaticClass(), TEXT("ShowTriggers"));
+	UButton* Button = WidgetTree->ConstructWidget<UButton>(UButton::StaticClass(), Name);
 	Button->SetStyle(Model->GetStyle());
-	TriggersLabel = WidgetTree->ConstructWidget<UTextBlock>();
+	UTextBlock* Label = WidgetTree->ConstructWidget<UTextBlock>();
 	if (const UTextBlock* ModelLabel = Cast<UTextBlock>(Model->GetContent()))
 	{
-		TriggersLabel->SetFont(ModelLabel->GetFont());
-		TriggersLabel->SetColorAndOpacity(ModelLabel->GetColorAndOpacity());
+		Label->SetFont(ModelLabel->GetFont());
+		Label->SetColorAndOpacity(ModelLabel->GetColorAndOpacity());
 	}
-	Button->SetContent(TriggersLabel);
+	Button->SetContent(Label);
 	UPanelSlot* NewSlot = Panel->InsertChildAt(Panel->GetChildIndex(Model) + 1, Button);
 	// Same spacing as its neighbour, whichever kind of box the WBP put them in.
 	if (const UVerticalBoxSlot* ModelV = Cast<UVerticalBoxSlot>(Model->Slot))
@@ -106,15 +108,17 @@ void URobberDevMenu::AddTriggersButton()
 		H->SetVerticalAlignment(ModelH->GetVerticalAlignment());
 	}
 	URobberDevMenuClick* Click = NewObject<URobberDevMenuClick>(this);
-	Click->Action = ERobberDevAction::ToggleTriggers;
+	Click->Action = Action;
 	Button->OnClicked.AddUniqueDynamic(Click, &URobberDevMenuClick::OnClicked);
 	Clicks.Add(Click);
+	return Label;
 }
 
 void URobberDevMenu::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 {
 	Super::NativeTick(MyGeometry, InDeltaTime);
 	SetText(TriggersLabel, ARobberTriggerZone::AreShapesShownInGame() ? INVTEXT("Triggers: ON") : INVTEXT("Triggers: OFF"));
+	SetText(DevTextLabel, URobberDevText::IsShown() ? INVTEXT("Labels: ON") : INVTEXT("Labels: OFF"));
 	if (const ARobberGameState* State = GetRobberState())
 	{
 		SetText(Find<UTextBlock>(TEXT("StatusText")), FText::Format(INVTEXT("{0} - {1} - heat {2}"), NightName(State),
@@ -137,6 +141,11 @@ void URobberDevMenu::Send(ERobberDevAction Action, int32 Value)
 	if (Action == ERobberDevAction::ToggleTriggers)
 	{
 		ARobberTriggerZone::SetShapesShownInGame(!ARobberTriggerZone::AreShapesShownInGame());
+		return;
+	}
+	if (Action == ERobberDevAction::ToggleDevText)
+	{
+		URobberDevText::SetShown(!URobberDevText::IsShown());
 		return;
 	}
 	if (ARobberController* Robber = GetRobber())

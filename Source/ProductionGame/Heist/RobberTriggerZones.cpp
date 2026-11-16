@@ -7,6 +7,7 @@
 #include "Engine/StaticMesh.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerState.h"
+#include "Heist/RobberDevText.h"
 #include "Heist/RobberEntryPoint.h"
 #include "Heist/RobberStage.h"
 #include "Materials/MaterialInstanceDynamic.h"
@@ -245,7 +246,9 @@ void ARobberTriggerZone::Tick(float DeltaSeconds)
 	const bool bActive = IsActive(GameState);
 	const ERobberTriggerLook Resolved = GetResolvedLook();
 	DoorMesh->SetVisibility(bActive && Resolved != ERobberTriggerLook::Hidden);
-	LabelText->SetVisibility(bActive && bShowLabel && Resolved != ERobberTriggerLook::Hidden);
+	// A label the map tagged as dev text (greybox exits) stays hidden like the shapes, unless dev text is on.
+	const bool bDevHidden = LabelText->ComponentHasTag(URobberDevText::Tag) && !URobberDevText::IsShown();
+	LabelText->SetVisibility(bActive && bShowLabel && !bDevHidden && Resolved != ERobberTriggerLook::Hidden);
 	LabelText->SetText(GetStatusLabel(GameState, Inside, Total));
 }
 
