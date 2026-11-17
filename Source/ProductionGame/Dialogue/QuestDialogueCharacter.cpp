@@ -47,15 +47,22 @@ FText AQuestDialogueCharacter::GetInteractText(const ARobberGameState* GameState
 	{
 		return FText::GetEmpty();
 	}
-	// A Blueprint variable, found the same way UDialogueComponent::BeginPlay finds it to fill in the speaker.
+	// Worked out on every read, not written once at BeginPlay: a script's speaker can reach a client after BeginPlay,
+	// and a fill made too early used to leave "Talk to Gabe" (BP_TalkingMaster's default) on quest NPCs.
+	const UDialogueComponent* Talker = FindComponentByClass<UDialogueComponent>();
+	const FText Name = Talker ? Talker->GetSpeakerName() : FText::GetEmpty();
 	for (TFieldIterator<FStrProperty> It(GetClass()); It; ++It)
 	{
-		if (It->GetName().Replace(TEXT(" "), TEXT("")).StartsWith(TEXT("InteractText")))
-		{
-			return FText::FromString(It->GetPropertyValue_InContainer(this));
-		}
+		if (!It->GetName().Replace(TEXT(" "), TEXT("")).StartsWith(TEXT("InteractText"))) continue;
+		// BP_TalkingMaster's "Interact Text". Kept only when something set it on purpose (the cave men's "Talk to Unknown"):
+		// not the class default, and not a "Talk to Gabe" a commandlet baked into a placed NPC from the inherited asset.
+		const FString Current = It->GetPropertyValue_InContainer(this);
+		const FString Default = It->GetPropertyValue_InContainer(GetClass()->GetDefaultObject());
+		const bool bWrongGabe = Current.Contains(TEXT("Gabe")) && !Name.ToString().Contains(TEXT("Gabe"));
+		if (!Current.IsEmpty() && Current != Default && !bWrongGabe) return FText::FromString(Current);
+		break;
 	}
-	return FText::GetEmpty();
+	return Name.IsEmpty() ? NSLOCTEXT("ExhibitTalk", "Talk", "Talk") : FText::Format(NSLOCTEXT("ExhibitTalk", "TalkTo", "Talk to {0}"), Name);
 }
 
 void AQuestDialogueCharacter::OnInteract(APawn* Pawn, APlayerState* Player, ARobberGameState* GameState)

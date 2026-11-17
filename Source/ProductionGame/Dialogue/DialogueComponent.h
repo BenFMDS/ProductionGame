@@ -43,6 +43,14 @@ public:
 	FDialogueEntryOverride EntryOverride;
 	/** The one dialogue asset this actor speaks. A conversation cannot begin without it. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Dialogue", meta=(DisplayName="Dialogue Asset")) TObjectPtr<UDialogueDefinition> Dialogue;
+	/**
+	 * Who this NPC is, for the prompt ("Talk to <name>"), the conversation box and the night director's lines.
+	 * Set it on the NPC's Blueprint or a placed NPC; it beats the dialogue asset's name. BP_TalkingMaster's default asset
+	 * is Gabe's, so a child that never set its own asset would otherwise be "Gabe".
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Dialogue", meta=(DisplayName="NPC Name")) FText NpcName;
+	/** The name every machine shows for this NPC. Never Gabe's for a non-Gabe NPC; empty when nothing names it. */
+	UFUNCTION(BlueprintPure, Category="Dialogue") FText GetSpeakerName() const;
 	/** Optional quests offered through this conversation. New talkers use this instead of a separate Quest Giver Component. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Quests", meta=(DisplayName="Offered Quests")) TArray<TObjectPtr<UQuestDefinition>> OfferedQuests;
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Dialogue", meta=(ClampMin="1")) float InteractionDistance = 350.f;
@@ -60,7 +68,7 @@ public:
 	/** Replicated busy indicator; lock ownership itself is private server state. */
 	UPROPERTY(Replicated, BlueprintReadOnly, Category="Dialogue") bool bIsInConversation = false;
 	UPROPERTY(Replicated, BlueprintReadOnly, Category="Dialogue") TObjectPtr<APlayerState> TalkingPlayer;
-	/** Server: names the speaker of a script handed over at runtime (story quests), so every machine's prompt says "Talk to <name>". */
+	/** Server: names the speaker of a script handed over at runtime (story quests, night director), so clients know it too. */
 	void SetPromptSpeaker(const FText& Speaker);
 	bool TryStart(UPlayerQuestComponent* Player);
 	bool HasValidDialogue() const;
@@ -75,16 +83,10 @@ public:
 	void Refresh();
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 protected:
-	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type Reason) override;
 private:
 	/** Generated scripts don't replicate, so clients only learn the speaker's name from this. */
-	UPROPERTY(ReplicatedUsing=OnRep_PromptSpeaker) FText PromptSpeaker;
-	UFUNCTION() void OnRep_PromptSpeaker();
-	/** Writes "Talk to <Speaker>" into the Blueprint prompt while nobody else has set it; returns what it wrote. */
-	FString FillDefaultPrompt(const FText& Speaker);
-	/** What BeginPlay filled in from the asset, so a runtime script's speaker can replace it. */
-	FString AutoPrompt;
+	UPROPERTY(Replicated) FText PromptSpeaker;
 	TWeakObjectPtr<UPlayerQuestComponent> Participant;
 	TWeakObjectPtr<APawn> StartingPawn;
 	FName CurrentNode;

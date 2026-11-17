@@ -547,7 +547,8 @@ void ARobberNightDirector::TryDeal()
 	for (FRobberExhibitAssignment& Each : Assignments)
 	{
 		const UDialogueComponent* Talker = Each.Exhibit->FindComponentByClass<UDialogueComponent>();
-		Each.Speaker = Talker->Dialogue && !Talker->Dialogue->SpeakerName.IsEmpty() ? Talker->Dialogue->SpeakerName : FText::FromName(ExhibitId(Each.Exhibit));
+		const FText Name = Talker->GetSpeakerName();
+		Each.Speaker = !Name.IsEmpty() ? Name : FText::FromName(ExhibitId(Each.Exhibit));
 	}
 
 	// Each fact goes out once: required ones first, so helpful exhibits point at what the crew has to find.
@@ -1200,6 +1201,7 @@ void ARobberNightDirector::BuildSilly(FRobberExhibitAssignment& Each, UDialogueC
 		Dialogue->EntryNode = TEXT("Joke0");
 	}
 	Talker->Dialogue = Dialogue;
+	Talker->SetPromptSpeaker(Each.Speaker);
 	Talker->bNotedInJournal = false;
 }
 
@@ -1225,6 +1227,7 @@ void ARobberNightDirector::BuildHelpful(FRobberExhibitAssignment& Each, UDialogu
 		});
 	}
 	Talker->Dialogue = Dialogue;
+	Talker->SetPromptSpeaker(Each.Speaker);
 	Talker->bNotedInJournal = true;
 	Talker->JournalQuote = Clue;
 }
@@ -1346,6 +1349,7 @@ void ARobberNightDirector::BuildQuest(FRobberExhibitAssignment& Each, UDialogueC
 	Dialogue->Nodes.Add(Done);
 
 	Talker->Dialogue = Dialogue;
+	Talker->SetPromptSpeaker(Each.Speaker);
 	Talker->bNotedInJournal = true;
 
 	if (Each.Spot)
