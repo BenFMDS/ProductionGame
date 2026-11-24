@@ -1,0 +1,26 @@
+# The in-game credits (WBP_RobberCredits) are built from this file.
+# Lines starting with # don't show. A line ending in : is a heading.
+# A blank line adds a gap..
+# After editing, rebuild the widget.
+# CC BY music needs the title, the author, the source and the licence link, so keep every part.
+
+BACKSEAT ROBBERS:
+
+Programming:
+Ben
+Oscar
+Reece
+
+Art:
+Harry
+
+Music:
+"Also Sprach Zarathustra" by Richard Strauss
+Performed by Kevin MacLeod (incompetech.com)
+Licensed under CC BY 3.0
+creativecommons.org/licenses/by/3.0
+via Wikimedia Commons
+
+
+Thanks for playing:
+Your debt has been forgiven. Probably.
