@@ -58,6 +58,13 @@ public:
 	UPROPERTY(EditDefaultsOnly, Category = "Robber|Interact")
 	bool bServerOnly = true;
 
+	/**
+	 * Still takes presses while its prompt is empty, but shows no prompt box then either, so aiming at it gives nothing
+	 * away (Escape Velocity's hidden launch tasks).
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Robber|Interact")
+	bool bSilent = false;
+
 	bool IsActive(const ARobberGameState* GameState) const;
 
 	/** What this machine's player sees when aiming at it. Empty when there's nothing to do. */

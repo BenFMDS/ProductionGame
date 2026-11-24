@@ -28,7 +28,10 @@ public class ProductionGame : ModuleRules
 			"OnlineSubsystemUtils",
 			"AdvancedSessions",
 			"AdvancedSteamSessions",
-			"NavigationSystem"
+			"NavigationSystem",
+			"LevelSequence",
+			"AnimationCore",
+			"MovieScene"
 		});
 
 		PublicIncludePaths.AddRange(new string[] {

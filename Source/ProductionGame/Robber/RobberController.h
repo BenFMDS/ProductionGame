@@ -98,6 +98,17 @@ public:
 	/** Server only: what each row's Find button goes to. */
 	TArray<TWeakObjectPtr<AActor>> DevFindTargets;
 
+	/** Dev menu: the loaded night's secrets (the screen that shows them, then each hidden step), same shape as the quest list. */
+	UFUNCTION(Client, Reliable)
+	void ClientDevSecretList(const TArray<FString>& Lines, const TArray<uint8>& CanFind);
+	FString GetDevSecretList() const { return FString::Join(DevSecretLines, TEXT("\n")); }
+	void ClearDevSecretList() { DevSecretLines.Reset(); DevSecretCanFind.Reset(); ++DevSecretRevision; }
+	TArray<FString> DevSecretLines;
+	TArray<uint8> DevSecretCanFind;
+	int32 DevSecretRevision = 0;
+	/** Server only: what each secret row's TP button goes to. */
+	TArray<TWeakObjectPtr<AActor>> DevSecretTargets;
+
 	/** From the planning table's interact: lean over Table, or step back if already looking at it. */
 	UFUNCTION(Client, Reliable)
 	void ClientToggleMapView(ARobberMapTable* Table);
@@ -132,6 +143,12 @@ public:
 
 	/** The settings or achievements screen a lobby object opened, while it's up. */
 	UUserWidget* GetLobbyMenu() const { return LobbyMenu; }
+
+	/** Local only: rolls WBP_RobberCredits over everything. Does nothing if they're already rolling. */
+	class URobberCredits* OpenCredits();
+	class URobberCredits* GetCredits() const;
+	/** Tests: the campaign-win roll is off under automation (it takes UI-only input) unless this is set. */
+	static bool bRollCreditsInTests;
 
 	/** Local only. Back to the pawn's own view. */
 	void StepBackFromMap();
@@ -248,6 +265,12 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UUserWidget> LobbyMenu;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Robber|UI")
+	TSoftClassPtr<UUserWidget> CreditsClass;
+
+	UPROPERTY(Transient)
+	TObjectPtr<URobberCredits> Credits;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Robber|UI")
 	TSoftClassPtr<UUserWidget> GameUIWidgetClass;

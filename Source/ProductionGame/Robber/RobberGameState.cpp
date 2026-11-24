@@ -18,6 +18,7 @@
 #include "Heist/RobberExhibitTalk.h"
 #include "Heist/RobberStage.h"
 #include "Heist/RobberJournal.h"
+#include "Heist/RobberLaunch.h"
 #include "Heist/RobberSecurityCamera.h"
 #include "Heist/RobberVault.h"
 #include "Heist/RobberVisitor.h"
@@ -117,10 +118,11 @@ void ARobberGameState::BeginPlay()
 		LoadNight(0);
 #if WITH_EDITOR
 		// A night map played on its own in the editor has no lobby to leave, so it would sit in the lobby stage, where
-		// hiding, talking and quests are all off. Start it mid-heist instead. L_GameLevel streams nights and isn't affected.
+		// hiding, talking, quests and the launch steps are all off. Start it mid-heist instead. L_GameLevel streams nights
+		// and isn't affected. L_Night5 has no director (its talkers aren't dealt yet), so its launch steps count too.
 		const bool bStreamsNights = Nights.IsValidIndex(0) && CanStreamLevel(Nights[0]);
 		if (GetWorld()->IsPlayInEditor() && !bStreamsNights && RobberStage::IsInLobby(ReplicatedGameStage)
-			&& TActorIterator<ARobberNightDirector>(GetWorld()))
+			&& (TActorIterator<ARobberNightDirector>(GetWorld()) || TActorIterator<ARobberLaunchTask>(GetWorld())))
 		{
 			SetGameStage(RobberStage::Heist);
 		}
@@ -700,11 +702,35 @@ void ARobberGameState::FinishNight(bool bWon)
 	SetGameStage(!bWon ? RobberStage::Lose : bLastNight ? RobberStage::Win : RobberStage::Continue);
 }
 
+void ARobberGameState::StartLaunch(float Seconds)
+{
+	if (!HasAuthority() || bLaunching || RobberStage::IsInLobby(ReplicatedGameStage))
+	{
+		return;
+	}
+	bLaunching = true;
+	GetWorldTimerManager().SetTimer(LaunchTimer, this, &ARobberGameState::FinishLaunch, FMath::Max(Seconds, .01f), false);
+}
+
+void ARobberGameState::FinishLaunch()
+{
+	if (!bLaunching)
+	{
+		return;
+	}
+	bLaunching = false;
+	bEscapedToSpace = true;
+	SetGameStage(RobberStage::Win);
+}
+
 void ARobberGameState::ReturnToLobby()
 {
-	NightResultText = FText::Format(ReplicatedGameStage == RobberStage::Lose ? NSLOCTEXT("RobberNight", "Lost", "{0} lost. Try it again.")
+	bLaunching = false;
+	GetWorldTimerManager().ClearTimer(LaunchTimer);
+	NightResultText = bEscapedToSpace ? NSLOCTEXT("RobberNight", "EscapedToSpace", "You escaped to space, where the debt collector can't reach you.") : FText::Format(ReplicatedGameStage == RobberStage::Lose ? NSLOCTEXT("RobberNight", "Lost", "{0} lost. Try it again.")
 		: ReplicatedGameStage == RobberStage::Continue ? NSLOCTEXT("RobberNight", "Won", "{0} done!")
 		: NSLOCTEXT("RobberNight", "WonLast", "{0} done! That was the last night."), GetNightName(CurrentNight, bTutorial));
+	bEscapedToSpace = false;
 	ResetCrewToLobby();
 	// A lost night reloads, so nothing from the failed attempt carries over.
 	if (ReplicatedGameStage == RobberStage::Lose && bTutorial)
@@ -913,6 +939,13 @@ void ARobberGameState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& Out
 
 void ARobberGameState::SetGameStage(uint8 NewGameStage)
 {
+	// The launch owns the stage until FinishLaunch. Put a Blueprint's write back, or Tick would keep promoting it.
+	if (bLaunching && HasAuthority() && NewGameStage != ReplicatedGameStage)
+	{
+		UE_LOG(LogTemp, Display, TEXT("Stage change to %d ignored: the launch ending is playing"), NewGameStage);
+		SetLegacyGameState(ReplicatedGameStage);
+		return;
+	}
 	const uint8 OldGameStage = ReplicatedGameStage;
 	const bool bStageChanged = OldGameStage != NewGameStage;
 	ReplicatedGameStage = NewGameStage;
@@ -955,6 +988,20 @@ void ARobberGameState::HandleGameStageChanged()
 		ActivateAlarms();
 		CompleteJob(GemJob);
 		SetPhaseTimer(EscapeSeconds);
+	}
+	const uint8 PreviousStage = LastHandledStage;
+	LastHandledStage = ReplicatedGameStage;
+	// The campaign is over: every machine rolls its own credits over the lobby reload.
+	if (ReplicatedGameStage == RobberStage::Win && !RobberStage::IsInLobby(PreviousStage)
+		&& (!GIsAutomationTesting || ARobberController::bRollCreditsInTests))
+	{
+		for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
+		{
+			if (ARobberController* Robber = Cast<ARobberController>(It->Get()); Robber && Robber->IsLocalPlayerController())
+			{
+				Robber->OpenCredits();
+			}
+		}
 	}
 	OnGameStageChanged.Broadcast(ReplicatedGameStage);
 }

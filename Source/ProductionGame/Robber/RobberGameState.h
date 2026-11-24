@@ -235,6 +235,13 @@ public:
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Robber|Night")
 	void FinishNight(bool bWon);
 
+	/**
+	 * Server only. The Escape Velocity ending (N5's launch keys): in Seconds the whole run ends as a Win, whatever night
+	 * it is. Until then nothing else can change the stage, so a guard catch or a timer can't spoil the ending.
+	 */
+	void StartLaunch(float Seconds);
+	bool IsLaunching() const { return bLaunching; }
+
 	/** Server only, from the lobby. NightIndex is into Nights (0 = Night 1). */
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Robber|Night")
 	void LoadNight(int32 NightIndex);
@@ -370,6 +377,15 @@ private:
 	/** Native replication backing for the E_GameStage Blueprint enum compatibility member. */
 	UPROPERTY(ReplicatedUsing = OnRep_ReplicatedGameStage, VisibleAnywhere, BlueprintReadOnly, Category = "Robber|Stage", meta = (AllowPrivateAccess = "true"))
 	uint8 ReplicatedGameStage = 0;
+
+	/** This machine's last handled stage, so a player who joins a lobby that's already on Win doesn't get the credits. */
+	uint8 LastHandledStage = 0;
+
+	/** Server only: see StartLaunch. bEscapedToSpace picks the lobby's result line after the launch. */
+	bool bLaunching = false;
+	bool bEscapedToSpace = false;
+	FTimerHandle LaunchTimer;
+	void FinishLaunch();
 
 	UPROPERTY(Transient, BlueprintReadOnly, Category = "Robber|Stage", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<ARobberController> PlayerControllerRef;

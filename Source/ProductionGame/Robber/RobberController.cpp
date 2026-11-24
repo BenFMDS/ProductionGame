@@ -25,6 +25,7 @@
 #include "Kismet/GameplayStatics.h"
 #include "ProductionGameCharacter.h"
 #include "Robber/RobberGameState.h"
+#include "RobberMenu/RobberCredits.h"
 #include "RobberMenu/RobberMenuWidgets.h"
 #include "Sound/SoundMix.h"
 #include "TimerManager.h"
@@ -66,6 +67,7 @@ ARobberController::ARobberController()
 	PauseMenuWidgetClass = TSoftClassPtr<UUserWidget>(FSoftObjectPath(TEXT("/Game/OurStuff/UI/CaseFile/Menus/WBP_RobberPauseMenu.WBP_RobberPauseMenu_C")));
 	LobbySettingsClass = TSoftClassPtr<UUserWidget>(FSoftObjectPath(TEXT("/Game/OurStuff/UI/CaseFile/Menus/WBP_RobberSettings.WBP_RobberSettings_C")));
 	LobbyAchievementsClass = TSoftClassPtr<UUserWidget>(FSoftObjectPath(TEXT("/Game/OurStuff/UI/CaseFile/Menus/WBP_RobberAchievements.WBP_RobberAchievements_C")));
+	CreditsClass = TSoftClassPtr<UUserWidget>(FSoftObjectPath(TEXT("/Game/OurStuff/UI/CaseFile/Menus/WBP_RobberCredits.WBP_RobberCredits_C")));
 	GameUIWidgetClass = TSoftClassPtr<UUserWidget>(FSoftObjectPath(TEXT("/Game/OurStuff/Widgets/WBP_GameUI.WBP_GameUI_C")));
 	DevUIWidgetClass = TSoftClassPtr<UUserWidget>(FSoftObjectPath(TEXT("/Game/OurStuff/Widgets/WBP_DevUI.WBP_DevUI_C")));
 	CaseFileHUDClass = TSoftClassPtr<URobberCaseFileHUD>(FSoftObjectPath(TEXT("/Game/OurStuff/UI/CaseFile/WBP_CaseFileHUD.WBP_CaseFileHUD_C")));
@@ -414,6 +416,42 @@ void ARobberController::ClientOpenLobbyMenu_Implementation(ERobberLobbyMenu Menu
 	{
 		LobbyMenu->AddToViewport(10);
 	}
+}
+
+bool ARobberController::bRollCreditsInTests = false;
+
+URobberCredits* ARobberController::GetCredits() const
+{
+	return Credits && Credits->IsInViewport() ? Credits.Get() : nullptr;
+}
+
+URobberCredits* ARobberController::OpenCredits()
+{
+	if (!IsLocalPlayerController() || CreditsClass.IsNull())
+	{
+		return nullptr;
+	}
+	if (URobberCredits* Rolling = GetCredits())
+	{
+		return Rolling;
+	}
+	// Nothing else should sit on top of the roll or keep the keyboard.
+	CloseDevMenu();
+	ClosePauseMenu();
+	CloseJournal();
+	CloseShopCatalogue();
+	if (IsValid(LobbyMenu))
+	{
+		LobbyMenu->RemoveFromParent();
+		LobbyMenu = nullptr;
+	}
+	Credits = CreateWidget<URobberCredits>(this, CreditsClass.LoadSynchronous());
+	if (Credits)
+	{
+		// Above the HUD and the iris wipe of the lobby reload; the dev menu is 100.
+		Credits->AddToViewport(90);
+	}
+	return Credits;
 }
 
 void ARobberController::OpenPauseMenu()
