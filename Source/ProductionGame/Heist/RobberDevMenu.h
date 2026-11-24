@@ -21,6 +21,10 @@ enum class ERobberDevAction : uint8
 	FindExhibit,		// Value: row of the quest list
 	ToggleTriggers,		// Local only: never sent to the server
 	ToggleDevText,		// Local only: never sent to the server
+	PlayCredits,		// Local only: rolls this player's credits
+	ShowSecrets,
+	FindSecret,			// Value: row of the secret list
+	CompleteSecrets,	// Every launch step to GO, so the keys are ready
 };
 
 /** One button's action. UButton's click event carries no arguments, so each button gets its own listener. */
@@ -56,7 +60,8 @@ protected:
 
 private:
 	void Bind(const FString& ButtonName, ERobberDevAction Action, int32 Value = 0);
-	void RebuildQuestRows(const ARobberController* Robber);
+	/** Fills the quest window with Lines; rows with CanFind set get a button that sends FindAction with the row. */
+	void RebuildRows(const TArray<FString>& Lines, const TArray<uint8>& CanFind, ERobberDevAction FindAction, const FText& ButtonText);
 	/** An on/off button after the one called After, made in code so WBP_DevMenu doesn't change. Returns its label. */
 	class UTextBlock* AddToggleButton(const TCHAR* Name, const TCHAR* After, ERobberDevAction Action);
 
@@ -66,6 +71,7 @@ private:
 	UPROPERTY(Transient) TObjectPtr<class UVerticalBox> QuestRows;
 	UPROPERTY(Transient) TObjectPtr<class UTextBlock> QuestTextStyle;
 	int32 ShownQuestRevision = 0;
+	int32 ShownSecretRevision = 0;
 
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<URobberDevMenuClick>> Clicks;

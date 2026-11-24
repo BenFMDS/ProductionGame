@@ -110,7 +110,9 @@ void URobberFocusComponent::DriveInteraction(UActorComponent* Interaction)
 	UObject* Widget = WidgetRef ? WidgetRef->GetObjectPropertyValue_InContainer(Interaction) : nullptr;
 	UFunction* UpdateWidget = Widget ? Widget->FindFunction(TEXT("UpdateWidget")) : nullptr;
 	// WBP_Interaction's UpdateWidget(Visbale?, Data), the same call the old trace made.
-	struct { bool bVisible; FString Data; } Params{ Aimed != nullptr, Prompt };
+	const URobberInteractComponent* AimedInteract = URobberInteractComponent::Of(Aimed);
+	const bool bShow = Aimed && !(AimedInteract && AimedInteract->bSilent && Prompt.IsEmpty());
+	struct { bool bVisible; FString Data; } Params{ bShow, Prompt };
 	if (UpdateWidget && UpdateWidget->ParmsSize == sizeof(Params))
 	{
 		Widget->ProcessEvent(UpdateWidget, &Params);

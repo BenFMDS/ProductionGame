@@ -19,6 +19,7 @@
 #include "Heist/RobberEntryPoint.h"
 #include "Heist/RobberInteractables.h"
 #include "Heist/RobberJournal.h"
+#include "Heist/RobberLaunch.h"
 #include "Heist/RobberStage.h"
 #include "Heist/RobberTriggerZones.h"
 #include "Heist/RobberVault.h"
@@ -70,6 +71,18 @@ void URobberDevMenu::NativeOnInitialized()
 	Bind(TEXT("ShowQuests"), ERobberDevAction::ShowQuests);
 	TriggersLabel = AddToggleButton(TEXT("ShowTriggers"), TEXT("Immunity"), ERobberDevAction::ToggleTriggers);
 	DevTextLabel = AddToggleButton(TEXT("ShowDevText"), TEXT("ShowTriggers"), ERobberDevAction::ToggleDevText);
+	if (UTextBlock* CreditsLabel = AddToggleButton(TEXT("PlayCredits"), TEXT("ShowDevText"), ERobberDevAction::PlayCredits))
+	{
+		CreditsLabel->SetText(INVTEXT("Play credits"));
+	}
+	if (UTextBlock* SecretsLabel = AddToggleButton(TEXT("ShowSecrets"), TEXT("ShowQuests"), ERobberDevAction::ShowSecrets))
+	{
+		SecretsLabel->SetText(INVTEXT("Map secrets"));
+	}
+	if (UTextBlock* AllGoLabel = AddToggleButton(TEXT("CompleteSecrets"), TEXT("ShowSecrets"), ERobberDevAction::CompleteSecrets))
+	{
+		AllGoLabel->SetText(INVTEXT("Secrets: all GO"));
+	}
 }
 
 UTextBlock* URobberDevMenu::AddToggleButton(const TCHAR* Name, const TCHAR* After, ERobberDevAction Action)
@@ -126,11 +139,20 @@ void URobberDevMenu::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 	}
 	if (const ARobberController* Robber = GetRobber())
 	{
-		Show(Find(TEXT("QuestPanel")), !Robber->DevQuestLines.IsEmpty());
-		if (ShownQuestRevision != Robber->DevQuestRevision)
+		// One window, two lists: opening either closes the other (see Send), so at most one has lines.
+		Show(Find(TEXT("QuestPanel")), !Robber->DevQuestLines.IsEmpty() || !Robber->DevSecretLines.IsEmpty());
+		if (ShownQuestRevision != Robber->DevQuestRevision || ShownSecretRevision != Robber->DevSecretRevision)
 		{
 			ShownQuestRevision = Robber->DevQuestRevision;
-			RebuildQuestRows(Robber);
+			ShownSecretRevision = Robber->DevSecretRevision;
+			if (!Robber->DevSecretLines.IsEmpty())
+			{
+				RebuildRows(Robber->DevSecretLines, Robber->DevSecretCanFind, ERobberDevAction::FindSecret, INVTEXT("TP"));
+			}
+			else
+			{
+				RebuildRows(Robber->DevQuestLines, Robber->DevQuestCanFind, ERobberDevAction::FindExhibit, INVTEXT("Find"));
+			}
 		}
 		SetText(Find<UTextBlock>(TEXT("ResultText")), Robber->IsHeistMessageVisible() ? Robber->GetHeistMessage() : FText::GetEmpty());
 	}
@@ -148,19 +170,44 @@ void URobberDevMenu::Send(ERobberDevAction Action, int32 Value)
 		URobberDevText::SetShown(!URobberDevText::IsShown());
 		return;
 	}
+	if (Action == ERobberDevAction::PlayCredits)
+	{
+		if (ARobberController* Robber = GetRobber())
+		{
+			Robber->OpenCredits();
+		}
+		return;
+	}
 	if (ARobberController* Robber = GetRobber())
 	{
 		// Pressing it again closes the list, which needs nothing from the server.
-		if (Action == ERobberDevAction::ShowQuests && !Robber->GetDevQuestList().IsEmpty())
+		if (Action == ERobberDevAction::ShowQuests)
+		{
+			Robber->ClearDevSecretList();
+			if (!Robber->GetDevQuestList().IsEmpty())
+			{
+				Robber->ClearDevQuestList();
+				return;
+			}
+		}
+		if (Action == ERobberDevAction::CompleteSecrets)
 		{
 			Robber->ClearDevQuestList();
-			return;
+		}
+		if (Action == ERobberDevAction::ShowSecrets)
+		{
+			Robber->ClearDevQuestList();
+			if (!Robber->GetDevSecretList().IsEmpty())
+			{
+				Robber->ClearDevSecretList();
+				return;
+			}
 		}
 		Robber->ServerDevAction(Action, Value);
 	}
 }
 
-void URobberDevMenu::RebuildQuestRows(const ARobberController* Robber)
+void URobberDevMenu::RebuildRows(const TArray<FString>& Lines, const TArray<uint8>& CanFind, ERobberDevAction FindAction, const FText& ButtonText)
 {
 	if (!QuestRows)
 	{
@@ -176,10 +223,10 @@ void URobberDevMenu::RebuildQuestRows(const ARobberController* Robber)
 	}
 	QuestRows->ClearChildren();
 	const UButton* ButtonStyle = Find<UButton>(TEXT("GiveCode"));
-	for (int32 Index = 0; Index < Robber->DevQuestLines.Num(); ++Index)
+	for (int32 Index = 0; Index < Lines.Num(); ++Index)
 	{
 		UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>();
-		if (Robber->DevQuestCanFind.IsValidIndex(Index) && Robber->DevQuestCanFind[Index])
+		if (CanFind.IsValidIndex(Index) && CanFind[Index])
 		{
 			UButton* Button = WidgetTree->ConstructWidget<UButton>();
 			if (ButtonStyle)
@@ -189,10 +236,10 @@ void URobberDevMenu::RebuildQuestRows(const ARobberController* Robber)
 			UTextBlock* Label = WidgetTree->ConstructWidget<UTextBlock>();
 			Label->SetFont(QuestTextStyle->GetFont());
 			Label->SetColorAndOpacity(FSlateColor(FLinearColor::Black));
-			Label->SetText(INVTEXT("Find"));
+			Label->SetText(ButtonText);
 			Button->SetContent(Label);
 			URobberDevMenuClick* Click = NewObject<URobberDevMenuClick>(this);
-			Click->Action = ERobberDevAction::FindExhibit;
+			Click->Action = FindAction;
 			Click->Value = Index;
 			Button->OnClicked.AddUniqueDynamic(Click, &URobberDevMenuClick::OnClicked);
 			Clicks.Add(Click);
@@ -204,7 +251,7 @@ void URobberDevMenu::RebuildQuestRows(const ARobberController* Robber)
 		Text->SetFont(QuestTextStyle->GetFont());
 		Text->SetColorAndOpacity(QuestTextStyle->GetColorAndOpacity());
 		Text->SetAutoWrapText(true);
-		Text->SetText(FText::FromString(Robber->DevQuestLines[Index].IsEmpty() ? TEXT(" ") : Robber->DevQuestLines[Index]));
+		Text->SetText(FText::FromString(Lines[Index].IsEmpty() ? TEXT(" ") : Lines[Index]));
 		UHorizontalBoxSlot* TextSlot = Row->AddChildToHorizontalBox(Text);
 		TextSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
 		TextSlot->SetVerticalAlignment(VAlign_Center);
@@ -217,6 +264,13 @@ void ARobberController::ClientDevQuestList_Implementation(const TArray<FString>&
 	DevQuestLines = Lines;
 	DevQuestCanFind = CanFind;
 	++DevQuestRevision;
+}
+
+void ARobberController::ClientDevSecretList_Implementation(const TArray<FString>& Lines, const TArray<uint8>& CanFind)
+{
+	DevSecretLines = Lines;
+	DevSecretCanFind = CanFind;
+	++DevSecretRevision;
 }
 
 #if !UE_BUILD_SHIPPING
@@ -320,7 +374,8 @@ namespace RobberDevTools
 	 * the eyes and the target (CanReach's rule). Exhibits hang on walls, so a fixed spot "in front" lands behind the
 	 * wall or in a prop half the time. Tries the facing first, then round the clock, near before far.
 	 */
-	bool FindTalkSpot(const APawn* Pawn, const AActor* Target, FVector& OutLocation, FRotator& OutFacing)
+	bool FindTalkSpot(const APawn* Pawn, const AActor* Target, FVector& OutLocation, FRotator& OutFacing,
+		const FVector* AimAt = nullptr, std::initializer_list<float> Distances = { 170.f, 240.f, 320.f })
 	{
 		UWorld* World = Target->GetWorld();
 		const ACharacter* Character = Cast<ACharacter>(Pawn);
@@ -328,13 +383,13 @@ namespace RobberDevTools
 		const float Radius = Capsule ? Capsule->GetScaledCapsuleRadius() : 40.f;
 		const float HalfHeight = Capsule ? Capsule->GetScaledCapsuleHalfHeight() : 90.f;
 		const float EyeHeight = Pawn->BaseEyeHeight + HalfHeight;
-		const FVector Aim = Target->GetActorLocation();
+		const FVector Aim = AimAt ? *AimAt : Target->GetActorLocation();
 		FCollisionQueryParams Params(SCENE_QUERY_STAT(DevFindSpot), false);
 		Params.AddIgnoredActor(Pawn);
 		Params.AddIgnoredActor(Target);
 
 		const FVector Forward = Target->GetActorForwardVector().GetSafeNormal2D();
-		for (const float Distance : { 170.f, 240.f, 320.f })
+		for (const float Distance : Distances)
 		{
 			for (int32 Step = 0; Step < 12; ++Step)
 			{
@@ -365,6 +420,40 @@ namespace RobberDevTools
 			}
 		}
 		return false;
+	}
+
+	/**
+	 * The loaded night's secrets for the dev window: a heading, the screen that shows progress, then each hidden step in
+	 * order. Targets lines up with Lines (null = no TP button). Only Night 5's Escape Velocity exists so far.
+	 */
+	void DescribeSecrets(const UWorld* World, TArray<FString>& Lines, TArray<AActor*>& Targets)
+	{
+		const TArray<ARobberLaunchTask*> Tasks = ARobberLaunchTask::All(World);
+		TActorIterator<ARobberLaunchBoard> Board(const_cast<UWorld*>(World));
+		TActorIterator<ARobberLaunchKeys> Keys(const_cast<UWorld*>(World));
+		if (Tasks.IsEmpty() && !Board && !Keys)
+		{
+			return;
+		}
+		Lines.Add(TEXT("ESCAPE VELOCITY (secret ending)"));
+		Targets.Add(nullptr);
+		if (Board)
+		{
+			Lines.Add(TEXT("Launch checklist screen (Mission Control)"));
+			Targets.Add(*Board);
+		}
+		int32 Number = 0;
+		for (ARobberLaunchTask* Task : Tasks)
+		{
+			Lines.Add(FString::Printf(TEXT("   Secret %d: %s - %s"), ++Number, *Task->TaskName.ToString(), Task->IsDone() ? TEXT("GO") : TEXT("NO-GO")));
+			Targets.Add(Task);
+		}
+		if (Keys)
+		{
+			const TCHAR* KeysState = Keys->IsLaunched() ? TEXT("launched") : Keys->IsReady() ? TEXT("ready") : TEXT("locked until every step is GO");
+			Lines.Add(FString::Printf(TEXT("   Secret %d: Launch keys - %s"), ++Number, KeysState));
+			Targets.Add(*Keys);
+		}
 	}
 }
 #endif
@@ -470,6 +559,76 @@ void ARobberController::ServerDevAction_Implementation(ERobberDevAction Action, 
 		else if (Target)
 		{
 			Result = INVTEXT("No free spot to stand next to them.");
+		}
+		break;
+	}
+	case ERobberDevAction::CompleteSecrets:
+	{
+		const TArray<ARobberLaunchTask*> Tasks = ARobberLaunchTask::All(GetWorld());
+		if (Tasks.IsEmpty())
+		{
+			Result = INVTEXT("No secrets on this night. Only Night 5 has one so far.");
+			break;
+		}
+		for (ARobberLaunchTask* Task : Tasks)
+		{
+			Task->MarkDone();
+		}
+		// The keys refuse in the lobby stage, so say so instead of leaving them looking broken.
+		Result = bInLobby
+			? FText::Format(INVTEXT("{0} launch steps GO. The keys only turn during a night."), Tasks.Num())
+			: FText::Format(INVTEXT("{0} launch steps GO. The keys are ready."), Tasks.Num());
+		// Then show the list, so the GO states are there to check.
+		[[fallthrough]];
+	}
+	case ERobberDevAction::ShowSecrets:
+	{
+		TArray<FString> Lines;
+		TArray<AActor*> Targets;
+		DescribeSecrets(GetWorld(), Lines, Targets);
+		if (Lines.IsEmpty())
+		{
+			Lines.Add(TEXT("No secrets on this night. Only Night 5 has one so far."));
+			Targets.Add(nullptr);
+		}
+		DevSecretTargets.Reset();
+		TArray<uint8> CanFind;
+		for (AActor* Target : Targets)
+		{
+			DevSecretTargets.Add(Target);
+			CanFind.Add(Target ? 1 : 0);
+		}
+		ClientDevSecretList(Lines, CanFind);
+		break;
+	}
+	case ERobberDevAction::FindSecret:
+	{
+		AActor* Target = DevSecretTargets.IsValidIndex(Value) ? DevSecretTargets[Value].Get() : nullptr;
+		if (!Target || !GetPawn())
+		{
+			break;
+		}
+		// Aim at the middle of what's there: task actors sit on their base, so their location is the floor.
+		FVector Centre, Extent;
+		// All components: the screen has no collision, so its colliding-only bounds are empty (centre = world origin).
+		Target->GetActorBounds(false, Centre, Extent);
+		// The screen is up on the wall, so step back to read all of it; the steps need E's 300-unit reach.
+		const bool bScreen = Target->IsA<ARobberLaunchBoard>();
+		FVector Stand;
+		FRotator Facing;
+		const bool bFound = bScreen
+			? FindTalkSpot(GetPawn(), Target, Stand, Facing, &Centre, { 1000.f, 1200.f, 800.f, 600.f })
+			: FindTalkSpot(GetPawn(), Target, Stand, Facing, &Centre, { 140.f, 190.f, 240.f });
+		if (bFound)
+		{
+			GetPawn()->TeleportTo(Stand, FRotator(0, Facing.Yaw, 0), false, true);
+			SetControlRotation(Facing);
+			ClientSetRotation(Facing);
+			Result = INVTEXT("Teleported.");
+		}
+		else
+		{
+			Result = INVTEXT("No free spot to stand that sees it.");
 		}
 		break;
 	}
