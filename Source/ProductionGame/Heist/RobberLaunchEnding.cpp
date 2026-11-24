@@ -2,6 +2,7 @@
 
 #include "Blueprint/WidgetBlueprintLibrary.h"
 #include "Blueprint/WidgetTree.h"
+#include "Camera/PlayerCameraManager.h"
 #include "Components/AudioComponent.h"
 #include "Components/CanvasPanel.h"
 #include "Components/CanvasPanelSlot.h"
@@ -11,7 +12,10 @@
 #include "Components/VerticalBoxSlot.h"
 #include "Engine/Font.h"
 #include "GameFramework/HUD.h"
+#include "EngineUtils.h"
 #include "Heist/RobberDevMenu.h"
+#include "Heist/RobberLaunchScene.h"
+#include "Heist/RobberSpaceProps.h"
 #include "Heist/RobberStage.h"
 #include "Kismet/GameplayStatics.h"
 #include "ProductionGameCharacter.h"
@@ -19,24 +23,30 @@
 #include "Robber/RobberGameState.h"
 #include "RobberMenu/RobberCredits.h"
 #include "Sound/SoundBase.h"
+#include "UObject/UObjectIterator.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogRobberLaunchEnding, Log, All);
 
 namespace RobberLaunchEndingLook
 {
-	// Above the credits (90) so the lobby reload and the credits starting stay behind the black; the dev menu is 100.
+	// Above the credits (90) so the lobby reload and the credits starting stay behind the space shot; the dev menu is 100.
 	constexpr int32 ZOrder = 95;
 	constexpr float LineAt = URobberLaunchEnding::ShotsSeconds + URobberLaunchEnding::FadeSeconds + .8f;
 	constexpr float LineFade = 1.2f;
 	// The punchline lands on its own, after a beat.
-	constexpr float YetAt = LineAt + 3.2f;
-	constexpr float YetSlam = .35f;
+	constexpr float PunchAt = LineAt + 3.2f;
+	constexpr float PunchSlam = .35f;
 	constexpr float OutroSeconds = 1.5f;
 	// Under the black: the reload and the credits need a moment before the card lifts off them.
 	constexpr float SettleSeconds = 1.5f;
 	// If the server never ends the run (host gone), stop waiting for it.
 	constexpr float GiveUpAfter = URobberLaunchEnding::RunEndsAt + 8.f;
 	constexpr float MusicFadeOut = 2.f;
+	// The track's trumpets come in at 12.0 s after a bass rumble laptops barely play (measured, -Survey -Music). Ben wants
+	// the key sequence on them; skipping 6.5 s puts them on its cut at 5.5 s, the big chord on the rocket at 13.5 s, the swell's dead stop on the
+	// cut to the suit-up scene at 18.5 s, the second trumpet call on the dance at 31 s and the second dead stop on the scene's end at 36 s
+	// (ShotsSeconds + 1).
+	constexpr float MusicSkip = 6.5f;
 
 	const FLinearColor Ink(FColor(0xf4, 0xef, 0xe1));
 
@@ -113,32 +123,40 @@ void URobberLaunchEnding::Build()
 	Line = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TEXT("EndLine"));
 	Line->SetFont(EndFont(54.f, TEXT("Regular")));
 	Line->SetColorAndOpacity(FSlateColor(Ink));
+	Line->SetShadowOffset(FVector2D(3.f, 3.f));
+	Line->SetShadowColorAndOpacity(FLinearColor(0.f, 0.f, 0.f, .8f));
 	Line->SetJustification(ETextJustify::Center);
 	Line->SetText(NSLOCTEXT("RobberLaunch", "EndLine", "You escaped to the one place capitalism hasn't reached."));
 	Line->SetRenderOpacity(0.f);
 
-	Yet = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TEXT("EndYet"));
-	Yet->SetFont(EndFont(110.f, TEXT("Bold")));
-	Yet->SetColorAndOpacity(FSlateColor(Ink));
-	Yet->SetJustification(ETextJustify::Center);
-	Yet->SetText(NSLOCTEXT("RobberLaunch", "EndYet", "Yet."));
-	Yet->SetRenderOpacity(0.f);
-	Yet->SetRenderTransformPivot(FVector2D(.5f, .5f));
+	Punchline = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TEXT("EndPunchline"));
+	Punchline->SetFont(EndFont(84.f, TEXT("Bold")));
+	Punchline->SetColorAndOpacity(FSlateColor(Ink));
+	Punchline->SetShadowOffset(FVector2D(4.f, 4.f));
+	Punchline->SetShadowColorAndOpacity(FLinearColor(0.f, 0.f, 0.f, .8f));
+	Punchline->SetJustification(ETextJustify::Center);
+	Punchline->SetText(NSLOCTEXT("RobberLaunch", "EndPunchline", "You have no debt in space."));
+	Punchline->SetRenderOpacity(0.f);
+	Punchline->SetRenderTransformPivot(FVector2D(.5f, .5f));
 
+	// Along the top, in the empty sky over the picture, so the Earth and the rocket stay clear.
 	UVerticalBox* Column = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("EndCard"));
 	Column->AddChildToVerticalBox(Line)->SetHorizontalAlignment(HAlign_Center);
-	UVerticalBoxSlot* YetSlot = Column->AddChildToVerticalBox(Yet);
-	YetSlot->SetHorizontalAlignment(HAlign_Center);
-	YetSlot->SetPadding(FMargin(0.f, 36.f, 0.f, 0.f));
+	UVerticalBoxSlot* PunchSlot = Column->AddChildToVerticalBox(Punchline);
+	PunchSlot->SetHorizontalAlignment(HAlign_Center);
+	PunchSlot->SetPadding(FMargin(0.f, 20.f, 0.f, 0.f));
 	UCanvasPanelSlot* CardSlot = Root->AddChildToCanvas(Column);
-	CardSlot->SetAnchors(FAnchors(.5f, .5f));
-	CardSlot->SetAlignment(FVector2D(.5f, .5f));
+	CardSlot->SetAnchors(FAnchors(.5f, .06f));
+	CardSlot->SetAlignment(FVector2D(.5f, 0.f));
 	CardSlot->SetAutoSize(true);
 }
 
 void URobberLaunchEnding::Start(USoundBase* Music)
 {
 	HideOtherWidgets();
+	SilenceGameMusic();
+	StartedAt = GetWorld() ? GetWorld()->GetTimeSeconds() : -1.;
+	ShotCamera = ARobberSpaceCamera::Find(GetWorld());
 	if (ARobberController* Controller = Cast<ARobberController>(GetOwningPlayer()))
 	{
 		Controller->SetIgnoreMoveInput(true);
@@ -160,10 +178,70 @@ void URobberLaunchEnding::Start(USoundBase* Music)
 		MusicPlayer = UGameplayStatics::CreateSound2D(GetOwningPlayer(), Music, 1.f, 1.f, 0.f, nullptr, false, true);
 		if (MusicPlayer)
 		{
-			MusicPlayer->Play();
+			MusicPlayer->Play(RobberLaunchEndingLook::MusicSkip);
 		}
 	}
-	UE_LOG(LogRobberLaunchEnding, Display, TEXT("Launch ending started: %d widgets hidden, music %s"), Hidden.Num(), Music ? *Music->GetName() : TEXT("none"));
+	// The stand-ins play the crew, so the real robbers (wherever they stood when the key turned) step out of shot.
+	bInScene = RobberLaunchScene::Play(GetWorld());
+	if (bInScene)
+	{
+		for (TActorIterator<APawn> It(GetWorld()); It; ++It)
+		{
+			if (It->GetPlayerState() && !It->IsHidden())
+			{
+				It->SetActorHiddenInGame(true);
+				HiddenPawns.Add(*It);
+			}
+		}
+	}
+	UE_LOG(LogRobberLaunchEnding, Display, TEXT("Launch ending started: %d widgets hidden, music %s, scene %s (%d robbers hidden), space camera %s"), Hidden.Num(),
+		Music ? *Music->GetName() : TEXT("none"), bInScene ? TEXT("playing") : TEXT("none"), HiddenPawns.Num(),
+		ShotCamera.IsValid() ? *ShotCamera->GetName() : TEXT("none (plain black)"));
+}
+
+void URobberLaunchEnding::EndScene()
+{
+	if (!bInScene)
+	{
+		return;
+	}
+	bInScene = false;
+	RobberLaunchScene::Stop(GetWorld());
+	for (const TWeakObjectPtr<APawn>& Pawn : HiddenPawns)
+	{
+		if (Pawn.IsValid())
+		{
+			Pawn->SetActorHiddenInGame(false);
+		}
+	}
+	HiddenPawns.Reset();
+	UE_LOG(LogRobberLaunchEnding, Display, TEXT("Launch scene over at %.1f s"), Elapsed);
+}
+
+void URobberLaunchEnding::SilenceGameMusic()
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+	// BP_RobberCharacter's "Music" component plays MSS_music (and a level can place its own); Ben wants only the
+	// launch track from the key turn on.
+	for (TObjectIterator<UAudioComponent> It; It; ++It)
+	{
+		UAudioComponent* Audio = *It;
+		if (Audio == MusicPlayer || Audio->GetWorld() != World || !Audio->IsPlaying())
+		{
+			continue;
+		}
+		const USoundBase* Sound = Audio->GetSound();
+		if (Audio->GetFName() == TEXT("Music") || (Sound && Sound->GetName().Contains(TEXT("music"))))
+		{
+			Audio->Stop();
+			++MusicSilenced;
+			UE_LOG(LogRobberLaunchEnding, Display, TEXT("Stopped game music %s on %s"), *GetNameSafe(Sound), *GetNameSafe(Audio->GetOwner()));
+		}
+	}
 }
 
 void URobberLaunchEnding::HideOtherWidgets()
@@ -186,6 +264,53 @@ void URobberLaunchEnding::HideOtherWidgets()
 	}
 }
 
+void URobberLaunchEnding::EnterSpace()
+{
+	ARobberController* Controller = Cast<ARobberController>(GetOwningPlayer());
+	ARobberSpaceCamera* Camera = ShotCamera.Get();
+	if (!Controller || !Camera)
+	{
+		return;
+	}
+	ARobberSpaceProp::ShowAll(GetWorld(), true);
+	Camera->StartShot();
+	if (APlayerCameraManager* Manager = Controller->PlayerCameraManager)
+	{
+		// A client tells the server where its camera is, and the server stops sending what's out of range of it:
+		// from up here that's the whole museum. Keep the server on the pawn, and ignore its view-target resets.
+		bClientCameraUpdates = Manager->bUseClientSideCameraUpdates;
+		bClientSimulatingViewTarget = Manager->bClientSimulatingViewTarget;
+		Manager->bUseClientSideCameraUpdates = false;
+		Manager->bClientSimulatingViewTarget = true;
+	}
+	Controller->SetViewTarget(Camera);
+	SpaceCamera = Camera;
+	UE_LOG(LogRobberLaunchEnding, Display, TEXT("Into space at %.1f s"), Elapsed);
+}
+
+void URobberLaunchEnding::LeaveSpace()
+{
+	ARobberSpaceCamera* Camera = SpaceCamera.Get();
+	SpaceCamera = nullptr;
+	if (!Camera)
+	{
+		return;
+	}
+	ARobberSpaceProp::ShowAll(GetWorld(), false);
+	Camera->EndShot();
+	if (ARobberController* Controller = Cast<ARobberController>(GetOwningPlayer()))
+	{
+		if (APlayerCameraManager* Manager = Controller->PlayerCameraManager)
+		{
+			Manager->bUseClientSideCameraUpdates = bClientCameraUpdates;
+			Manager->bClientSimulatingViewTarget = bClientSimulatingViewTarget;
+		}
+		APawn* Pawn = Controller->GetPawn();
+		Controller->SetViewTarget(Pawn ? static_cast<AActor*>(Pawn) : Controller);
+	}
+	UE_LOG(LogRobberLaunchEnding, Display, TEXT("Back from space at %.1f s"), Elapsed);
+}
+
 void URobberLaunchEnding::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 {
 	using namespace RobberLaunchEndingLook;
@@ -194,19 +319,67 @@ void URobberLaunchEnding::NativeTick(const FGeometry& MyGeometry, float InDeltaT
 	{
 		return;
 	}
-	Elapsed += InDeltaTime;
+	// Game time, not the widget's own deltas: those run slow through hitches, which left the shots, the server's Win
+	// timer and the launch scene (all on game time) drifting apart.
+	if (const UWorld* World = GetWorld(); World && StartedAt >= 0.)
+	{
+		Elapsed = static_cast<float>(World->GetTimeSeconds() - StartedAt);
+	}
+	else
+	{
+		Elapsed += InDeltaTime;
+	}
 	// Popups that turn up mid-ending (a heist message, an achievement) go too, until the run ends.
 	if (Elapsed < RunEndsAt)
 	{
 		HideOtherWidgets();
 	}
+	// Every frame, not once: the robbers' music Blueprint plays "depending on guard state" and could start it again.
+	SilenceGameMusic();
 
-	const float Outro = OutroAt < 0.f ? 1.f : 1.f - Clamp01((Elapsed - OutroAt) / OutroSeconds);
-	Blackout->SetRenderOpacity(GetBlackout() * Outro);
-	Line->SetRenderOpacity(GetLineOpacity() * Outro);
-	Yet->SetRenderOpacity(GetYetOpacity() * Outro);
-	const float Slam = Clamp01((Elapsed - YetAt) / YetSlam);
-	Yet->SetRenderScale(FVector2D(FMath::Lerp(1.8f, 1.f, 1.f - FMath::Square(1.f - Slam))));
+	// With the space shot, each change of view happens under a dip to black: in (cover) and out (outro), halfway.
+	const bool bSpaceShot = ShotCamera.IsValid();
+	const float Cover = GetBlackout();
+	const float OutroIn = OutroAt < 0.f ? 0.f : Clamp01((Elapsed - OutroAt) / OutroSeconds);
+	// Under the black, before the space camera takes the view (stopping the scene hands the view back to the pawn).
+	if (bInScene && Cover >= .5f)
+	{
+		EndScene();
+	}
+	if (bSpaceShot && OutroAt < 0.f && Cover >= .5f && !IsInSpace())
+	{
+		EnterSpace();
+	}
+	if (IsInSpace() && OutroIn >= .5f)
+	{
+		LeaveSpace();
+	}
+	if (IsInSpace())
+	{
+		// Restarting or possessing (the lobby reload) points the view back at the pawn.
+		ARobberController* Controller = Cast<ARobberController>(GetOwningPlayer());
+		if (Controller && Controller->GetViewTarget() != SpaceCamera.Get())
+		{
+			Controller->SetViewTarget(SpaceCamera.Get());
+		}
+	}
+	const auto Dip = [](float Alpha) { return Alpha < .5f ? Alpha * 2.f : 2.f - Alpha * 2.f; };
+	float Black = 0.f;
+	float CardFade = 1.f;
+	if (OutroAt >= 0.f)
+	{
+		Black = bSpaceShot ? Dip(OutroIn) : 1.f - OutroIn;
+		CardFade = bSpaceShot ? 1.f - Clamp01(OutroIn * 2.f) : 1.f - OutroIn;
+	}
+	else
+	{
+		Black = bSpaceShot ? Dip(Cover) : Cover;
+	}
+	Blackout->SetRenderOpacity(Black);
+	Line->SetRenderOpacity(GetLineOpacity() * CardFade);
+	Punchline->SetRenderOpacity(GetPunchlineOpacity() * CardFade);
+	const float Slam = Clamp01((Elapsed - PunchAt) / PunchSlam);
+	Punchline->SetRenderScale(FVector2D(FMath::Lerp(1.6f, 1.f, 1.f - FMath::Square(1.f - Slam))));
 
 	if (OutroAt < 0.f && Elapsed >= RunEndsAt + SettleSeconds)
 	{
@@ -229,6 +402,8 @@ void URobberLaunchEnding::NativeTick(const FGeometry& MyGeometry, float InDeltaT
 void URobberLaunchEnding::Finish()
 {
 	bFinished = true;
+	EndScene();
+	LeaveSpace();
 	for (const TPair<TWeakObjectPtr<UUserWidget>, ESlateVisibility>& Entry : Hidden)
 	{
 		// Only if it's still as we left it: one that changed its own visibility since (the iris wipe collapsing
@@ -282,14 +457,14 @@ float URobberLaunchEnding::GetLineOpacity() const
 	return RobberLaunchEndingLook::Clamp01((Elapsed - RobberLaunchEndingLook::LineAt) / RobberLaunchEndingLook::LineFade);
 }
 
-float URobberLaunchEnding::GetYetOpacity() const
+float URobberLaunchEnding::GetPunchlineOpacity() const
 {
-	return RobberLaunchEndingLook::Clamp01((Elapsed - RobberLaunchEndingLook::YetAt) / RobberLaunchEndingLook::YetSlam);
+	return RobberLaunchEndingLook::Clamp01((Elapsed - RobberLaunchEndingLook::PunchAt) / RobberLaunchEndingLook::PunchSlam);
 }
 
 FString URobberLaunchEnding::GetCardText() const
 {
-	return FString::Printf(TEXT("%s %s"), *Line->GetText().ToString(), *Yet->GetText().ToString());
+	return FString::Printf(TEXT("%s %s"), *Line->GetText().ToString(), *Punchline->GetText().ToString());
 }
 
 bool URobberLaunchEnding::IsMusicPlaying() const
